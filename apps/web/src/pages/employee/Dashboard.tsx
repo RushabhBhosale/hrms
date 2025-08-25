@@ -23,7 +23,7 @@ function format(ms: number) {
   return `${h}:${m}:${s}`;
 }
 
-export default function UserDash() {
+export default function EmployeeDash() {
   const [attendance, setAttendance] = useState<Attendance | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -58,7 +58,7 @@ export default function UserDash() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-semibold">User Area</h2>
+      <h2 className="text-2xl font-semibold">Employee Area</h2>
       <div className="p-4 border rounded space-y-2">
         <div>Time worked today: {format(elapsed)}</div>
         {!attendance?.lastPunchIn ? (

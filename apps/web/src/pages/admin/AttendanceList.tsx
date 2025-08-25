@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
 interface AttendanceRecord {
-  user: { id: string; name: string };
+  employee: { id: string; name: string };
   firstPunchIn?: string;
   lastPunchOut?: string;
 }
@@ -30,8 +30,8 @@ export default function AttendanceList() {
         </thead>
         <tbody>
           {attendance.map(a => (
-            <tr key={a.user.id} className="border-b">
-              <td className="p-1">{a.user.name}</td>
+            <tr key={a.employee.id} className="border-b">
+              <td className="p-1">{a.employee.name}</td>
               <td className="p-1">
                 {a.firstPunchIn ? new Date(a.firstPunchIn).toLocaleTimeString() : '-'}
               </td>

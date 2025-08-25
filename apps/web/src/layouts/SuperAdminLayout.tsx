@@ -1,9 +1,9 @@
 import { Outlet, Link, useNavigate } from 'react-router-dom';
-import { clearAuth, getUser } from '../lib/auth';
+import { clearAuth, getEmployee } from '../lib/auth';
 
 export default function SuperAdminLayout() {
   const nav = useNavigate();
-  const u = getUser();
+  const u = getEmployee();
 
   const links = [
     { to: '/superadmin', label: 'Dashboard' },

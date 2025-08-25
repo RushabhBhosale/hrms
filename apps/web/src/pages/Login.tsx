@@ -16,8 +16,8 @@ export default function Login() {
     setErr('');
     try {
       const res = await api.post('/auth/login', { email, password });
-      setAuth(res.data.token, res.data.user);
-      const role = res.data.user.primaryRole;
+      setAuth(res.data.token, res.data.employee);
+      const role = res.data.employee.primaryRole;
       if (role === 'SUPERADMIN') nav('/superadmin');
       else if (role === 'ADMIN') nav('/admin');
       else nav('/app');

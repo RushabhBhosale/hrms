@@ -1,6 +1,6 @@
 # HRMS Monorepo Starter (MERN + React + Tailwind + RBAC)
 
-Monorepo with role-based auth and different post-login layouts for Superadmin, Admin, and User (with sub-roles: hr, manager, plain).
+Monorepo with role-based auth and different post-login layouts for Superadmin, Admin, and Employee (with sub-roles: hr, manager, plain).
 
 ## Structure
 

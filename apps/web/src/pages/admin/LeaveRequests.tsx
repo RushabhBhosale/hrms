@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 
 interface Leave {
   _id: string;
-  user: { _id: string; name: string };
+  employee: { _id: string; name: string };
   startDate: string;
   endDate: string;
   reason?: string;
@@ -41,7 +41,7 @@ export default function LeaveRequests() {
       <table className="w-full text-sm border">
         <thead>
           <tr className="border-b">
-            <th className="p-1 text-left">User</th>
+            <th className="p-1 text-left">Employee</th>
             <th className="p-1 text-left">Start</th>
             <th className="p-1 text-left">End</th>
             <th className="p-1 text-left">Status</th>
@@ -51,7 +51,7 @@ export default function LeaveRequests() {
         <tbody>
           {leaves.map(l => (
             <tr key={l._id} className="border-b">
-              <td className="p-1">{l.user.name}</td>
+              <td className="p-1">{l.employee.name}</td>
               <td className="p-1">{new Date(l.startDate).toLocaleDateString()}</td>
               <td className="p-1">{new Date(l.endDate).toLocaleDateString()}</td>
               <td className="p-1">{l.status}</td>

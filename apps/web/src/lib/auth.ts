@@ -1,7 +1,7 @@
-export type PrimaryRole = 'SUPERADMIN' | 'ADMIN' | 'USER';
+export type PrimaryRole = 'SUPERADMIN' | 'ADMIN' | 'EMPLOYEE';
 export type SubRole = 'hr' | 'manager' | 'developer' | 'plain';
 
-export type User = {
+export type Employee = {
   id: string;
   name: string;
   email: string;
@@ -10,18 +10,18 @@ export type User = {
   company?: string;
 };
 
-export function setAuth(token: string, user: User) {
+export function setAuth(token: string, employee: Employee) {
   localStorage.setItem('token', token);
-  localStorage.setItem('user', JSON.stringify(user));
+  localStorage.setItem('employee', JSON.stringify(employee));
 }
 
-export function getUser(): User | null {
-  const raw = localStorage.getItem('user');
+export function getEmployee(): Employee | null {
+  const raw = localStorage.getItem('employee');
   if (!raw) return null;
-  try { return JSON.parse(raw) as User } catch { return null }
+  try { return JSON.parse(raw) as Employee } catch { return null }
 }
 
 export function clearAuth() {
   localStorage.removeItem('token');
-  localStorage.removeItem('user');
+  localStorage.removeItem('employee');
 }

@@ -6,7 +6,7 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
+    req.employee = decoded;
     next();
   } catch (e) {
     return res.status(401).json({ error: 'Unauthorized' });

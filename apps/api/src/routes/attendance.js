@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { auth } = require('../middleware/auth');
 const Attendance = require('../models/Attendance');
-const User = require('../models/User');
+const Employee = require('../models/Employee');
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -14,12 +14,12 @@ router.post('/punch', auth, async (req, res) => {
   if (!['in', 'out'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
 
   const today = startOfDay(new Date());
-  let record = await Attendance.findOne({ user: req.user.id, date: today });
+  let record = await Attendance.findOne({ employee: req.employee.id, date: today });
   const now = new Date();
   if (!record) {
     if (action === 'out') return res.status(400).json({ error: 'Must punch in first' });
     record = await Attendance.create({
-      user: req.user.id,
+      employee: req.employee.id,
       date: today,
       firstPunchIn: now,
       lastPunchIn: now
@@ -46,20 +46,20 @@ router.post('/punch', auth, async (req, res) => {
 
 router.get('/today', auth, async (req, res) => {
   const today = startOfDay(new Date());
-  const record = await Attendance.findOne({ user: req.user.id, date: today });
+  const record = await Attendance.findOne({ employee: req.employee.id, date: today });
   res.json({ attendance: record });
 });
 
 router.get('/company/today', auth, async (req, res) => {
-  if (!['ADMIN', 'SUPERADMIN'].includes(req.user.primaryRole)) return res.status(403).json({ error: 'Forbidden' });
+  if (!['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole)) return res.status(403).json({ error: 'Forbidden' });
   const today = startOfDay(new Date());
-  const users = await User.find({ company: req.user.company, primaryRole: 'USER' }).select('_id name');
-  const records = await Attendance.find({ user: { $in: users.map(u => u._id) }, date: today });
+  const employees = await Employee.find({ company: req.employee.company, primaryRole: 'EMPLOYEE' }).select('_id name');
+  const records = await Attendance.find({ employee: { $in: employees.map(u => u._id) }, date: today });
 
-  const attendance = users.map(u => {
-    const record = records.find(r => r.user.toString() === u._id.toString());
+  const attendance = employees.map(u => {
+    const record = records.find(r => r.employee.toString() === u._id.toString());
     return {
-      user: { id: u._id, name: u.name },
+      employee: { id: u._id, name: u.name },
       firstPunchIn: record?.firstPunchIn,
       lastPunchOut: record?.lastPunchOut
     };

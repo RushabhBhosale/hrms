@@ -1,26 +1,26 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
-interface CompanyUser {
+interface CompanyEmployee {
   id: string;
   name: string;
   email: string;
   subRoles: string[];
 }
 
-export default function UserList() {
-  const [users, setUsers] = useState<CompanyUser[]>([]);
+export default function EmployeeList() {
+  const [employees, setEmployees] = useState<CompanyEmployee[]>([]);
 
   useEffect(() => {
     api
-      .get('/companies/users')
-      .then(res => setUsers(res.data.users))
+      .get('/companies/employees')
+      .then(res => setEmployees(res.data.employees))
       .catch(err => console.error(err));
   }, []);
 
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-semibold">User List</h2>
+      <h2 className="text-2xl font-semibold">Employee List</h2>
       <table className="w-full text-sm border">
         <thead>
           <tr className="border-b">
@@ -30,7 +30,7 @@ export default function UserList() {
           </tr>
         </thead>
         <tbody>
-          {users.map(u => (
+          {employees.map(u => (
             <tr key={u.id} className="border-b">
               <td className="p-1">{u.name}</td>
               <td className="p-1">{u.email}</td>
