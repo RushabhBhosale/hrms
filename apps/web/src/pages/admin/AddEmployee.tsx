@@ -1,88 +1,221 @@
-import { useState, FormEvent, ChangeEvent } from 'react';
-import { api } from '../../lib/api';
+import { useState, FormEvent, ChangeEvent, useMemo } from "react";
+import { api } from "../../lib/api";
+
+type FormState = {
+  name: string;
+  email: string;
+  password: string;
+  role: "hr" | "manager" | "developer";
+  address: string;
+  phone: string;
+};
 
 export default function AddEmployee() {
-  const [form, setForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    role: 'hr',
-    address: '',
-    phone: ''
+  const [form, setForm] = useState<FormState>({
+    name: "",
+    email: "",
+    password: "",
+    role: "hr",
+    address: "",
+    phone: "",
   });
   const [docs, setDocs] = useState<FileList | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [ok, setOk] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const canSubmit = useMemo(() => {
+    return (
+      form.name.trim() &&
+      form.email.trim() &&
+      form.password &&
+      form.role &&
+      form.address.trim() &&
+      form.phone.trim()
+    );
+  }, [form]);
+
+  function onChange<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    setOk(null);
+    setErr(null);
+    if (!canSubmit) return;
     try {
+      setSubmitting(true);
       const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => fd.append(k, v));
-      if (docs) Array.from(docs).forEach(f => fd.append('documents', f));
-      await api.post('/companies/employees', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      Object.entries(form).forEach(([k, v]) => fd.append(k, String(v)));
+      if (docs) Array.from(docs).forEach((f) => fd.append("documents", f));
+      await api.post("/companies/employees", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
-      setForm({ name: '', email: '', password: '', role: 'hr', address: '', phone: '' });
+      setForm({
+        name: "",
+        email: "",
+        password: "",
+        role: "hr",
+        address: "",
+        phone: "",
+      });
       setDocs(null);
-    } catch (err) {
-      console.error(err);
+      setOk("Employee added");
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || "Failed to add employee");
+    } finally {
+      setSubmitting(false);
     }
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-semibold">Add Employee</h2>
-      <form onSubmit={submit} className="space-y-2 max-w-md" encType="multipart/form-data">
-        <input
-          className="w-full border p-1"
-          placeholder="Name"
-          value={form.name}
-          onChange={e => setForm({ ...form, name: e.target.value })}
-        />
-        <input
-          className="w-full border p-1"
-          placeholder="Email"
-          type="email"
-          value={form.email}
-          onChange={e => setForm({ ...form, email: e.target.value })}
-        />
-        <input
-          className="w-full border p-1"
-          placeholder="Password"
-          type="password"
-          value={form.password}
-          onChange={e => setForm({ ...form, password: e.target.value })}
-        />
-        <input
-          className="w-full border p-1"
-          placeholder="Address"
-          value={form.address}
-          onChange={e => setForm({ ...form, address: e.target.value })}
-        />
-        <input
-          className="w-full border p-1"
-          placeholder="Phone"
-          value={form.phone}
-          onChange={e => setForm({ ...form, phone: e.target.value })}
-        />
-        <select
-          className="w-full border p-1"
-          value={form.role}
-          onChange={e => setForm({ ...form, role: e.target.value })}
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-3xl font-bold">Add Employee</h2>
+        <p className="text-sm text-muted">
+          Create an employee and upload documents.
+        </p>
+      </div>
+
+      {err && (
+        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+          {err}
+        </div>
+      )}
+      {ok && (
+        <div className="rounded-md border border-success/20 bg-green-50 px-4 py-2 text-sm text-success">
+          {ok}
+        </div>
+      )}
+
+      <section className="rounded-lg border border-border bg-surface shadow-sm">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="text-lg font-semibold">Employee Details</h3>
+        </div>
+
+        <form
+          onSubmit={submit}
+          className="px-6 py-5 space-y-5"
+          encType="multipart/form-data"
         >
-          <option value="hr">HR</option>
-          <option value="manager">Manager</option>
-          <option value="developer">Developer</option>
-        </select>
-        <input
-          className="w-full border p-1"
-          type="file"
-          multiple
-          onChange={(e: ChangeEvent<HTMLInputElement>) => setDocs(e.target.files)}
-        />
-        <button className="px-4 py-1 bg-blue-500 text-white" type="submit">
-          Add Employee
-        </button>
-      </form>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Name">
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Jane Doe"
+                value={form.name}
+                onChange={(e) => onChange("name", e.target.value)}
+              />
+            </Field>
+            <Field label="Email">
+              <input
+                type="email"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="jane@acme.com"
+                value={form.email}
+                onChange={(e) => onChange("email", e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Password">
+              <input
+                type="password"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="••••••••"
+                value={form.password}
+                onChange={(e) => onChange("password", e.target.value)}
+              />
+            </Field>
+
+            <Field label="Role">
+              <select
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.role}
+                onChange={(e) =>
+                  onChange("role", e.target.value as FormState["role"])
+                }
+              >
+                <option value="hr">HR</option>
+                <option value="manager">Manager</option>
+                <option value="developer">Developer</option>
+              </select>
+            </Field>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Address">
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Street, City, ZIP"
+                value={form.address}
+                onChange={(e) => onChange("address", e.target.value)}
+              />
+            </Field>
+            <Field label="Phone">
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="+91 98765 43210"
+                value={form.phone}
+                onChange={(e) => onChange("phone", e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Documents">
+              <label className="flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-bg px-3 text-sm text-muted hover:bg-bg/70">
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                    setDocs(e.target.files)
+                  }
+                />
+                <span>Click to upload or drag & drop</span>
+                <span className="text-xs">PNG, JPG, PDF up to 10MB each</span>
+              </label>
+              {!!docs && (
+                <ul className="mt-2 space-y-1 text-sm text-muted">
+                  {Array.from(docs).map((f, i) => (
+                    <li key={i} className="truncate">
+                      {f.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Field>
+          </div>
+
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={!canSubmit || submitting}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+            >
+              {submitting ? "Creating…" : "Add Employee"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium">{label}</label>
+      {children}
     </div>
   );
 }
