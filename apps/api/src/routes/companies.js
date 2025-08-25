@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
 const { auth } = require('../middleware/auth');
 const Company = require('../models/Company');
 const User = require('../models/User');
@@ -14,10 +15,22 @@ router.post('/', auth, async (req, res) => {
   let admin = await User.findOne({ email: adminEmail });
   if (admin) return res.status(400).json({ error: 'Admin already exists' });
   const passwordHash = await bcrypt.hash(adminPassword, 10);
-  admin = await User.create({ name: adminName, email: adminEmail, passwordHash, primaryRole: 'ADMIN', subRoles: [] });
-  const company = await Company.create({ name: companyName, admin: admin._id });
-  admin.company = company._id;
-  await admin.save();
+  // Generate an id ahead of time so both documents share the same company reference
+  const companyId = new mongoose.Types.ObjectId();
+
+  // Create the admin with the pre-generated company id
+  admin = await User.create({
+    name: adminName,
+    email: adminEmail,
+    passwordHash,
+    primaryRole: 'ADMIN',
+    subRoles: [],
+    company: companyId
+  });
+
+  // Create the company using the same id and point it to the admin
+  const company = await Company.create({ _id: companyId, name: companyName, admin: admin._id });
+
   res.json({ company });
 });
 
