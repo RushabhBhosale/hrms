@@ -8,14 +8,23 @@ interface CompanyUser {
   subRoles: string[];
 }
 
+interface AttendanceRecord {
+  user: { id: string; name: string };
+  firstPunchIn?: string;
+  lastPunchOut?: string;
+}
+
 export default function AdminDash() {
   const [users, setUsers] = useState<CompanyUser[]>([]);
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'hr' });
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
 
   async function load() {
     try {
       const res = await api.get('/companies/users');
       setUsers(res.data.users);
+      const att = await api.get('/attendance/company/today');
+      setAttendance(att.data.attendance);
     } catch (e) {
       console.error(e);
     }
@@ -94,6 +103,36 @@ export default function AdminDash() {
                 <td className="p-1">{u.name}</td>
                 <td className="p-1">{u.email}</td>
                 <td className="p-1">{u.subRoles[0]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <h3 className="font-semibold mb-2">Today's Attendance</h3>
+        <table className="w-full text-sm border">
+          <thead>
+            <tr className="border-b">
+              <th className="p-1 text-left">Name</th>
+              <th className="p-1 text-left">First In</th>
+              <th className="p-1 text-left">Last Out</th>
+            </tr>
+          </thead>
+          <tbody>
+            {attendance.map(a => (
+              <tr key={a.user.id} className="border-b">
+                <td className="p-1">{a.user.name}</td>
+                <td className="p-1">
+                  {a.firstPunchIn
+                    ? new Date(a.firstPunchIn).toLocaleTimeString()
+                    : '-'}
+                </td>
+                <td className="p-1">
+                  {a.lastPunchOut
+                    ? new Date(a.lastPunchOut).toLocaleTimeString()
+                    : '-'}
+                </td>
               </tr>
             ))}
           </tbody>
