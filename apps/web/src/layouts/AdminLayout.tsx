@@ -9,7 +9,8 @@ export default function AdminLayout() {
     { to: '/admin', label: 'Dashboard' },
     { to: '/admin/users/add', label: 'Add User' },
     { to: '/admin/users', label: 'User List' },
-    { to: '/admin/attendances', label: 'Attendances' }
+    { to: '/admin/attendances', label: 'Attendances' },
+    { to: '/admin/leaves', label: 'Leave Requests' }
   ];
 
   return (
