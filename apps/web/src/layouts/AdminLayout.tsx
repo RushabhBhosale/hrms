@@ -4,19 +4,39 @@ import { clearAuth, getUser } from '../lib/auth';
 export default function AdminLayout() {
   const nav = useNavigate();
   const u = getUser();
+
+  const links = [
+    { to: '/admin', label: 'Dashboard' },
+    { to: '/admin/users/add', label: 'Add User' },
+    { to: '/admin/users', label: 'User List' },
+    { to: '/admin/attendances', label: 'Attendances' }
+  ];
+
   return (
-    <div className="min-h-screen bg-white">
-      <header className="flex items-center justify-between px-6 h-14 bg-blue-600 text-white">
-        <div className="font-bold">HRMS Admin</div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm">{u?.name}</span>
-          <button onClick={() => { clearAuth(); nav('/login'); }} className="text-sm underline">Logout</button>
+    <div className="min-h-screen flex bg-white">
+      <aside className="w-56 bg-blue-700 text-white flex flex-col p-4">
+        <div className="font-bold mb-6">HRMS Admin</div>
+        <nav className="flex-1 space-y-2">
+          {links.map(l => (
+            <Link key={l.to} to={l.to} className="block hover:underline">
+              {l.label}
+            </Link>
+          ))}
+        </nav>
+        <div className="pt-4 border-t border-blue-600 text-sm">
+          <div className="mb-2">{u?.name}</div>
+          <button
+            onClick={() => {
+              clearAuth();
+              nav('/login');
+            }}
+            className="underline"
+          >
+            Logout
+          </button>
         </div>
-      </header>
-      <nav className="px-6 py-3 bg-blue-50 border-b">
-        <Link className="mr-4" to="/admin">Dashboard</Link>
-      </nav>
-      <main className="p-6">
+      </aside>
+      <main className="flex-1 p-6">
         <Outlet />
       </main>
     </div>
