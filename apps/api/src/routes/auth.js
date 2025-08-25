@@ -10,7 +10,14 @@ router.post('/login', async (req, res) => {
   if (!user) return res.status(400).json({ error: 'Invalid credentials' });
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
-  const payload = { id: user._id.toString(), name: user.name, email: user.email, primaryRole: user.primaryRole, subRoles: user.subRoles };
+  const payload = {
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    primaryRole: user.primaryRole,
+    subRoles: user.subRoles,
+    company: user.company
+  };
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '2h' });
   res.json({ token, user: payload });
 });
@@ -18,7 +25,14 @@ router.post('/login', async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   const user = await User.findById(req.user.id).lean();
   if (!user) return res.status(404).json({ error: 'Not found' });
-  const payload = { id: user._id.toString(), name: user.name, email: user.email, primaryRole: user.primaryRole, subRoles: user.subRoles };
+  const payload = {
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    primaryRole: user.primaryRole,
+    subRoles: user.subRoles,
+    company: user.company
+  };
   res.json({ user: payload });
 });
 
