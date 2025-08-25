@@ -12,6 +12,7 @@ app.get('/', (req, res) => res.json({ ok: true }));
 app.use('/auth', require('./routes/auth'));
 app.use('/seed', require('./routes/seed'));
 app.use('/companies', require('./routes/companies'));
+app.use('/attendance', require('./routes/attendance'));
 
 connectDB().then(() => {
   const port = process.env.PORT || 4000;
