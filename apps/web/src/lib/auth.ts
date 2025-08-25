@@ -1,5 +1,5 @@
 export type PrimaryRole = 'SUPERADMIN' | 'ADMIN' | 'USER';
-export type SubRole = 'hr' | 'manager' | 'plain';
+export type SubRole = 'hr' | 'manager' | 'developer' | 'plain';
 
 export type User = {
   id: string;
@@ -7,6 +7,7 @@ export type User = {
   email: string;
   primaryRole: PrimaryRole;
   subRoles: SubRole[];
+  company?: string;
 };
 
 export function setAuth(token: string, user: User) {

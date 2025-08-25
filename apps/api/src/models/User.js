@@ -6,7 +6,8 @@ const UserSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, index: true },
     passwordHash: { type: String, required: true },
     primaryRole: { type: String, enum: ['SUPERADMIN', 'ADMIN', 'USER'], default: 'USER' },
-    subRoles: { type: [String], default: [] }
+    subRoles: { type: [String], default: [] },
+    company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' }
   },
   { timestamps: true }
 );
