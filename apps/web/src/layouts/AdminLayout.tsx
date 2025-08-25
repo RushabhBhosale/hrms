@@ -1,14 +1,14 @@
 import { Outlet, Link, useNavigate } from 'react-router-dom';
-import { clearAuth, getUser } from '../lib/auth';
+import { clearAuth, getEmployee } from '../lib/auth';
 
 export default function AdminLayout() {
   const nav = useNavigate();
-  const u = getUser();
+  const u = getEmployee();
 
   const links = [
     { to: '/admin', label: 'Dashboard' },
-    { to: '/admin/users/add', label: 'Add User' },
-    { to: '/admin/users', label: 'User List' },
+    { to: '/admin/employees/add', label: 'Add Employee' },
+    { to: '/admin/employees', label: 'Employee List' },
     { to: '/admin/attendances', label: 'Attendances' },
     { to: '/admin/leaves', label: 'Leave Requests' }
   ];

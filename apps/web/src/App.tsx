@@ -4,20 +4,20 @@ import Protected from './components/Protected';
 import RoleGuard from './components/RoleGuard';
 import SuperAdminLayout from './layouts/SuperAdminLayout';
 import AdminLayout from './layouts/AdminLayout';
-import UserLayout from './layouts/UserLayout';
+import EmployeeLayout from './layouts/EmployeeLayout';
 import SADash from './pages/superadmin/Dashboard';
 import CompanyList from './pages/superadmin/CompanyList';
 import AddCompany from './pages/superadmin/AddCompany';
 
 import AdminDash from './pages/admin/Dashboard';
-import AddUser from './pages/admin/AddUser';
-import UserList from './pages/admin/UserList';
+import AddEmployee from './pages/admin/AddEmployee';
+import EmployeeList from './pages/admin/EmployeeList';
 import AttendanceList from './pages/admin/AttendanceList';
 import LeaveRequests from './pages/admin/LeaveRequests';
 
-import UserDash from './pages/user/Dashboard';
-import AttendanceRecords from './pages/user/AttendanceRecords';
-import LeaveRequest from './pages/user/LeaveRequest';
+import EmployeeDash from './pages/employee/Dashboard';
+import AttendanceRecords from './pages/employee/AttendanceRecords';
+import LeaveRequest from './pages/employee/LeaveRequest';
 
 export default function App() {
   return (
@@ -50,8 +50,8 @@ export default function App() {
         }
       >
         <Route index element={<AdminDash />} />
-        <Route path="users/add" element={<AddUser />} />
-        <Route path="users" element={<UserList />} />
+        <Route path="employees/add" element={<AddEmployee />} />
+        <Route path="employees" element={<EmployeeList />} />
         <Route path="attendances" element={<AttendanceList />} />
         <Route path="leaves" element={<LeaveRequests />} />
       </Route>
@@ -60,13 +60,13 @@ export default function App() {
         path="/app/*"
         element={
           <Protected>
-            <RoleGuard primary={["USER", "ADMIN", "SUPERADMIN"]}>
-              <UserLayout />
+            <RoleGuard primary={["EMPLOYEE", "ADMIN", "SUPERADMIN"]}>
+              <EmployeeLayout />
             </RoleGuard>
           </Protected>
         }
       >
-        <Route index element={<UserDash />} />
+        <Route index element={<EmployeeDash />} />
         <Route path="attendance" element={<AttendanceRecords />} />
         <Route path="leave" element={<LeaveRequest />} />
       </Route>

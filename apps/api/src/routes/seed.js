@@ -1,13 +1,13 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
-const User = require('../models/User');
+const Employee = require('../models/Employee');
 
 router.post('/superadmin', async (req, res) => {
   const { name, email, password } = req.body;
-  const exists = await User.findOne({ email });
+  const exists = await Employee.findOne({ email });
   if (exists) return res.json({ ok: true });
   const passwordHash = await bcrypt.hash(password, 10);
-  await User.create({ name, email, passwordHash, primaryRole: 'SUPERADMIN', subRoles: [] });
+  await Employee.create({ name, email, passwordHash, primaryRole: 'SUPERADMIN', subRoles: [] });
   res.json({ ok: true });
 });
 

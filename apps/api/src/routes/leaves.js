@@ -3,13 +3,13 @@ const Leave = require('../models/Leave');
 const { auth } = require('../middleware/auth');
 const { requirePrimary } = require('../middleware/roles');
 
-// User creates a leave request
+// Employee creates a leave request
 router.post('/', auth, async (req, res) => {
   const { startDate, endDate, reason } = req.body;
   try {
     const leave = await Leave.create({
-      user: req.user.id,
-      company: req.user.company,
+      employee: req.employee.id,
+      company: req.employee.company,
       startDate,
       endDate,
       reason
@@ -20,9 +20,9 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// User views their leave requests
+// Employee views their leave requests
 router.get('/', auth, async (req, res) => {
-  const leaves = await Leave.find({ user: req.user.id })
+  const leaves = await Leave.find({ employee: req.employee.id })
     .sort({ createdAt: -1 })
     .lean();
   res.json({ leaves });
@@ -30,8 +30,8 @@ router.get('/', auth, async (req, res) => {
 
 // Admin views company leave requests
 router.get('/company', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (req, res) => {
-  const leaves = await Leave.find({ company: req.user.company })
-    .populate('user', 'name')
+  const leaves = await Leave.find({ company: req.employee.company })
+    .populate('employee', 'name')
     .sort({ createdAt: -1 })
     .lean();
   res.json({ leaves });

@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const LeaveSchema = new mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
     company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
