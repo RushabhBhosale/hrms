@@ -41,6 +41,33 @@ router.get('/', auth, async (req, res) => {
   res.json({ companies });
 });
 
+// Assign an admin to an existing company
+router.post('/:companyId/admin', auth, async (req, res) => {
+  if (req.user.primaryRole !== 'SUPERADMIN') return res.status(403).json({ error: 'Forbidden' });
+  const { adminName, adminEmail, adminPassword } = req.body;
+  if (!adminName || !adminEmail || !adminPassword) {
+    return res.status(400).json({ error: 'Missing fields' });
+  }
+  const company = await Company.findById(req.params.companyId);
+  if (!company) return res.status(404).json({ error: 'Company not found' });
+  if (company.admin) return res.status(400).json({ error: 'Company already has an admin' });
+  let existing = await User.findOne({ email: adminEmail });
+  if (existing) return res.status(400).json({ error: 'Admin already exists' });
+  const passwordHash = await bcrypt.hash(adminPassword, 10);
+  const admin = await User.create({
+    name: adminName,
+    email: adminEmail,
+    passwordHash,
+    primaryRole: 'ADMIN',
+    subRoles: [],
+    company: company._id
+  });
+  company.admin = admin._id;
+  await company.save();
+  const populated = await company.populate('admin', 'name email');
+  res.json({ company: populated });
+});
+
 // Admin: create user in their company
 router.post('/users', auth, async (req, res) => {
   if (!['ADMIN', 'SUPERADMIN'].includes(req.user.primaryRole)) return res.status(403).json({ error: 'Forbidden' });

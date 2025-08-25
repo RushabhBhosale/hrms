@@ -4,7 +4,7 @@ import { api } from '../../lib/api';
 type Company = {
   _id: string;
   name: string;
-  admin: { name: string; email: string };
+  admin?: { name: string; email: string };
 };
 
 export default function SADash() {
@@ -13,6 +13,10 @@ export default function SADash() {
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [existingCompany, setExistingCompany] = useState('');
+  const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [newAdminPassword, setNewAdminPassword] = useState('');
 
   async function load() {
     try {
@@ -35,6 +39,24 @@ export default function SADash() {
       setAdminName('');
       setAdminEmail('');
       setAdminPassword('');
+      load();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function submitExisting(e: FormEvent) {
+    e.preventDefault();
+    try {
+      await api.post(`/companies/${existingCompany}/admin`, {
+        adminName: newAdminName,
+        adminEmail: newAdminEmail,
+        adminPassword: newAdminPassword
+      });
+      setExistingCompany('');
+      setNewAdminName('');
+      setNewAdminEmail('');
+      setNewAdminPassword('');
       load();
     } catch (err) {
       console.error(err);
@@ -80,12 +102,51 @@ export default function SADash() {
         </button>
       </form>
 
+      <form onSubmit={submitExisting} className="space-y-2 max-w-md">
+        <h3 className="font-semibold">Add Admin to Company</h3>
+        <select
+          className="w-full border p-1"
+          value={existingCompany}
+          onChange={e => setExistingCompany(e.target.value)}
+        >
+          <option value="">Select Company</option>
+          {companies.filter(c => !c.admin).map(c => (
+            <option key={c._id} value={c._id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <input
+          className="w-full border p-1"
+          placeholder="Admin Name"
+          value={newAdminName}
+          onChange={e => setNewAdminName(e.target.value)}
+        />
+        <input
+          className="w-full border p-1"
+          placeholder="Admin Email"
+          type="email"
+          value={newAdminEmail}
+          onChange={e => setNewAdminEmail(e.target.value)}
+        />
+        <input
+          className="w-full border p-1"
+          placeholder="Admin Password"
+          type="password"
+          value={newAdminPassword}
+          onChange={e => setNewAdminPassword(e.target.value)}
+        />
+        <button className="px-4 py-1 bg-blue-500 text-white" type="submit" disabled={!existingCompany}>
+          Add Admin
+        </button>
+      </form>
+
       <div>
         <h3 className="font-semibold mb-2">Companies</h3>
         <ul className="space-y-1">
           {companies.map(c => (
             <li key={c._id} className="text-sm">
-              {c.name} – {c.admin?.name} ({c.admin?.email})
+              {c.name} – {c.admin ? `${c.admin.name} (${c.admin.email})` : 'No admin'}
             </li>
           ))}
         </ul>
