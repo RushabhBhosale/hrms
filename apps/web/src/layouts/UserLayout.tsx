@@ -4,19 +4,37 @@ import { clearAuth, getUser } from '../lib/auth';
 export default function UserLayout() {
   const nav = useNavigate();
   const u = getUser();
+
+  const links = [
+    { to: '/app', label: 'Dashboard' },
+    { to: '/app/attendance', label: 'Attendance' }
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="flex items-center justify-between px-6 h-14 bg-slate-900 text-white">
-        <div className="font-bold">HRMS</div>
-        <div className="flex items-center gap-3">
-          <div className="text-xs">{u?.subRoles.join(', ')}</div>
-          <button onClick={() => { clearAuth(); nav('/login'); }} className="text-sm underline">Logout</button>
+    <div className="min-h-screen flex bg-slate-50">
+      <aside className="w-56 bg-slate-900 text-white flex flex-col p-4">
+        <div className="font-bold mb-6">HRMS</div>
+        <nav className="flex-1 space-y-2">
+          {links.map(l => (
+            <Link key={l.to} to={l.to} className="block hover:underline">
+              {l.label}
+            </Link>
+          ))}
+        </nav>
+        <div className="pt-4 border-t border-slate-700 text-sm">
+          <div className="mb-2">{u?.subRoles.join(', ')}</div>
+          <button
+            onClick={() => {
+              clearAuth();
+              nav('/login');
+            }}
+            className="underline"
+          >
+            Logout
+          </button>
         </div>
-      </header>
-      <nav className="px-6 py-3 bg-slate-100 border-b">
-        <Link className="mr-4" to="/app">Dashboard</Link>
-      </nav>
-      <main className="p-6">
+      </aside>
+      <main className="flex-1 p-6">
         <Outlet />
       </main>
     </div>
