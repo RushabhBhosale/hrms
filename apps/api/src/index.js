@@ -11,6 +11,7 @@ app.use(cors({ origin: process.env.CLIENT_ORIGIN, credentials: true }));
 app.get('/', (req, res) => res.json({ ok: true }));
 app.use('/auth', require('./routes/auth'));
 app.use('/seed', require('./routes/seed'));
+app.use('/companies', require('./routes/companies'));
 
 connectDB().then(() => {
   const port = process.env.PORT || 4000;
