@@ -15,19 +15,30 @@ router.post('/punch', auth, async (req, res) => {
 
   const today = startOfDay(new Date());
   let record = await Attendance.findOne({ user: req.user.id, date: today });
+  const now = new Date();
   if (!record) {
-    record = await Attendance.create({ user: req.user.id, date: today, firstPunchIn: new Date() });
+    if (action === 'out') return res.status(400).json({ error: 'Must punch in first' });
+    record = await Attendance.create({
+      user: req.user.id,
+      date: today,
+      firstPunchIn: now,
+      lastPunchIn: now
+    });
     return res.json({ attendance: record });
   }
 
   if (action === 'in') {
-    // If a punch out was recorded earlier in the day allow a new punch in
-    if (!record.firstPunchIn || record.lastPunchOut) {
-      record.firstPunchIn = new Date();
+    if (!record.lastPunchIn) {
+      if (!record.firstPunchIn) record.firstPunchIn = now;
+      record.lastPunchIn = now;
       record.lastPunchOut = undefined;
     }
   } else {
-    record.lastPunchOut = new Date();
+    if (record.lastPunchIn) {
+      record.workedMs += now.getTime() - record.lastPunchIn.getTime();
+      record.lastPunchOut = now;
+      record.lastPunchIn = undefined;
+    }
   }
   await record.save();
   res.json({ attendance: record });
@@ -42,7 +53,7 @@ router.get('/today', auth, async (req, res) => {
 router.get('/company/today', auth, async (req, res) => {
   if (!['ADMIN', 'SUPERADMIN'].includes(req.user.primaryRole)) return res.status(403).json({ error: 'Forbidden' });
   const today = startOfDay(new Date());
-  const users = await User.find({ company: req.user.company }).select('_id name');
+  const users = await User.find({ company: req.user.company, primaryRole: 'USER' }).select('_id name');
   const records = await Attendance.find({ user: { $in: users.map(u => u._id) }, date: today });
 
   const attendance = users.map(u => {
