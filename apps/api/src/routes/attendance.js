@@ -50,6 +50,11 @@ router.get('/today', auth, async (req, res) => {
   res.json({ attendance: record });
 });
 
+router.get('/history', auth, async (req, res) => {
+  const records = await Attendance.find({ employee: req.employee.id }).sort({ date: -1 });
+  res.json({ attendance: records });
+});
+
 router.get('/company/today', auth, async (req, res) => {
   if (!['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole)) return res.status(403).json({ error: 'Forbidden' });
   const today = startOfDay(new Date());
@@ -62,6 +67,39 @@ router.get('/company/today', auth, async (req, res) => {
       employee: { id: u._id, name: u.name },
       firstPunchIn: record?.firstPunchIn,
       lastPunchOut: record?.lastPunchOut
+    };
+  });
+
+  res.json({ attendance });
+});
+
+router.get('/company/history', auth, async (req, res) => {
+  if (!['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole)) return res.status(403).json({ error: 'Forbidden' });
+  const { month } = req.query;
+  let start;
+  if (month) {
+    start = startOfDay(new Date(month + '-01'));
+  } else {
+    const now = new Date();
+    start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+  }
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+
+  const employees = await Employee.find({ company: req.employee.company, primaryRole: 'EMPLOYEE' }).select('_id name');
+  const records = await Attendance.find({
+    employee: { $in: employees.map(u => u._id) },
+    date: { $gte: start, $lt: end }
+  });
+
+  const attendance = records.map(r => {
+    const emp = employees.find(u => u._id.toString() === r.employee.toString());
+    return {
+      employee: { id: emp?._id, name: emp?.name },
+      date: r.date,
+      firstPunchIn: r.firstPunchIn,
+      lastPunchOut: r.lastPunchOut,
+      workedMs: r.workedMs
     };
   });
 
