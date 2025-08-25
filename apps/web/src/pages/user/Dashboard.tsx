@@ -5,6 +5,8 @@ import RoleGuard from '../../components/RoleGuard';
 interface Attendance {
   firstPunchIn?: string;
   lastPunchOut?: string;
+  lastPunchIn?: string;
+  workedMs?: number;
 }
 
 function format(ms: number) {
@@ -40,16 +42,15 @@ export default function UserDash() {
   }, []);
 
   useEffect(() => {
-    if (attendance?.firstPunchIn && !attendance.lastPunchOut) {
+    if (attendance?.lastPunchIn) {
+      const start = new Date(attendance.lastPunchIn).getTime();
+      const base = attendance.workedMs || 0;
       const interval = setInterval(() => {
-        setElapsed(Date.now() - new Date(attendance.firstPunchIn!).getTime());
+        setElapsed(base + (Date.now() - start));
       }, 1000);
       return () => clearInterval(interval);
-    } else if (attendance?.firstPunchIn && attendance.lastPunchOut) {
-      setElapsed(
-        new Date(attendance.lastPunchOut).getTime() -
-          new Date(attendance.firstPunchIn).getTime()
-      );
+    } else if (attendance?.workedMs) {
+      setElapsed(attendance.workedMs);
     } else {
       setElapsed(0);
     }
@@ -60,7 +61,7 @@ export default function UserDash() {
       <h2 className="text-2xl font-semibold">User Area</h2>
       <div className="p-4 border rounded space-y-2">
         <div>Time worked today: {format(elapsed)}</div>
-        {!attendance?.firstPunchIn || attendance.lastPunchOut ? (
+        {!attendance?.lastPunchIn ? (
           <button
             className="px-4 py-1 bg-green-500 text-white"
             onClick={() => punch('in')}
