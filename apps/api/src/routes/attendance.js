@@ -21,7 +21,11 @@ router.post('/punch', auth, async (req, res) => {
   }
 
   if (action === 'in') {
-    if (!record.firstPunchIn) record.firstPunchIn = new Date();
+    // If a punch out was recorded earlier in the day allow a new punch in
+    if (!record.firstPunchIn || record.lastPunchOut) {
+      record.firstPunchIn = new Date();
+      record.lastPunchOut = undefined;
+    }
   } else {
     record.lastPunchOut = new Date();
   }
@@ -39,14 +43,18 @@ router.get('/company/today', auth, async (req, res) => {
   if (!['ADMIN', 'SUPERADMIN'].includes(req.user.primaryRole)) return res.status(403).json({ error: 'Forbidden' });
   const today = startOfDay(new Date());
   const users = await User.find({ company: req.user.company }).select('_id name');
-  const records = await Attendance.find({ user: { $in: users.map(u => u._id) }, date: today }).populate('user', 'name');
-  res.json({
-    attendance: records.map(r => ({
-      user: { id: r.user._id, name: r.user.name },
-      firstPunchIn: r.firstPunchIn,
-      lastPunchOut: r.lastPunchOut
-    }))
+  const records = await Attendance.find({ user: { $in: users.map(u => u._id) }, date: today });
+
+  const attendance = users.map(u => {
+    const record = records.find(r => r.user.toString() === u._id.toString());
+    return {
+      user: { id: u._id, name: u.name },
+      firstPunchIn: record?.firstPunchIn,
+      lastPunchOut: record?.lastPunchOut
+    };
   });
+
+  res.json({ attendance });
 });
 
 module.exports = router;
