@@ -13,6 +13,7 @@ app.use('/auth', require('./routes/auth'));
 app.use('/seed', require('./routes/seed'));
 app.use('/companies', require('./routes/companies'));
 app.use('/attendance', require('./routes/attendance'));
+app.use('/leaves', require('./routes/leaves'));
 
 connectDB().then(() => {
   const port = process.env.PORT || 4000;

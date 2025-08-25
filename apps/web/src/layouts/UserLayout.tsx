@@ -7,7 +7,8 @@ export default function UserLayout() {
 
   const links = [
     { to: '/app', label: 'Dashboard' },
-    { to: '/app/attendance', label: 'Attendance' }
+    { to: '/app/attendance', label: 'Attendance' },
+    { to: '/app/leave', label: 'Leave' }
   ];
 
   return (
