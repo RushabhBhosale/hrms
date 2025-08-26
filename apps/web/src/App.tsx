@@ -14,6 +14,7 @@ import AddEmployee from './pages/admin/AddEmployee';
 import EmployeeList from './pages/admin/EmployeeList';
 import AttendanceList from './pages/admin/AttendanceList';
 import LeaveRequests from './pages/admin/LeaveRequests';
+import LeaveSettings from './pages/admin/LeaveSettings';
 
 import EmployeeDash from './pages/employee/Dashboard';
 import AttendanceRecords from './pages/employee/AttendanceRecords';
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="employees" element={<EmployeeList />} />
         <Route path="employees/:id" element={<EmployeeDetails />} />
         <Route path="attendances" element={<AttendanceList />} />
+        <Route path="leave-settings" element={<LeaveSettings />} />
         <Route path="leaves" element={<LeaveRequests />} />
       </Route>
 
