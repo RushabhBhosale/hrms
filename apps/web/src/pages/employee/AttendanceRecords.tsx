@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import { getEmployee } from "../../lib/auth";
-import AdminAttendanceList from "../admin/AttendanceList";
 
 type AttRecord = {
   date: string; // ISO date (startOfDay)
@@ -39,13 +38,9 @@ function inferWorkedMs(r: AttRecord) {
 
 export default function AttendanceRecords() {
   const u = getEmployee();
-  const canViewCompany =
+  const isPrivileged =
     ["ADMIN", "SUPERADMIN"].includes(u?.primaryRole || "") ||
     (u?.subRoles || []).some((r) => r === "hr" || r === "manager");
-
-  if (canViewCompany) {
-    return <AdminAttendanceList />;
-  }
 
   const [rows, setRows] = useState<AttRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,12 +83,12 @@ export default function AttendanceRecords() {
   }, [month]);
 
   const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    const fromTs = from ? new Date(from).setHours(0, 0, 0, 0) : undefined;
-    const toTs = to ? new Date(to).setHours(23, 59, 59, 999) : undefined;
-
-    return rows
-      .filter((r) => {
+    let res = rows;
+    if (isPrivileged) {
+      const term = q.trim().toLowerCase();
+      const fromTs = from ? new Date(from).setHours(0, 0, 0, 0) : undefined;
+      const toTs = to ? new Date(to).setHours(23, 59, 59, 999) : undefined;
+      res = res.filter((r) => {
         const dTs = new Date(r.date).getTime();
         if (fromTs && dTs < fromTs) return false;
         if (toTs && dTs > toTs) return false;
@@ -107,9 +102,15 @@ export default function AttendanceRecords() {
           firstStr.includes(term) ||
           lastStr.includes(term)
         );
-      })
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [rows, q, from, to]);
+      });
+    } else {
+      res = res.filter((r) => r.date.slice(0, 7) === month);
+    }
+
+    return res.sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+  }, [rows, q, from, to, month, isPrivileged]);
 
   const totalWorked = useMemo(
     () => filtered.reduce((acc, r) => acc + inferWorkedMs(r), 0),
@@ -172,52 +173,54 @@ export default function AttendanceRecords() {
             Review your daily punches and durations.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2 items-center">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search date/time…"
-            className="h-10 w-56 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-          />
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-            aria-label="From date"
-          />
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-            aria-label="To date"
-          />
-          <button
-            onClick={() => quickRange(7)}
-            className="h-10 rounded-md border border-border px-3"
-          >
-            Last 7d
-          </button>
-          <button
-            onClick={() => quickRange(30)}
-            className="h-10 rounded-md border border-border px-3"
-          >
-            Last 30d
-          </button>
-          <button
-            onClick={load}
-            className="h-10 rounded-md border border-border px-3"
-          >
-            Refresh
-          </button>
-          <button
-            onClick={exportCsv}
-            className="h-10 rounded-md bg-primary px-4 text-white"
-          >
-            Export CSV
-          </button>
-        </div>
+        {isPrivileged && (
+          <div className="flex flex-wrap gap-2 items-center">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search date/time…"
+              className="h-10 w-56 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+            />
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+              aria-label="From date"
+            />
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+              aria-label="To date"
+            />
+            <button
+              onClick={() => quickRange(7)}
+              className="h-10 rounded-md border border-border px-3"
+            >
+              Last 7d
+            </button>
+            <button
+              onClick={() => quickRange(30)}
+              className="h-10 rounded-md border border-border px-3"
+            >
+              Last 30d
+            </button>
+            <button
+              onClick={load}
+              className="h-10 rounded-md border border-border px-3"
+            >
+              Refresh
+            </button>
+            <button
+              onClick={exportCsv}
+              className="h-10 rounded-md bg-primary px-4 text-white"
+            >
+              Export CSV
+            </button>
+          </div>
+        )}
       </div>
 
       {err && (
