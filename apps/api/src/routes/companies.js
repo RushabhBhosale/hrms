@@ -167,6 +167,35 @@ router.put("/leave-policy", auth, async (req, res) => {
   res.json({ leavePolicy: company.leavePolicy });
 });
 
+// Admin: list bank holidays
+router.get("/bank-holidays", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "bankHolidays"
+  );
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  res.json({ bankHolidays: company.bankHolidays || [] });
+});
+
+// Admin: add a bank holiday
+router.post("/bank-holidays", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { date, name } = req.body;
+  if (!date) return res.status(400).json({ error: "Missing date" });
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  const existing = company.bankHolidays?.some(
+    (h) => h.date.toISOString().slice(0, 10) === new Date(date).toISOString().slice(0, 10)
+  );
+  if (!existing) {
+    company.bankHolidays.push({ date, name });
+    await company.save();
+  }
+  res.json({ bankHolidays: company.bankHolidays });
+});
+
 // Admin: list employees in their company
 router.get("/employees", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))

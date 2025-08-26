@@ -43,6 +43,10 @@ export default function AttendanceRecords() {
   const [q, setQ] = useState(""); // free text filter (date string)
   const [from, setFrom] = useState<string>(""); // yyyy-mm-dd
   const [to, setTo] = useState<string>(""); // yyyy-mm-dd
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [summary, setSummary] = useState<{ workedDays: number; leaveDays: number } | null>(
+    null
+  );
 
   async function load() {
     try {
@@ -60,6 +64,17 @@ export default function AttendanceRecords() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get("/attendance/report", { params: { month } });
+        setSummary(res.data.report);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [month]);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -123,6 +138,22 @@ export default function AttendanceRecords() {
 
   return (
     <div className="space-y-8">
+      <section className="space-y-2">
+        <h3 className="text-xl font-semibold">Monthly Report</h3>
+        <div className="flex items-center gap-4">
+          <input
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+          />
+          {summary && (
+            <div className="text-sm">
+              Worked Days: {summary.workedDays}, Leave Days: {summary.leaveDays}
+            </div>
+          )}
+        </div>
+      </section>
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 className="text-3xl font-bold">Attendance Records</h2>

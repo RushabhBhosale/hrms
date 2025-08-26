@@ -7,6 +7,11 @@ type FormState = {
   sick: string;
 };
 
+type Holiday = {
+  date: string;
+  name?: string;
+};
+
 export default function LeaveSettings() {
   const [form, setForm] = useState<FormState>({
     casual: "0",
@@ -16,6 +21,10 @@ export default function LeaveSettings() {
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [hForm, setHForm] = useState<Holiday>({ date: "", name: "" });
+  const [hSubmitting, setHSubmitting] = useState(false);
+  const [hErr, setHErr] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -27,6 +36,12 @@ export default function LeaveSettings() {
           paid: String(p.paid ?? 0),
           sick: String(p.sick ?? 0),
         });
+      } catch {
+        // ignore
+      }
+      try {
+        const res = await api.get("/companies/bank-holidays");
+        setHolidays(res.data.bankHolidays || []);
       } catch {
         // ignore
       }
@@ -53,6 +68,28 @@ export default function LeaveSettings() {
       setErr(e?.response?.data?.error || "Failed to update leave policy");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function onHolidayChange<K extends keyof Holiday>(key: K, value: Holiday[K]) {
+    setHForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function addHoliday(e: FormEvent) {
+    e.preventDefault();
+    setHErr(null);
+    try {
+      setHSubmitting(true);
+      const res = await api.post("/companies/bank-holidays", {
+        date: hForm.date,
+        name: hForm.name,
+      });
+      setHolidays(res.data.bankHolidays || []);
+      setHForm({ date: "", name: "" });
+    } catch (e: any) {
+      setHErr(e?.response?.data?.error || "Failed to add bank holiday");
+    } finally {
+      setHSubmitting(false);
     }
   }
 
@@ -116,6 +153,61 @@ export default function LeaveSettings() {
             </button>
           </div>
         </form>
+      </section>
+
+      {hErr && (
+        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+          {hErr}
+        </div>
+      )}
+
+      <section className="rounded-lg border border-border bg-surface shadow-sm">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="text-lg font-semibold">Bank Holidays</h3>
+        </div>
+        <div className="px-6 py-5 space-y-5">
+          <ul className="list-disc pl-6 space-y-1">
+            {holidays.length === 0 && (
+              <li className="list-none text-sm text-muted">No holidays added.</li>
+            )}
+            {holidays.map((h) => (
+              <li key={h.date}>
+                {new Date(h.date).toLocaleDateString()}
+                {h.name ? ` - ${h.name}` : ""}
+              </li>
+            ))}
+          </ul>
+          <form
+            onSubmit={addHoliday}
+            className="grid gap-4 md:grid-cols-3 items-end"
+          >
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Date</label>
+              <input
+                type="date"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={hForm.date}
+                onChange={(e) => onHolidayChange("date", e.target.value)}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium">Name</label>
+              <input
+                type="text"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={hForm.name}
+                onChange={(e) => onHolidayChange("name", e.target.value)}
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={hSubmitting}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+            >
+              {hSubmitting ? "Adding..." : "Add"}
+            </button>
+          </form>
+        </div>
       </section>
     </div>
   );

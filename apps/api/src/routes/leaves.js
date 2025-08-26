@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const Leave = require('../models/Leave');
 const Employee = require('../models/Employee');
+const Company = require('../models/Company');
 const { auth } = require('../middleware/auth');
 const { requirePrimary } = require('../middleware/roles');
 
@@ -63,7 +64,14 @@ router.post('/:id/approve', auth, async (req, res) => {
   )
     return res.status(403).json({ error: 'Forbidden' });
   const employee = await Employee.findById(leave.employee);
-  const days = Math.round((leave.endDate - leave.startDate) / 86400000) + 1;
+  const company = await Company.findById(leave.company).select('bankHolidays');
+  const start = new Date(leave.startDate);
+  const end = new Date(leave.endDate);
+  const total = Math.round((end - start) / 86400000) + 1;
+  const holidays = (company?.bankHolidays || []).filter(
+    (h) => h.date >= start && h.date <= end
+  ).length;
+  const days = Math.max(total - holidays, 0);
   const key = leave.type.toLowerCase();
   const remaining = employee.leaveBalances?.[key] || 0;
   if (remaining < days)

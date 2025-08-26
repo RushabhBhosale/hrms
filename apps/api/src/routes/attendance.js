@@ -2,6 +2,8 @@ const router = require('express').Router();
 const { auth } = require('../middleware/auth');
 const Attendance = require('../models/Attendance');
 const Employee = require('../models/Employee');
+const Leave = require('../models/Leave');
+const Company = require('../models/Company');
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -53,6 +55,53 @@ router.get('/today', auth, async (req, res) => {
 router.get('/history', auth, async (req, res) => {
   const records = await Attendance.find({ employee: req.employee.id }).sort({ date: -1 });
   res.json({ attendance: records });
+});
+
+// Monthly work report for an employee
+router.get('/report/:employeeId?', auth, async (req, res) => {
+  const targetId = req.params.employeeId || req.employee.id;
+  const isSelf = String(targetId) === String(req.employee.id);
+  const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole);
+  if (!isSelf && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const { month } = req.query;
+  let start;
+  if (month) {
+    start = startOfDay(new Date(month + '-01'));
+  } else {
+    const now = new Date();
+    start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+  }
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+
+  const workedDays = await Attendance.countDocuments({
+    employee: targetId,
+    date: { $gte: start, $lt: end }
+  });
+
+  const emp = await Employee.findById(targetId).select('company');
+  const company = emp ? await Company.findById(emp.company).select('bankHolidays') : null;
+
+  const leaves = await Leave.find({
+    employee: targetId,
+    status: 'APPROVED',
+    startDate: { $lte: end },
+    endDate: { $gte: start }
+  });
+
+  let leaveDays = 0;
+  for (const l of leaves) {
+    const s = l.startDate < start ? start : new Date(l.startDate);
+    const e = l.endDate > end ? end : new Date(l.endDate);
+    const total = Math.round((e - s) / 86400000) + 1;
+    const holidays = (company?.bankHolidays || []).filter(
+      (h) => h.date >= s && h.date <= e
+    ).length;
+    leaveDays += Math.max(total - holidays, 0);
+  }
+
+  res.json({ report: { workedDays, leaveDays } });
 });
 
 router.get('/company/today', auth, async (req, res) => {
