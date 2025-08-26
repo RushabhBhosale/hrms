@@ -196,6 +196,35 @@ router.post("/bank-holidays", auth, async (req, res) => {
   res.json({ bankHolidays: company.bankHolidays });
 });
 
+// Admin: update reporting person of an employee
+router.put("/employees/:id/reporting", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { reportingPerson } = req.body;
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  const employee = await Employee.findById(req.params.id);
+  if (!employee || !employee.company.equals(company._id))
+    return res.status(404).json({ error: "Employee not found" });
+
+  if (reportingPerson) {
+    const reporting = await Employee.findById(reportingPerson);
+    if (!reporting || !reporting.company.equals(company._id))
+      return res.status(400).json({ error: "Reporting person not found" });
+    employee.reportingPerson = reporting._id;
+  } else {
+    employee.reportingPerson = undefined;
+  }
+
+  await employee.save();
+  res.json({
+    employee: {
+      id: employee._id,
+      reportingPerson: employee.reportingPerson || null,
+    },
+  });
+});
+
 // Admin: list employees in their company
 router.get("/employees", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
