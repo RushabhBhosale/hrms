@@ -8,7 +8,13 @@ const CompanySchema = new mongoose.Schema(
       casual: { type: Number, default: 0 },
       paid: { type: Number, default: 0 },
       sick: { type: Number, default: 0 }
-    }
+    },
+    bankHolidays: [
+      {
+        date: { type: Date, required: true },
+        name: { type: String }
+      }
+    ]
   },
   { timestamps: true }
 );
