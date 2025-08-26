@@ -6,6 +6,12 @@ const { auth } = require('../middleware/auth');
 const { requirePrimary } = require('../middleware/roles');
 const { syncLeaveBalances } = require('../utils/leaveBalances');
 
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
 // Employee creates a leave request
 router.post('/', auth, async (req, res) => {
   const { startDate, endDate, reason, type } = req.body;
@@ -51,6 +57,26 @@ router.get('/company', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (req
     .populate('employee', 'name')
     .sort({ createdAt: -1 })
     .lean();
+  res.json({ leaves });
+});
+
+// Company leaves happening today
+router.get('/company/today', auth, async (req, res) => {
+  const allowed =
+    ['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ['hr', 'manager'].includes(r));
+  if (!allowed) return res.status(403).json({ error: 'Forbidden' });
+
+  const today = startOfDay(new Date());
+  const leaves = await Leave.find({
+    company: req.employee.company,
+    status: 'APPROVED',
+    startDate: { $lte: today },
+    endDate: { $gte: today },
+  })
+    .populate('employee', 'name')
+    .lean();
+
   res.json({ leaves });
 });
 
