@@ -3,14 +3,15 @@ import { api } from "../../lib/api";
 import { getEmployee } from "../../lib/auth";
 
 type AttRecord = {
-  date: string; // ISO date (startOfDay)
-  firstPunchIn?: string; // ISO datetime
-  lastPunchOut?: string; // ISO datetime
-  workedMs?: number; // optional (if your API provides it)
+  date: string; // ISO (00:00:00)
+  firstPunchIn?: string;
+  lastPunchOut?: string;
+  workedMs?: number;
 };
 
-function fmtDate(d: string) {
-  return new Date(d).toLocaleDateString();
+function fmtDate(d: string | Date) {
+  const x = typeof d === "string" ? new Date(d) : d;
+  return x.toLocaleDateString();
 }
 function fmtTime(t?: string) {
   if (!t) return "-";
@@ -35,6 +36,29 @@ function inferWorkedMs(r: AttRecord) {
   }
   return 0;
 }
+function toISODateOnly(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x.toISOString().slice(0, 10);
+}
+function startOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function endOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
+function addDays(d: Date, n: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+function isSameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
 
 export default function AttendanceRecords() {
   const u = getEmployee();
@@ -46,13 +70,16 @@ export default function AttendanceRecords() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [q, setQ] = useState(""); // free text filter (date string)
-  const [from, setFrom] = useState<string>(""); // yyyy-mm-dd
-  const [to, setTo] = useState<string>(""); // yyyy-mm-dd
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [summary, setSummary] = useState<{ workedDays: number; leaveDays: number } | null>(
-    null
-  );
+  const [q, setQ] = useState(""); // privileged search
+  const [from, setFrom] = useState<string>(""); // privileged date
+  const [to, setTo] = useState<string>(""); // privileged date
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // yyyy-mm
+  const [summary, setSummary] = useState<{
+    workedDays: number;
+    leaveDays: number;
+  } | null>(null);
+
+  const [detail, setDetail] = useState<AttRecord | null>(null);
 
   async function load() {
     try {
@@ -77,11 +104,12 @@ export default function AttendanceRecords() {
         const res = await api.get("/attendance/report", { params: { month } });
         setSummary(res.data.report);
       } catch {
-        // ignore
+        /* ignore */
       }
     })();
   }, [month]);
 
+  // Apply search/date filter for privileged users; non-privileged are limited to selected month.
   const filtered = useMemo(() => {
     let res = rows;
     if (isPrivileged) {
@@ -93,7 +121,6 @@ export default function AttendanceRecords() {
         if (fromTs && dTs < fromTs) return false;
         if (toTs && dTs > toTs) return false;
         if (!term) return true;
-        // match on date string or formatted values
         const dateStr = fmtDate(r.date).toLowerCase();
         const firstStr = fmtTime(r.firstPunchIn).toLowerCase();
         const lastStr = fmtTime(r.lastPunchOut).toLowerCase();
@@ -106,15 +133,50 @@ export default function AttendanceRecords() {
     } else {
       res = res.filter((r) => r.date.slice(0, 7) === month);
     }
-
-    return res.sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+    return res;
   }, [rows, q, from, to, month, isPrivileged]);
 
+  const byDate = useMemo(() => {
+    const m = new Map<string, AttRecord>();
+    for (const r of filtered) {
+      const key = toISODateOnly(new Date(r.date));
+      m.set(key, r);
+    }
+    return m;
+  }, [filtered]);
+
+  // Build calendar grid for selected month (Sunday → Saturday)
+  const cursor = useMemo(() => {
+    const [y, m] = month.split("-").map(Number);
+    return new Date(y, m - 1, 1);
+  }, [month]);
+
+  const grid = useMemo(() => {
+    const start = startOfMonth(cursor);
+    const end = endOfMonth(cursor);
+
+    // Sunday=0..Saturday=6
+    const gridStart = addDays(start, -start.getDay()); // back to Sunday
+    const gridEnd = addDays(end, 6 - end.getDay()); // forward to Saturday
+
+    const days: { date: Date; inMonth: boolean; rec?: AttRecord }[] = [];
+    for (let d = new Date(gridStart); d <= gridEnd; d = addDays(d, 1)) {
+      const key = toISODateOnly(d);
+      days.push({
+        date: new Date(d),
+        inMonth: d.getMonth() === cursor.getMonth(),
+        rec: byDate.get(key),
+      });
+    }
+    return days;
+  }, [cursor, byDate]);
+
   const totalWorked = useMemo(
-    () => filtered.reduce((acc, r) => acc + inferWorkedMs(r), 0),
-    [filtered]
+    () =>
+      grid
+        .filter((d) => d.inMonth && d.rec)
+        .reduce((acc, d) => acc + inferWorkedMs(d.rec!), 0),
+    [grid]
   );
 
   function quickRange(days: number) {
@@ -125,76 +187,140 @@ export default function AttendanceRecords() {
     setTo(end.toISOString().slice(0, 10));
   }
 
-  function exportCsv() {
-    const header = ["Date", "First In", "Last Out", "Worked"];
-    const lines = filtered.map((r) => {
-      const worked = fmtDur(inferWorkedMs(r));
-      return [
-        fmtDate(r.date),
-        fmtTime(r.firstPunchIn),
-        fmtTime(r.lastPunchOut),
-        worked,
-      ]
-        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-        .join(",");
-    });
-    const csv = [header.join(","), ...lines].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `attendance_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  // Color scale by worked hours (red → green)
+  function colorFor(ms?: number) {
+    if (!ms || ms <= 0) return "bg-gray-200";
+    const h = ms / 3600000;
+    if (h < 2) return "bg-red-300";
+    if (h < 4) return "bg-orange-400";
+    if (h < 6) return "bg-yellow-400";
+    if (h < 8) return "bg-lime-400";
+    return "bg-green-500";
   }
+
+  const legend = [
+    { label: "0h", cls: "bg-gray-200" },
+    { label: "≤2h", cls: "bg-red-300" },
+    { label: "≤4h", cls: "bg-orange-400" },
+    { label: "≤6h", cls: "bg-yellow-400" },
+    { label: "≤8h", cls: "bg-lime-400" },
+    { label: "8h+", cls: "bg-green-500" },
+  ];
+
+  // Month navigation
+  function shiftMonth(delta: number) {
+    const [y, m] = month.split("-").map(Number);
+    // JS Date automatically adjusts years when month overflows
+    const d = new Date(y, m - 1 + delta, 1);
+    const newMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}`;
+    setMonth(newMonth);
+  }
+
+  function jumpToday() {
+    const d = new Date();
+    const newMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}`;
+    setMonth(newMonth);
+  }
+
+  const weekHeaders = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const today = new Date();
 
   return (
     <div className="space-y-8">
+      {/* Monthly report */}
       <section className="space-y-2">
-        <h3 className="text-xl font-semibold">Monthly Report</h3>
-        <div className="flex items-center gap-4">
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-          />
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-semibold">Monthly Report</h3>
+          <div className="hidden md:flex items-center gap-2">
+            {legend.map((b, i) => (
+              <div key={i} className="flex items-center gap-1 text-xs">
+                <div className={`h-3 w-3 rounded ${b.cls}`} />
+                <span className="text-muted">{b.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-md border border-border bg-surface overflow-hidden">
+            <button
+              onClick={() => shiftMonth(-1)}
+              className="px-3 py-2 border-r border-border"
+            >
+              ← Prev
+            </button>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="px-3 py-2 outline-none"
+            />
+            <button
+              onClick={() => shiftMonth(1)}
+              className="px-3 py-2 border-l border-border"
+            >
+              Next →
+            </button>
+          </div>
+          <button
+            onClick={jumpToday}
+            className="rounded-md border border-border px-3 py-2"
+          >
+            Today
+          </button>
+
           {summary && (
-            <div className="text-sm">
-              Worked Days: {summary.workedDays}, Leave Days: {summary.leaveDays}
+            <div className="text-sm ml-auto">
+              <span className="text-muted">Worked Days:</span>{" "}
+              {summary.workedDays}
+              <span className="mx-2">•</span>
+              <span className="text-muted">Leave Days:</span>{" "}
+              {summary.leaveDays}
+              <span className="mx-2">•</span>
+              <span className="text-muted">Total:</span>{" "}
+              <span className="font-medium">{fmtDur(totalWorked)}</span>
             </div>
           )}
         </div>
       </section>
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h2 className="text-3xl font-bold">Attendance Records</h2>
-          <p className="text-sm text-muted">
-            Review your daily punches and durations.
-          </p>
-        </div>
-        {isPrivileged && (
-          <div className="flex flex-wrap gap-2 items-center">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search date/time…"
-              className="h-10 w-56 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-            />
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-              aria-label="From date"
-            />
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-              aria-label="To date"
-            />
+
+      {/* Privileged filters */}
+      {isPrivileged && (
+        <section className="rounded-lg border border-border bg-surface shadow-sm p-4">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex flex-col">
+              <label className="text-xs text-muted mb-1">Search</label>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search date/time…"
+                className="h-10 w-56 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="flex flex-col">
+              <label className="text-xs text-muted mb-1">From</label>
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="flex flex-col">
+              <label className="text-xs text-muted mb-1">To</label>
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
             <button
               onClick={() => quickRange(7)}
               className="h-10 rounded-md border border-border px-3"
@@ -213,126 +339,127 @@ export default function AttendanceRecords() {
             >
               Refresh
             </button>
-            <button
-              onClick={exportCsv}
-              className="h-10 rounded-md bg-primary px-4 text-white"
-            >
-              Export CSV
-            </button>
           </div>
-        )}
-      </div>
-
-      {err && (
-        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
-          {err}
-        </div>
+        </section>
       )}
 
-      <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
-        <div className="border-b border-border px-4 py-3 flex items-center justify-between">
-          <div className="text-sm text-muted">
-            {loading
-              ? "Loading…"
-              : `${filtered.length} record${filtered.length === 1 ? "" : "s"}`}
+      {/* Heatmap */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm p-4">
+        {err && (
+          <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+            {err}
           </div>
-          <div className="text-sm text-muted">Total: {fmtDur(totalWorked)}</div>
-        </div>
+        )}
 
-        {/* Desktop table */}
-        <div className="hidden md:block">
-          <table className="w-full text-sm">
-            <thead className="bg-bg">
-              <tr className="text-left">
-                <Th>Date</Th>
-                <Th>First In</Th>
-                <Th>Last Out</Th>
-                <Th>Worked</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <SkeletonRows rows={10} cols={4} />
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-muted">
-                    No records.
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((r) => (
-                  <tr key={r.date} className="border-t border-border/70">
-                    <Td>{fmtDate(r.date)}</Td>
-                    <Td>{fmtTime(r.firstPunchIn)}</Td>
-                    <Td>{fmtTime(r.lastPunchOut)}</Td>
-                    <Td>{fmtDur(inferWorkedMs(r))}</Td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile cards */}
-        <div className="md:hidden divide-y divide-border">
-          {loading ? (
-            <div className="p-4 space-y-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="rounded-md border border-border p-3 animate-pulse space-y-2"
-                >
-                  <div className="h-4 w-40 bg-bg rounded" />
-                  <div className="h-3 w-56 bg-bg rounded" />
-                  <div className="h-6 w-24 bg-bg rounded" />
+        <div className="overflow-x-auto">
+          <div className="min-w-[720px]">
+            {/* Week headers: Sun → Sat */}
+            <div className="grid grid-cols-7 gap-2 px-1 pb-2">
+              {weekHeaders.map((d) => (
+                <div key={d} className="text-xs text-muted text-center">
+                  {d}
                 </div>
               ))}
             </div>
-          ) : filtered.length === 0 ? (
-            <div className="px-4 py-6 text-center text-muted">No records.</div>
-          ) : (
-            filtered.map((r) => (
-              <div key={r.date} className="p-4">
-                <div className="font-medium">{fmtDate(r.date)}</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                  <div className="text-muted">First In</div>
-                  <div>{fmtTime(r.firstPunchIn)}</div>
-                  <div className="text-muted">Last Out</div>
-                  <div>{fmtTime(r.lastPunchOut)}</div>
-                  <div className="text-muted">Worked</div>
-                  <div>{fmtDur(inferWorkedMs(r))}</div>
+
+            {/* Days grid */}
+            <div className="grid grid-cols-7 gap-2">
+              {loading
+                ? Array.from({ length: 42 }).map((_, i) => (
+                    <div key={i} className="h-20 rounded bg-bg animate-pulse" />
+                  ))
+                : grid.map(({ date, inMonth, rec }) => {
+                    const worked = rec ? inferWorkedMs(rec) : 0;
+                    const color = inMonth ? colorFor(worked) : "bg-bg";
+                    const isToday = isSameDay(date, today);
+                    const isWeekend = [0, 6].includes(date.getDay());
+                    return (
+                      <button
+                        key={date.toISOString()}
+                        onClick={() => rec && setDetail(rec)}
+                        disabled={!rec}
+                        className={[
+                          "relative h-20 rounded border p-2 text-left transition",
+                          "border-border/60",
+                          color,
+                          isWeekend && inMonth ? "ring-0" : "",
+                          rec
+                            ? "hover:ring-2 hover:ring-primary"
+                            : "opacity-60 cursor-default",
+                          !inMonth ? "opacity-70" : "",
+                          isToday ? "outline outline-2 outline-primary/70" : "",
+                        ].join(" ")}
+                        title={`${fmtDate(date)} — ${fmtDur(worked)}`}
+                      >
+                        {/* Day number (top-right) */}
+                        <div className="absolute top-1 right-1 text-[11px] font-medium opacity-80">
+                          {date.getDate()}
+                        </div>
+
+                        {/* Weekend subtle pattern */}
+                        {isWeekend && inMonth && (
+                          <div className="pointer-events-none absolute inset-0 rounded mix-blend-multiply bg-white/0" />
+                        )}
+
+                        {/* Content */}
+                        {rec && (
+                          <div className="mt-5 space-y-1 text-[11px] leading-tight">
+                            <div>In: {fmtTime(rec.firstPunchIn)}</div>
+                            <div>Out: {fmtTime(rec.lastPunchOut)}</div>
+                            <div className="inline-flex rounded-full bg-white/70 px-2 py-[2px] text-[10px] font-medium">
+                              {fmtDur(worked)}
+                            </div>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+            </div>
+
+            {/* Legend (mobile) */}
+            <div className="mt-4 flex md:hidden items-center gap-2">
+              {legend.map((b, i) => (
+                <div key={i} className="flex items-center gap-1 text-xs">
+                  <div className={`h-3 w-3 rounded ${b.cls}`} />
+                  <span className="text-muted">{b.label}</span>
                 </div>
-              </div>
-            ))
-          )}
+              ))}
+            </div>
+          </div>
         </div>
       </section>
-    </div>
-  );
-}
 
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
-      {children}
-    </th>
-  );
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-4 py-3 align-middle">{children}</td>;
-}
-function SkeletonRows({ rows, cols }: { rows: number; cols: number }) {
-  return (
-    <>
-      {Array.from({ length: rows }).map((_, r) => (
-        <tr key={r} className="border-t border-border/70">
-          {Array.from({ length: cols }).map((__, c) => (
-            <td key={c} className="px-4 py-3">
-              <div className="h-4 w-40 bg-bg rounded animate-pulse" />
-            </td>
-          ))}
-        </tr>
-      ))}
-    </>
+      {/* Detail modal */}
+      {detail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setDetail(null)}
+          />
+          <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
+            <h4 className="text-lg font-semibold mb-1">Attendance Details</h4>
+            <div className="text-sm text-muted mb-3">
+              {fmtDate(detail.date)}
+            </div>
+            <div className="grid grid-cols-2 gap-y-2 text-sm">
+              <div className="text-muted">First In</div>
+              <div>{fmtTime(detail.firstPunchIn)}</div>
+              <div className="text-muted">Last Out</div>
+              <div>{fmtTime(detail.lastPunchOut)}</div>
+              <div className="text-muted">Worked</div>
+              <div>{fmtDur(inferWorkedMs(detail))}</div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                className="rounded-md border border-border px-4 py-2"
+                onClick={() => setDetail(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
