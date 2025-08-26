@@ -11,6 +11,7 @@ import {
   User,
   FileText,
   ClipboardList,
+  Users,
 } from "lucide-react";
 
 export default function EmployeeLayout() {
@@ -30,8 +31,17 @@ export default function EmployeeLayout() {
     { to: "/app/documents", label: "Documents", icon: FileText },
   ];
 
+  if (u?.subRoles?.some((r) => ["hr", "manager"].includes(r))) {
+    links.splice(2, 0, {
+      to: "/app/attendances",
+      label: "Attendances",
+      icon: Users,
+    });
+  }
+
   const title = useMemo(() => {
     if (pathname === "/app") return "Dashboard";
+    if (pathname.startsWith("/app/attendances")) return "Attendances";
     if (pathname.startsWith("/app/attendance")) return "Attendance";
     if (pathname.startsWith("/app/leave")) return "Leave";
     if (pathname.startsWith("/app/approvals")) return "Leave Approvals";

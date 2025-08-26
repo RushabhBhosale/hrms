@@ -74,6 +74,14 @@ export default function App() {
       >
         <Route index element={<EmployeeDash />} />
         <Route path="attendance" element={<AttendanceRecords />} />
+        <Route
+          path="attendances"
+          element={
+            <RoleGuard sub={["hr", "manager"]}>
+              <AttendanceList />
+            </RoleGuard>
+          }
+        />
         <Route path="leave" element={<LeaveRequest />} />
         <Route path="approvals" element={<LeaveApprovals />} />
         <Route path="documents" element={<Documents />} />
