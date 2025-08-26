@@ -31,7 +31,7 @@ router.get(
   requirePrimary(["ADMIN", "SUPERADMIN"]),
   async (req, res) => {
     const emp = await Employee.findById(req.params.id)
-      .select("name email dob documents reportingPerson")
+      .select("name email dob documents reportingPerson subRoles")
       .populate("reportingPerson", "name")
       .lean();
     if (!emp) return res.status(404).json({ error: "Not found" });
@@ -45,6 +45,7 @@ router.get(
         reportingPerson: emp.reportingPerson
           ? { id: emp.reportingPerson._id, name: emp.reportingPerson.name }
           : null,
+        subRoles: emp.subRoles || [],
       },
     });
   }
