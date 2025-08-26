@@ -30,7 +30,8 @@ export default function EmployeeDetails() {
   const [uLoading, setULoading] = useState(false);
   const [uErr, setUErr] = useState<string | null>(null);
   const [uOk, setUOk] = useState<string | null>(null);
-  const [role, setRole] = useState("developer");
+  const [role, setRole] = useState("");
+  const [roles, setRoles] = useState<string[]>([]);
   const [roleLoading, setRoleLoading] = useState(false);
   const [roleErr, setRoleErr] = useState<string | null>(null);
   const [roleOk, setRoleOk] = useState<string | null>(null);
@@ -42,7 +43,7 @@ export default function EmployeeDetails() {
         const res = await api.get(`/documents/${id}`);
         setEmployee(res.data.employee);
         setReportingPerson(res.data.employee.reportingPerson?.id || "");
-        setRole(res.data.employee.subRoles?.[0] || "developer");
+        setRole(res.data.employee.subRoles?.[0] || "");
       } catch (e: any) {
         setErr(e?.response?.data?.error || "Failed to load employee");
       } finally {
@@ -57,6 +58,12 @@ export default function EmployeeDetails() {
       try {
         const res = await api.get("/companies/employees");
         setEmployees(res.data.employees || []);
+      } catch {
+        // ignore
+      }
+      try {
+        const r = await api.get("/companies/roles");
+        setRoles(r.data.roles || []);
       } catch {
         // ignore
       }
@@ -80,6 +87,10 @@ export default function EmployeeDetails() {
     }
     loadReport();
   }, [id, month]);
+
+  useEffect(() => {
+    if (!role && roles.length) setRole(roles[0]);
+  }, [roles, role]);
 
   async function updateReporting(e: FormEvent) {
     e.preventDefault();
@@ -143,9 +154,11 @@ export default function EmployeeDetails() {
             onChange={(e) => setRole(e.target.value)}
             className="rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
           >
-            <option value="hr">HR</option>
-            <option value="manager">Manager</option>
-            <option value="developer">Developer</option>
+            {roles.map((r) => (
+              <option key={r} value={r}>
+                {r.charAt(0).toUpperCase() + r.slice(1)}
+              </option>
+            ))}
           </select>
           <button
             type="submit"

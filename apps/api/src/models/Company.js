@@ -4,6 +4,7 @@ const CompanySchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     admin: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    roles: { type: [String], default: ['hr', 'manager', 'developer'] },
     leavePolicy: {
       casual: { type: Number, default: 0 },
       paid: { type: Number, default: 0 },

@@ -1,5 +1,5 @@
 export type PrimaryRole = 'SUPERADMIN' | 'ADMIN' | 'EMPLOYEE';
-export type SubRole = 'hr' | 'manager' | 'developer' | 'plain';
+export type SubRole = string;
 
 export type LeaveBalances = {
   casual: number;
