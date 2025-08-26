@@ -61,8 +61,11 @@ router.get('/history', auth, async (req, res) => {
 router.get('/report/:employeeId?', auth, async (req, res) => {
   const targetId = req.params.employeeId || req.employee.id;
   const isSelf = String(targetId) === String(req.employee.id);
-  const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole);
-  if (!isSelf && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+  const canViewOthers =
+    ['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ['hr', 'manager'].includes(r));
+  if (!isSelf && !canViewOthers)
+    return res.status(403).json({ error: 'Forbidden' });
 
   const { month } = req.query;
   let start;
@@ -105,7 +108,10 @@ router.get('/report/:employeeId?', auth, async (req, res) => {
 });
 
 router.get('/company/today', auth, async (req, res) => {
-  if (!['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole)) return res.status(403).json({ error: 'Forbidden' });
+  const allowed =
+    ['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ['hr', 'manager'].includes(r));
+  if (!allowed) return res.status(403).json({ error: 'Forbidden' });
   const today = startOfDay(new Date());
   const employees = await Employee.find({ company: req.employee.company, primaryRole: 'EMPLOYEE' }).select('_id name');
   const records = await Attendance.find({ employee: { $in: employees.map(u => u._id) }, date: today });
@@ -123,7 +129,10 @@ router.get('/company/today', auth, async (req, res) => {
 });
 
 router.get('/company/history', auth, async (req, res) => {
-  if (!['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole)) return res.status(403).json({ error: 'Forbidden' });
+  const allowed =
+    ['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ['hr', 'manager'].includes(r));
+  if (!allowed) return res.status(403).json({ error: 'Forbidden' });
   const { month } = req.query;
   let start;
   if (month) {

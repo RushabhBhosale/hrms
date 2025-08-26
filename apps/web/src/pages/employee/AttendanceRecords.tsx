@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
+import { getEmployee } from "../../lib/auth";
+import AdminAttendanceList from "../admin/AttendanceList";
 
 type AttRecord = {
   date: string; // ISO date (startOfDay)
@@ -36,6 +38,15 @@ function inferWorkedMs(r: AttRecord) {
 }
 
 export default function AttendanceRecords() {
+  const u = getEmployee();
+  const canViewCompany =
+    ["ADMIN", "SUPERADMIN"].includes(u?.primaryRole || "") ||
+    (u?.subRoles || []).some((r) => r === "hr" || r === "manager");
+
+  if (canViewCompany) {
+    return <AdminAttendanceList />;
+  }
+
   const [rows, setRows] = useState<AttRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
