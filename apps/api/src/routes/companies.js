@@ -99,6 +99,34 @@ router.post("/roles", auth, async (req, res) => {
   res.json({ roles: company.roles });
 });
 
+// Admin: update a role in their company
+router.put("/roles/:role", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const { role } = req.params;
+  const { newRole } = req.body;
+  if (!newRole) return res.status(400).json({ error: "Missing role" });
+
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const idx = company.roles.indexOf(role);
+  if (idx === -1) return res.status(404).json({ error: "Role not found" });
+  if (company.roles.includes(newRole))
+    return res.status(400).json({ error: "Role already exists" });
+
+  company.roles[idx] = newRole;
+  await company.save();
+
+  await Employee.updateMany(
+    { company: company._id, subRoles: role },
+    { $set: { "subRoles.$": newRole } }
+  );
+
+  res.json({ roles: company.roles });
+});
+
 // Admin: create employee in their company
 router.post("/employees", auth, upload.array("documents"), async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
