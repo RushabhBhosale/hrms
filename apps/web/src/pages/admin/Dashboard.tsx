@@ -1,9 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { Users, UserCheck } from "lucide-react";
 
+type Attendance = {
+  firstPunchIn?: string;
+  lastPunchOut?: string;
+  lastPunchIn?: string;
+  workedMs?: number;
+};
+
+function format(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600)
+    .toString()
+    .padStart(2, "0");
+  const m = Math.floor((total % 3600) / 60)
+    .toString()
+    .padStart(2, "0");
+  const s = Math.floor(total % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
+
 export default function AdminDash() {
   const [stats, setStats] = useState({ employees: 0, present: 0 });
+  const [attendance, setAttendance] = useState<Attendance | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [loadingAtt, setLoadingAtt] = useState(true);
+  const [pending, setPending] = useState<"in" | "out" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -21,6 +48,71 @@ export default function AdminDash() {
     load();
   }, []);
 
+  async function loadAttendance() {
+    try {
+      setErr(null);
+      setLoadingAtt(true);
+      const res = await api.get("/attendance/today");
+      setAttendance(res.data.attendance ?? null);
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || "Failed to load attendance");
+    } finally {
+      setLoadingAtt(false);
+    }
+  }
+
+  async function punch(action: "in" | "out") {
+    if (pending) return;
+    try {
+      setPending(action);
+      await api.post("/attendance/punch", { action });
+      await loadAttendance();
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || `Failed to punch ${action}`);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  useEffect(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (!attendance) {
+      setElapsed(0);
+      return;
+    }
+    const base = attendance.workedMs ?? 0;
+    if (attendance.lastPunchIn && !attendance.lastPunchOut) {
+      const start = new Date(attendance.lastPunchIn).getTime();
+      const tick = () => setElapsed(base + (Date.now() - start));
+      tick();
+      timerRef.current = window.setInterval(tick, 1000);
+      return () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+      };
+    }
+    setElapsed(base);
+  }, [attendance]);
+
+  useEffect(() => {
+    const handleVis = () => {
+      if (document.hidden) return;
+      setAttendance((prev) => (prev ? { ...prev } : prev));
+    };
+    document.addEventListener("visibilitychange", handleVis);
+    return () => document.removeEventListener("visibilitychange", handleVis);
+  }, []);
+
+  useEffect(() => {
+    loadAttendance();
+  }, []);
+
+  const punchedIn = Boolean(
+    attendance?.lastPunchIn && !attendance?.lastPunchOut
+  );
+
   return (
     <div className="space-y-8">
       <div>
@@ -29,6 +121,67 @@ export default function AdminDash() {
           Overview of company workforce and attendance today.
         </p>
       </div>
+
+      {err && (
+        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+          {err}
+        </div>
+      )}
+
+      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
+        <div className="flex items-center justify-between">
+          <div className="space-y-1">
+            <div className="text-sm text-muted">Time worked today</div>
+            <div className="text-4xl font-semibold tabular-nums">
+              {format(elapsed)}
+            </div>
+            <div className="mt-2">
+              <span
+                className={[
+                  "inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium",
+                  punchedIn
+                    ? "bg-secondary/10 text-secondary"
+                    : "bg-accent/10 text-accent",
+                ].join(" ")}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    punchedIn ? "bg-secondary" : "bg-accent"
+                  }`}
+                />
+                {punchedIn ? "Punched In" : "Punched Out"}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={loadAttendance}
+              disabled={loadingAtt || !!pending}
+              className="rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+            >
+              {loadingAtt ? "Loading…" : "Refresh"}
+            </button>
+            {punchedIn ? (
+              <button
+                className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
+                onClick={() => punch("out")}
+                disabled={pending === "out"}
+              >
+                {pending === "out" ? "Punching Out…" : "Punch Out"}
+              </button>
+            ) : (
+              <button
+                className="rounded-md bg-secondary px-4 py-2 text-white disabled:opacity-60"
+                onClick={() => punch("in")}
+                disabled={pending === "in"}
+              >
+                {pending === "in" ? "Punching In…" : "Punch In"}
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         <Card
