@@ -5,7 +5,7 @@ type FormState = {
   name: string;
   email: string;
   password: string;
-  role: "hr" | "manager" | "developer";
+  role: string;
   address: string;
   phone: string;
   dob: string;
@@ -17,7 +17,7 @@ export default function AddEmployee() {
     name: "",
     email: "",
     password: "",
-    role: "hr",
+    role: "",
     address: "",
     phone: "",
     dob: "",
@@ -28,6 +28,7 @@ export default function AddEmployee() {
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [roles, setRoles] = useState<string[]>([]);
 
   const canSubmit = useMemo(() => {
     return (
@@ -52,6 +53,14 @@ export default function AddEmployee() {
       } catch {
         // ignore
       }
+      try {
+        const r = await api.get("/companies/roles");
+        setRoles(r.data.roles || []);
+        if (r.data.roles?.length)
+          setForm((f) => ({ ...f, role: r.data.roles[0] }));
+      } catch {
+        // ignore
+      }
     })();
   }, []);
 
@@ -72,7 +81,7 @@ export default function AddEmployee() {
         name: "",
         email: "",
         password: "",
-        role: "hr",
+        role: roles[0] || "",
         address: "",
         phone: "",
         dob: "",
@@ -152,13 +161,13 @@ export default function AddEmployee() {
               <select
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={form.role}
-                onChange={(e) =>
-                  onChange("role", e.target.value as FormState["role"])
-                }
+                onChange={(e) => onChange("role", e.target.value)}
               >
-                <option value="hr">HR</option>
-                <option value="manager">Manager</option>
-                <option value="developer">Developer</option>
+                {roles.map((r) => (
+                  <option key={r} value={r}>
+                    {r.charAt(0).toUpperCase() + r.slice(1)}
+                  </option>
+                ))}
               </select>
             </Field>
           </div>

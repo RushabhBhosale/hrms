@@ -77,6 +77,28 @@ router.post("/:companyId/admin", auth, async (req, res) => {
   res.json({ company: populated });
 });
 
+// Admin: list roles in their company
+router.get("/roles", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const company = await Company.findOne({ admin: req.employee.id }).select("roles");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  res.json({ roles: company.roles || [] });
+});
+
+// Admin: add a role to their company
+router.post("/roles", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { role } = req.body;
+  if (!role) return res.status(400).json({ error: "Missing role" });
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  if (!company.roles.includes(role)) company.roles.push(role);
+  await company.save();
+  res.json({ roles: company.roles });
+});
+
 // Admin: create employee in their company
 router.post("/employees", auth, upload.array("documents"), async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
@@ -95,6 +117,8 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     return res.status(400).json({ error: "Missing fields" });
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
+  if (!company.roles.includes(role))
+    return res.status(400).json({ error: "Invalid role" });
   let existing = await Employee.findOne({ email });
   if (existing)
     return res.status(400).json({ error: "Employee already exists" });
@@ -232,10 +256,11 @@ router.put("/employees/:id/role", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   const { role } = req.body;
-  if (!role || !["hr", "manager", "developer"].includes(role))
-    return res.status(400).json({ error: "Invalid role" });
+  if (!role) return res.status(400).json({ error: "Invalid role" });
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
+  if (!company.roles.includes(role))
+    return res.status(400).json({ error: "Invalid role" });
   const employee = await Employee.findById(req.params.id);
   if (!employee || !employee.company.equals(company._id))
     return res.status(404).json({ error: "Employee not found" });
