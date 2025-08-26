@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
+import Profile from './pages/Profile';
 import Protected from './components/Protected';
 import RoleGuard from './components/RoleGuard';
 import SuperAdminLayout from './layouts/SuperAdminLayout';
@@ -41,6 +42,7 @@ export default function App() {
         <Route index element={<SADash />} />
         <Route path="companies" element={<CompanyList />} />
         <Route path="companies/add" element={<AddCompany />} />
+        <Route path="profile" element={<Profile />} />
       </Route>
 
       <Route
@@ -61,6 +63,7 @@ export default function App() {
         <Route path="leave-settings" element={<LeaveSettings />} />
         <Route path="roles" element={<RoleSettings />} />
         <Route path="leaves" element={<LeaveRequests />} />
+        <Route path="profile" element={<Profile />} />
       </Route>
 
       <Route
@@ -86,6 +89,7 @@ export default function App() {
         <Route path="leave" element={<LeaveRequest />} />
         <Route path="approvals" element={<LeaveApprovals />} />
         <Route path="documents" element={<Documents />} />
+        <Route path="profile" element={<Profile />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/login" replace />} />

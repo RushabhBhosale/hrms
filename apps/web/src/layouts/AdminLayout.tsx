@@ -32,6 +32,7 @@ export default function AdminLayout() {
     { to: "/admin/attendances", label: "Attendances", icon: CalendarCheck2 },
     { to: "/admin/leave-settings", label: "Leave Settings", icon: Settings },
     { to: "/admin/leaves", label: "Leave Requests", icon: ClipboardList },
+    { to: "/admin/profile", label: "Profile", icon: User },
   ];
 
   const title = useMemo(() => {
@@ -43,6 +44,7 @@ export default function AdminLayout() {
     if (pathname.startsWith("/admin/attendances")) return "Attendances";
     if (pathname.startsWith("/admin/leave-settings")) return "Leave Settings";
     if (pathname.startsWith("/admin/leaves")) return "Leave Requests";
+    if (pathname.startsWith("/admin/profile")) return "Profile";
     return "Admin";
   }, [pathname]);
 
