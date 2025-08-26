@@ -79,6 +79,7 @@ export default function AttendanceRecords() {
   const [summary, setSummary] = useState<{
     workedDays: number;
     leaveDays: number;
+    leaveDates: string[];
   } | null>(null);
 
   const [detail, setDetail] = useState<AttRecord | null>(null);
@@ -178,6 +179,11 @@ export default function AttendanceRecords() {
     [grid]
   );
 
+  const leaveSet = useMemo(
+    () => new Set(summary?.leaveDates || []),
+    [summary]
+  );
+
   function colorFor(ms?: number) {
     if (!ms || ms <= 0) return "bg-gray-200";
     const h = ms / 3600000;
@@ -195,6 +201,7 @@ export default function AttendanceRecords() {
     { label: "≤6h", cls: "bg-yellow-400" },
     { label: "≤8h", cls: "bg-lime-400" },
     { label: "8h+", cls: "bg-green-500" },
+    { label: "Leave", cls: "bg-blue-300" },
   ];
 
   // Month navigation
@@ -319,7 +326,13 @@ export default function AttendanceRecords() {
                   ))
                 : grid.map(({ date, inMonth, rec }) => {
                     const worked = rec ? inferWorkedMs(rec) : 0;
-                    const color = inMonth ? colorFor(worked) : "bg-bg";
+                    const key = toISODateOnly(date);
+                    const isLeave = leaveSet.has(key);
+                    const color = inMonth
+                      ? isLeave
+                        ? "bg-blue-300"
+                        : colorFor(worked)
+                      : "bg-bg";
                     const isToday = isSameDay(date, today);
                     const isWeekend = [0, 6].includes(date.getDay());
                     return (
@@ -338,7 +351,11 @@ export default function AttendanceRecords() {
                           !inMonth ? "opacity-70" : "",
                           isToday ? "outline outline-2 outline-primary/70" : "",
                         ].join(" ")}
-                        title={`${fmtDate(date)} — ${fmtDur(worked)}`}
+                        title={
+                          isLeave
+                            ? `${fmtDate(date)} — Leave`
+                            : `${fmtDate(date)} — ${fmtDur(worked)}`
+                        }
                       >
                         {/* Day number (top-right) */}
                         <div className="absolute top-1 right-1 text-[11px] font-medium opacity-80">
@@ -358,6 +375,11 @@ export default function AttendanceRecords() {
                             <div className="inline-flex rounded-full bg-white/70 px-2 py-[2px] text-[10px] font-medium">
                               {fmtDur(worked)}
                             </div>
+                          </div>
+                        )}
+                        {!rec && isLeave && (
+                          <div className="mt-5 text-[11px] font-medium text-blue-700">
+                            Leave
                           </div>
                         )}
                         {rec?.autoPunchOut && (

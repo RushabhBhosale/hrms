@@ -99,19 +99,22 @@ router.get('/report/:employeeId?', auth, async (req, res) => {
     startDate: { $lte: end },
     endDate: { $gte: start }
   });
-
-  let leaveDays = 0;
+  const holidaySet = new Set(
+    (company?.bankHolidays || []).map((h) => startOfDay(h.date).getTime())
+  );
+  const leaveDates = [];
   for (const l of leaves) {
-    const s = l.startDate < start ? start : new Date(l.startDate);
-    const e = l.endDate > end ? end : new Date(l.endDate);
-    const total = Math.round((e - s) / 86400000) + 1;
-    const holidays = (company?.bankHolidays || []).filter(
-      (h) => h.date >= s && h.date <= e
-    ).length;
-    leaveDays += Math.max(total - holidays, 0);
+    let s = l.startDate < start ? startOfDay(start) : startOfDay(l.startDate);
+    let e = l.endDate > end ? startOfDay(new Date(end.getTime() - 1)) : startOfDay(l.endDate);
+    for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+      const day = startOfDay(d).getTime();
+      if (!holidaySet.has(day)) {
+        leaveDates.push(new Date(day).toISOString().slice(0, 10));
+      }
+    }
   }
 
-  res.json({ report: { workedDays, leaveDays } });
+  res.json({ report: { workedDays, leaveDays: leaveDates.length, leaveDates } });
 });
 
 router.get('/company/today', auth, async (req, res) => {
