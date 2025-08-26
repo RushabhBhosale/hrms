@@ -6,6 +6,9 @@ export default function RoleSettings() {
   const [newRole, setNewRole] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -31,6 +34,26 @@ export default function RoleSettings() {
       setErr(e?.response?.data?.error || "Failed to add role");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function saveRole(e: FormEvent) {
+    e.preventDefault();
+    if (!editing || !editValue.trim()) return;
+    try {
+      setEditSubmitting(true);
+      setErr(null);
+      const res = await api.put(
+        `/companies/roles/${encodeURIComponent(editing)}`,
+        { newRole: editValue.trim() }
+      );
+      setRoles(res.data.roles || []);
+      setEditing(null);
+      setEditValue("");
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || "Failed to update role");
+    } finally {
+      setEditSubmitting(false);
     }
   }
 
@@ -70,7 +93,48 @@ export default function RoleSettings() {
               <li className="list-none text-sm text-muted">No roles added.</li>
             )}
             {roles.map((r) => (
-              <li key={r}>{r}</li>
+              <li key={r} className="flex items-center gap-2">
+                {editing === r ? (
+                  <form onSubmit={saveRole} className="flex items-center gap-2">
+                    <input
+                      className="rounded-md border border-border bg-surface px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-primary"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      disabled={editSubmitting}
+                      className="text-sm text-primary disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditing(null);
+                        setEditValue("");
+                      }}
+                      className="text-sm text-muted"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <span>{r}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditing(r);
+                        setEditValue(r);
+                      }}
+                      className="text-sm text-primary underline"
+                    >
+                      Edit
+                    </button>
+                  </>
+                )}
+              </li>
             ))}
           </ul>
         </div>
