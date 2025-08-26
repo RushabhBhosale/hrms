@@ -6,6 +6,7 @@ type Leave = {
   employee: { _id: string; name: string };
   startDate: string;
   endDate: string;
+  type: "CASUAL" | "PAID" | "UNPAID" | "SICK";
   reason?: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
   adminMessage?: string;
@@ -127,6 +128,7 @@ export default function LeaveRequests() {
                 <Th>Employee</Th>
                 <Th>Start</Th>
                 <Th>End</Th>
+                <Th>Type</Th>
                 <Th>Reason</Th>
                 <Th>Status</Th>
                 <Th>Actions</Th>
@@ -134,10 +136,10 @@ export default function LeaveRequests() {
             </thead>
             <tbody>
               {loading ? (
-                <SkeletonRows rows={6} cols={6} />
+                <SkeletonRows rows={6} cols={7} />
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-muted">
+                  <td colSpan={7} className="px-4 py-6 text-center text-muted">
                     No leave requests.
                   </td>
                 </tr>
@@ -147,6 +149,7 @@ export default function LeaveRequests() {
                     <Td className="font-medium">{l.employee.name}</Td>
                     <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
                     <Td>{new Date(l.endDate).toLocaleDateString()}</Td>
+                    <Td>{l.type}</Td>
                     <Td>
                       <span
                         title={l.reason || ""}
@@ -221,6 +224,8 @@ export default function LeaveRequests() {
                   <div>{new Date(l.startDate).toLocaleDateString()}</div>
                   <div className="text-muted">End</div>
                   <div>{new Date(l.endDate).toLocaleDateString()}</div>
+                  <div className="text-muted">Type</div>
+                  <div>{l.type}</div>
                   <div className="text-muted">Reason</div>
                   <div className="col-span-1">{l.reason || "-"}</div>
                 </div>

@@ -10,6 +10,7 @@ import {
   X,
   User,
   FileText,
+  ClipboardList,
 } from "lucide-react";
 
 export default function EmployeeLayout() {
@@ -25,6 +26,7 @@ export default function EmployeeLayout() {
     { to: "/app", label: "Dashboard", icon: Home },
     { to: "/app/attendance", label: "Attendance", icon: Clock8 },
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
+    { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
     { to: "/app/documents", label: "Documents", icon: FileText },
   ];
 
@@ -32,6 +34,7 @@ export default function EmployeeLayout() {
     if (pathname === "/app") return "Dashboard";
     if (pathname.startsWith("/app/attendance")) return "Attendance";
     if (pathname.startsWith("/app/leave")) return "Leave";
+    if (pathname.startsWith("/app/approvals")) return "Leave Approvals";
     if (pathname.startsWith("/app/documents")) return "Documents";
     return "Employee";
   }, [pathname]);

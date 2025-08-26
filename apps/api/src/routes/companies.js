@@ -81,7 +81,19 @@ router.post("/:companyId/admin", auth, async (req, res) => {
 router.post("/employees", auth, upload.array("documents"), async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { name, email, password, role, address, phone } = req.body;
+  const {
+    name,
+    email,
+    password,
+    role,
+    address,
+    phone,
+    reportingPerson,
+    casualLeaves,
+    paidLeaves,
+    unpaidLeaves,
+    sickLeaves,
+  } = req.body;
   if (!name || !email || !password || !role)
     return res.status(400).json({ error: "Missing fields" });
   const company = await Company.findOne({ admin: req.employee.id });
@@ -91,6 +103,18 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     return res.status(400).json({ error: "Employee already exists" });
   const passwordHash = await bcrypt.hash(password, 10);
   const documents = (req.files || []).map((f) => f.filename);
+  let reporting = null;
+  if (reportingPerson) {
+    reporting = await Employee.findById(reportingPerson);
+    if (!reporting || !reporting.company.equals(company._id))
+      return res.status(400).json({ error: "Reporting person not found" });
+  }
+  const leaveBalances = {
+    casual: parseInt(casualLeaves, 10) || 0,
+    paid: parseInt(paidLeaves, 10) || 0,
+    unpaid: parseInt(unpaidLeaves, 10) || 0,
+    sick: parseInt(sickLeaves, 10) || 0,
+  };
   const employee = await Employee.create({
     name,
     email,
@@ -101,6 +125,8 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     address,
     phone,
     documents,
+     reportingPerson: reporting ? reporting._id : undefined,
+     leaveBalances,
   });
   res.json({
     employee: {

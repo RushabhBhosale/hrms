@@ -5,12 +5,18 @@ type Leave = {
   _id: string;
   startDate: string;
   endDate: string;
+  type: "CASUAL" | "PAID" | "UNPAID" | "SICK";
   reason?: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
   adminMessage?: string;
 };
 
-type FormState = { startDate: string; endDate: string; reason: string };
+type FormState = {
+  startDate: string;
+  endDate: string;
+  reason: string;
+  type: "CASUAL" | "PAID" | "UNPAID" | "SICK";
+};
 
 function daysBetween(start?: string, end?: string) {
   if (!start || !end) return 0;
@@ -34,6 +40,7 @@ export default function LeaveRequest() {
     startDate: "",
     endDate: "",
     reason: "",
+    type: "CASUAL",
   });
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +80,7 @@ export default function LeaveRequest() {
     try {
       setSending(true);
       await api.post("/leaves", form);
-      setForm({ startDate: "", endDate: "", reason: "" });
+      setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" });
       setOk("Leave request submitted");
       await load();
     } catch (e: any) {
@@ -111,7 +118,22 @@ export default function LeaveRequest() {
           <h3 className="text-lg font-semibold">New Request</h3>
         </div>
         <form onSubmit={submit} className="px-6 py-5 space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Type</label>
+              <select
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.type}
+                onChange={(e) =>
+                  setForm({ ...form, type: e.target.value as FormState["type"] })
+                }
+              >
+                <option value="CASUAL">Casual</option>
+                <option value="PAID">Paid</option>
+                <option value="UNPAID">Unpaid</option>
+                <option value="SICK">Sick</option>
+              </select>
+            </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Start date</label>
               <input
@@ -164,7 +186,7 @@ export default function LeaveRequest() {
               type="button"
               className="rounded-md border border-border px-3 py-2"
               onClick={() =>
-                setForm({ startDate: "", endDate: "", reason: "" })
+                setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" })
               }
               disabled={sending}
             >
@@ -196,16 +218,17 @@ export default function LeaveRequest() {
                 <Th>Start</Th>
                 <Th>End</Th>
                 <Th>Days</Th>
+                <Th>Type</Th>
                 <Th>Status</Th>
                 <Th>Message</Th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <SkeletonRows rows={6} cols={5} />
+                <SkeletonRows rows={6} cols={6} />
               ) : leaves.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-muted">
+                  <td colSpan={6} className="px-4 py-6 text-center text-muted">
                     No leave requests yet.
                   </td>
                 </tr>
@@ -220,6 +243,7 @@ export default function LeaveRequest() {
                       <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
                       <Td>{new Date(l.endDate).toLocaleDateString()}</Td>
                       <Td>{daysBetween(l.startDate, l.endDate)}</Td>
+                      <Td>{l.type}</Td>
                       <Td>
                         <StatusBadge status={l.status as Leave["status"]} />
                       </Td>
@@ -273,6 +297,8 @@ export default function LeaveRequest() {
                   <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                     <div className="text-muted">Days</div>
                     <div>{daysBetween(l.startDate, l.endDate)}</div>
+                    <div className="text-muted">Type</div>
+                    <div>{l.type}</div>
                     <div className="text-muted">Message</div>
                     <div className="col-span-1">{l.adminMessage || "-"}</div>
                   </div>
