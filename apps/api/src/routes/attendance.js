@@ -52,8 +52,15 @@ router.get('/today', auth, async (req, res) => {
   res.json({ attendance: record });
 });
 
-router.get('/history', auth, async (req, res) => {
-  const records = await Attendance.find({ employee: req.employee.id }).sort({ date: -1 });
+router.get('/history/:employeeId?', auth, async (req, res) => {
+  const targetId = req.params.employeeId || req.employee.id;
+  const isSelf = String(targetId) === String(req.employee.id);
+  const canViewOthers =
+    ['ADMIN', 'SUPERADMIN'].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ['hr', 'manager'].includes(r));
+  if (!isSelf && !canViewOthers)
+    return res.status(403).json({ error: 'Forbidden' });
+  const records = await Attendance.find({ employee: targetId }).sort({ date: -1 });
   res.json({ attendance: records });
 });
 
