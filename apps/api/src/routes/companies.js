@@ -227,11 +227,21 @@ router.put("/employees/:id/reporting", auth, async (req, res) => {
 
 // Admin: list employees in their company
 router.get("/employees", auth, async (req, res) => {
-  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
-    return res.status(403).json({ error: "Forbidden" });
-  const company = await Company.findOne({ admin: req.employee.id });
-  if (!company) return res.status(400).json({ error: "Company not found" });
-  const employees = await Employee.find({ company: company._id })
+  const allowed =
+    ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+  let companyId;
+  if (["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole)) {
+    const company = await Company.findOne({ admin: req.employee.id });
+    if (!company) return res.status(400).json({ error: "Company not found" });
+    companyId = company._id;
+  } else {
+    companyId = req.employee.company;
+  }
+
+  const employees = await Employee.find({ company: companyId })
     .select("name email subRoles")
     .lean();
   res.json({

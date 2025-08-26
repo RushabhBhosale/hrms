@@ -62,17 +62,18 @@ function isSameDay(a: Date, b: Date) {
 
 export default function AttendanceRecords() {
   const u = getEmployee();
-  const isPrivileged =
+  const canViewOthers =
     ["ADMIN", "SUPERADMIN"].includes(u?.primaryRole || "") ||
     (u?.subRoles || []).some((r) => r === "hr" || r === "manager");
+
+  const [employees, setEmployees] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [employeeId, setEmployeeId] = useState<string>(u?.id || "");
 
   const [rows, setRows] = useState<AttRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-
-  const [q, setQ] = useState(""); // privileged search
-  const [from, setFrom] = useState<string>(""); // privileged date
-  const [to, setTo] = useState<string>(""); // privileged date
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // yyyy-mm
   const [summary, setSummary] = useState<{
     workedDays: number;
@@ -81,11 +82,26 @@ export default function AttendanceRecords() {
 
   const [detail, setDetail] = useState<AttRecord | null>(null);
 
-  async function load() {
+  // Load employees for admin/hr
+  useEffect(() => {
+    if (!canViewOthers) return;
+    (async () => {
+      try {
+        const res = await api.get("/companies/employees");
+        const list = res.data.employees || [];
+        setEmployees(list);
+        if (!employeeId && list.length) setEmployeeId(list[0].id);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [canViewOthers]);
+
+  async function load(empId: string) {
     try {
       setLoading(true);
       setErr(null);
-      const res = await api.get("/attendance/history");
+      const res = await api.get(`/attendance/history/${empId}`);
       setRows(res.data.attendance || []);
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to load attendance history");
@@ -95,46 +111,28 @@ export default function AttendanceRecords() {
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    if (!employeeId) return;
+    load(employeeId);
+  }, [employeeId]);
 
   useEffect(() => {
+    if (!employeeId) return;
     (async () => {
       try {
-        const res = await api.get("/attendance/report", { params: { month } });
+        const res = await api.get(`/attendance/report/${employeeId}`, {
+          params: { month },
+        });
         setSummary(res.data.report);
       } catch {
         /* ignore */
       }
     })();
-  }, [month]);
+  }, [month, employeeId]);
 
-  // Apply search/date filter for privileged users; non-privileged are limited to selected month.
-  const filtered = useMemo(() => {
-    let res = rows;
-    if (isPrivileged) {
-      const term = q.trim().toLowerCase();
-      const fromTs = from ? new Date(from).setHours(0, 0, 0, 0) : undefined;
-      const toTs = to ? new Date(to).setHours(23, 59, 59, 999) : undefined;
-      res = res.filter((r) => {
-        const dTs = new Date(r.date).getTime();
-        if (fromTs && dTs < fromTs) return false;
-        if (toTs && dTs > toTs) return false;
-        if (!term) return true;
-        const dateStr = fmtDate(r.date).toLowerCase();
-        const firstStr = fmtTime(r.firstPunchIn).toLowerCase();
-        const lastStr = fmtTime(r.lastPunchOut).toLowerCase();
-        return (
-          dateStr.includes(term) ||
-          firstStr.includes(term) ||
-          lastStr.includes(term)
-        );
-      });
-    } else {
-      res = res.filter((r) => r.date.slice(0, 7) === month);
-    }
-    return res;
-  }, [rows, q, from, to, month, isPrivileged]);
+  const filtered = useMemo(
+    () => rows.filter((r) => r.date.slice(0, 7) === month),
+    [rows, month]
+  );
 
   const byDate = useMemo(() => {
     const m = new Map<string, AttRecord>();
@@ -179,15 +177,6 @@ export default function AttendanceRecords() {
     [grid]
   );
 
-  function quickRange(days: number) {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - (days - 1));
-    setFrom(start.toISOString().slice(0, 10));
-    setTo(end.toISOString().slice(0, 10));
-  }
-
-  // Color scale by worked hours (red → green)
   function colorFor(ms?: number) {
     if (!ms || ms <= 0) return "bg-gray-200";
     const h = ms / 3600000;
@@ -210,7 +199,6 @@ export default function AttendanceRecords() {
   // Month navigation
   function shiftMonth(delta: number) {
     const [y, m] = month.split("-").map(Number);
-    // JS Date automatically adjusts years when month overflows
     const d = new Date(y, m - 1 + delta, 1);
     const newMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
       2,
@@ -248,6 +236,19 @@ export default function AttendanceRecords() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {canViewOthers && (
+            <select
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              className="h-10 rounded-md border border-border bg-surface px-3"
+            >
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="inline-flex rounded-md border border-border bg-surface overflow-hidden">
             <button
               onClick={() => shiftMonth(-1)}
@@ -289,59 +290,6 @@ export default function AttendanceRecords() {
           )}
         </div>
       </section>
-
-      {/* Privileged filters */}
-      {isPrivileged && (
-        <section className="rounded-lg border border-border bg-surface shadow-sm p-4">
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="flex flex-col">
-              <label className="text-xs text-muted mb-1">Search</label>
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search date/time…"
-                className="h-10 w-56 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <div className="flex flex-col">
-              <label className="text-xs text-muted mb-1">From</label>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-                className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <div className="flex flex-col">
-              <label className="text-xs text-muted mb-1">To</label>
-              <input
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <button
-              onClick={() => quickRange(7)}
-              className="h-10 rounded-md border border-border px-3"
-            >
-              Last 7d
-            </button>
-            <button
-              onClick={() => quickRange(30)}
-              className="h-10 rounded-md border border-border px-3"
-            >
-              Last 30d
-            </button>
-            <button
-              onClick={load}
-              className="h-10 rounded-md border border-border px-3"
-            >
-              Refresh
-            </button>
-          </div>
-        </section>
-      )}
 
       {/* Heatmap */}
       <section className="rounded-lg border border-border bg-surface shadow-sm p-4">
@@ -438,9 +386,7 @@ export default function AttendanceRecords() {
           />
           <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
             <h4 className="text-lg font-semibold mb-1">Attendance Details</h4>
-            <div className="text-sm text-muted mb-3">
-              {fmtDate(detail.date)}
-            </div>
+            <div className="text-sm text-muted mb-3">{fmtDate(detail.date)}</div>
             <div className="grid grid-cols-2 gap-y-2 text-sm">
               <div className="text-muted">First In</div>
               <div>{fmtTime(detail.firstPunchIn)}</div>
@@ -463,3 +409,4 @@ export default function AttendanceRecords() {
     </div>
   );
 }
+
