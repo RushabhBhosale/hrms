@@ -25,14 +25,18 @@ export default function EmployeeLayout() {
 
   const links = [
     { to: "/app", label: "Dashboard", icon: Home },
-    { to: "/app/attendance", label: "Attendance", icon: Clock8 },
+    ...(u?.subRoles?.some((r) => ["hr", "manager"].includes(r))
+      ? []
+      : [{ to: "/app/attendance", label: "Attendance", icon: Clock8 }]),
+
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
     { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
     { to: "/app/documents", label: "Documents", icon: FileText },
   ];
 
+  // if HR or Manager → add "Attendances"
   if (u?.subRoles?.some((r) => ["hr", "manager"].includes(r))) {
-    links.splice(2, 0, {
+    links.splice(1, 0, {
       to: "/app/attendances",
       label: "Attendances",
       icon: Users,

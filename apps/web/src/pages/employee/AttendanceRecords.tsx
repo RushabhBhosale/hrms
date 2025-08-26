@@ -67,10 +67,11 @@ export default function AttendanceRecords() {
     ["ADMIN", "SUPERADMIN"].includes(u?.primaryRole || "") ||
     (u?.subRoles || []).some((r) => r === "hr" || r === "manager");
 
-  const [employees, setEmployees] = useState<
-    { id: string; name: string }[]
-  >([]);
+  const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
+    []
+  );
   const [employeeId, setEmployeeId] = useState<string>(u?.id || "");
+  const [empQuery, setEmpQuery] = useState("");
 
   const [rows, setRows] = useState<AttRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,6 +84,12 @@ export default function AttendanceRecords() {
   } | null>(null);
 
   const [detail, setDetail] = useState<AttRecord | null>(null);
+
+  // ADMIN/HR filters
+  const [showWeekends, setShowWeekends] = useState(true);
+  const [onlyWorked, setOnlyWorked] = useState(false);
+  const [minHours, setMinHours] = useState<number>(0);
+  const [showLeaves, setShowLeaves] = useState(true);
 
   // Load employees for admin/hr
   useEffect(() => {
@@ -97,7 +104,7 @@ export default function AttendanceRecords() {
         /* ignore */
       }
     })();
-  }, [canViewOthers]);
+  }, [canViewOthers]); // eslint-disable-line
 
   async function load(empId: string) {
     try {
@@ -154,8 +161,6 @@ export default function AttendanceRecords() {
   const grid = useMemo(() => {
     const start = startOfMonth(cursor);
     const end = endOfMonth(cursor);
-
-    // Sunday=0..Saturday=6
     const gridStart = addDays(start, -start.getDay()); // back to Sunday
     const gridEnd = addDays(end, 6 - end.getDay()); // forward to Saturday
 
@@ -179,11 +184,9 @@ export default function AttendanceRecords() {
     [grid]
   );
 
-  const leaveSet = useMemo(
-    () => new Set(summary?.leaveDates || []),
-    [summary]
-  );
+  const leaveSet = useMemo(() => new Set(summary?.leaveDates || []), [summary]);
 
+  // Color scale by worked hours
   function colorFor(ms?: number) {
     if (!ms || ms <= 0) return "bg-gray-200";
     const h = ms / 3600000;
@@ -214,7 +217,6 @@ export default function AttendanceRecords() {
     )}`;
     setMonth(newMonth);
   }
-
   function jumpToday() {
     const d = new Date();
     const newMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
@@ -226,6 +228,32 @@ export default function AttendanceRecords() {
 
   const weekHeaders = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const today = new Date();
+
+  // Admin: employee search & filtered list
+  const filteredEmployees = useMemo(() => {
+    const q = empQuery.trim().toLowerCase();
+    if (!q) return employees;
+    return employees.filter(
+      (e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q)
+    );
+  }, [empQuery, employees]);
+
+  // Day-level filter predicate
+  function passesDayFilters(date: Date, rec?: AttRecord) {
+    if (!canViewOthers) return true; // only admins/hr see filters
+    const dow = date.getDay();
+    const isWeekend = dow === 0 || dow === 6;
+    const key = toISODateOnly(date);
+    const isLeave = leaveSet.has(key);
+    const worked = rec ? inferWorkedMs(rec) : 0;
+    const workedH = worked / 3600000;
+
+    if (!showWeekends && isWeekend) return false;
+    if (!showLeaves && isLeave) return false;
+    if (onlyWorked && worked <= 0) return false;
+    if (workedH < minHours) return false;
+    return true;
+  }
 
   return (
     <div className="space-y-8">
@@ -245,18 +273,69 @@ export default function AttendanceRecords() {
 
         <div className="flex flex-wrap items-center gap-3">
           {canViewOthers && (
-            <select
-              value={employeeId}
-              onChange={(e) => setEmployeeId(e.target.value)}
-              className="h-10 rounded-md border border-border bg-surface px-3"
-            >
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.name}
-                </option>
-              ))}
-            </select>
+            <>
+              <input
+                value={empQuery}
+                onChange={(e) => setEmpQuery(e.target.value)}
+                placeholder="Search employee…"
+                className="h-10 w-48 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+              />
+              <select
+                value={employeeId}
+                onChange={(e) => setEmployeeId(e.target.value)}
+                className="h-10 rounded-md border border-border bg-surface px-3"
+              >
+                {filteredEmployees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.name}
+                  </option>
+                ))}
+              </select>
+
+              {/* Admin day filters */}
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={showWeekends}
+                    onChange={(e) => setShowWeekends(e.target.checked)}
+                  />
+                  Show weekends
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={onlyWorked}
+                    onChange={(e) => setOnlyWorked(e.target.checked)}
+                  />
+                  Only worked days
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  Min hours
+                  <select
+                    className="h-8 rounded-md border border-border bg-surface px-2"
+                    value={minHours}
+                    onChange={(e) => setMinHours(Number(e.target.value))}
+                  >
+                    <option value={0}>0</option>
+                    <option value={2}>2</option>
+                    <option value={4}>4</option>
+                    <option value={6}>6</option>
+                    <option value={8}>8</option>
+                  </select>
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={showLeaves}
+                    onChange={(e) => setShowLeaves(e.target.checked)}
+                  />
+                  Show leave days
+                </label>
+              </div>
+            </>
           )}
+
           <div className="inline-flex rounded-md border border-border bg-surface overflow-hidden">
             <button
               onClick={() => shiftMonth(-1)}
@@ -311,7 +390,7 @@ export default function AttendanceRecords() {
           <div className="min-w-[720px]">
             {/* Week headers: Sun → Sat */}
             <div className="grid grid-cols-7 gap-2 px-1 pb-2">
-              {weekHeaders.map((d) => (
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                 <div key={d} className="text-xs text-muted text-center">
                   {d}
                 </div>
@@ -330,25 +409,32 @@ export default function AttendanceRecords() {
                     const isLeave = leaveSet.has(key);
                     const color = inMonth
                       ? isLeave
-                        ? "bg-blue-300"
+                        ? showLeaves
+                          ? "bg-blue-300"
+                          : "bg-bg"
                         : colorFor(worked)
                       : "bg-bg";
                     const isToday = isSameDay(date, today);
-                    const isWeekend = [0, 6].includes(date.getDay());
+
+                    // Apply filters (dim & disable instead of removing)
+                    const hidden = canViewOthers
+                      ? !passesDayFilters(date, rec)
+                      : false;
+
                     return (
                       <button
                         key={date.toISOString()}
-                        onClick={() => rec && setDetail(rec)}
-                        disabled={!rec}
+                        onClick={() => rec && !hidden && setDetail(rec)}
+                        disabled={!rec || hidden}
                         className={[
                           "relative h-20 rounded border p-2 text-left transition",
                           "border-border/60",
                           color,
-                          isWeekend && inMonth ? "ring-0" : "",
-                          rec
-                            ? "hover:ring-2 hover:ring-primary"
-                            : "opacity-60 cursor-default",
                           !inMonth ? "opacity-70" : "",
+                          hidden ? "opacity-25 pointer-events-none" : "",
+                          rec && !hidden
+                            ? "hover:ring-2 hover:ring-primary"
+                            : "",
                           isToday ? "outline outline-2 outline-primary/70" : "",
                         ].join(" ")}
                         title={
@@ -362,13 +448,8 @@ export default function AttendanceRecords() {
                           {date.getDate()}
                         </div>
 
-                        {/* Weekend subtle pattern */}
-                        {isWeekend && inMonth && (
-                          <div className="pointer-events-none absolute inset-0 rounded mix-blend-multiply bg-white/0" />
-                        )}
-
                         {/* Content */}
-                        {rec && (
+                        {rec && !hidden && (
                           <div className="mt-5 space-y-1 text-[11px] leading-tight">
                             <div>In: {fmtTime(rec.firstPunchIn)}</div>
                             <div>Out: {fmtTime(rec.lastPunchOut)}</div>
@@ -377,13 +458,15 @@ export default function AttendanceRecords() {
                             </div>
                           </div>
                         )}
-                        {!rec && isLeave && (
+                        {!rec && isLeave && showLeaves && (
                           <div className="mt-5 text-[11px] font-medium text-blue-700">
                             Leave
                           </div>
                         )}
                         {rec?.autoPunchOut && (
-                          <div className="absolute bottom-1 left-1 text-[10px] text-error">!</div>
+                          <div className="absolute bottom-1 left-1 text-[10px] text-error">
+                            !
+                          </div>
                         )}
                       </button>
                     );
@@ -392,7 +475,12 @@ export default function AttendanceRecords() {
 
             {/* Legend (mobile) */}
             <div className="mt-4 flex md:hidden items-center gap-2">
-              {legend.map((b, i) => (
+              {[
+                ...legend.filter((l) => l.label !== "Leave"),
+                ...(showLeaves
+                  ? legend.filter((l) => l.label === "Leave")
+                  : []),
+              ].map((b, i) => (
                 <div key={i} className="flex items-center gap-1 text-xs">
                   <div className={`h-3 w-3 rounded ${b.cls}`} />
                   <span className="text-muted">{b.label}</span>
@@ -412,7 +500,9 @@ export default function AttendanceRecords() {
           />
           <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
             <h4 className="text-lg font-semibold mb-1">Attendance Details</h4>
-            <div className="text-sm text-muted mb-3">{fmtDate(detail.date)}</div>
+            <div className="text-sm text-muted mb-3">
+              {fmtDate(detail.date)}
+            </div>
             <div className="grid grid-cols-2 gap-y-2 text-sm">
               <div className="text-muted">First In</div>
               <div>{fmtTime(detail.firstPunchIn)}</div>
@@ -421,7 +511,9 @@ export default function AttendanceRecords() {
               <div className="text-muted">Worked</div>
               <div>{fmtDur(inferWorkedMs(detail))}</div>
               {detail.autoPunchOut && (
-                <div className="col-span-2 mt-2 text-xs text-error">Auto punched out</div>
+                <div className="col-span-2 mt-2 text-xs text-error">
+                  Auto punched out
+                </div>
               )}
             </div>
             <div className="mt-4 flex justify-end">
@@ -438,4 +530,3 @@ export default function AttendanceRecords() {
     </div>
   );
 }
-
