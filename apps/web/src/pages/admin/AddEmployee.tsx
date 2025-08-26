@@ -1,4 +1,4 @@
-import { useState, FormEvent, ChangeEvent, useMemo } from "react";
+import { useState, FormEvent, ChangeEvent, useMemo, useEffect } from "react";
 import { api } from "../../lib/api";
 
 type FormState = {
@@ -8,6 +8,11 @@ type FormState = {
   role: "hr" | "manager" | "developer";
   address: string;
   phone: string;
+  reportingPerson: string;
+  casualLeaves: string;
+  paidLeaves: string;
+  unpaidLeaves: string;
+  sickLeaves: string;
 };
 
 export default function AddEmployee() {
@@ -18,11 +23,17 @@ export default function AddEmployee() {
     role: "hr",
     address: "",
     phone: "",
+    reportingPerson: "",
+    casualLeaves: "0",
+    paidLeaves: "0",
+    unpaidLeaves: "0",
+    sickLeaves: "0",
   });
   const [docs, setDocs] = useState<FileList | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
 
   const canSubmit = useMemo(() => {
     return (
@@ -38,6 +49,17 @@ export default function AddEmployee() {
   function onChange<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get("/companies/employees");
+        setEmployees(res.data.employees || []);
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -59,6 +81,11 @@ export default function AddEmployee() {
         role: "hr",
         address: "",
         phone: "",
+        reportingPerson: "",
+        casualLeaves: "0",
+        paidLeaves: "0",
+        unpaidLeaves: "0",
+        sickLeaves: "0",
       });
       setDocs(null);
       setOk("Employee added");
@@ -146,6 +173,23 @@ export default function AddEmployee() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Reporting Person">
+              <select
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.reportingPerson}
+                onChange={(e) => onChange("reportingPerson", e.target.value)}
+              >
+                <option value="">None</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
             <Field label="Address">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -160,6 +204,41 @@ export default function AddEmployee() {
                 placeholder="+91 98765 43210"
                 value={form.phone}
                 onChange={(e) => onChange("phone", e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-4">
+            <Field label="Casual Leaves">
+              <input
+                type="number"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.casualLeaves}
+                onChange={(e) => onChange("casualLeaves", e.target.value)}
+              />
+            </Field>
+            <Field label="Paid Leaves">
+              <input
+                type="number"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.paidLeaves}
+                onChange={(e) => onChange("paidLeaves", e.target.value)}
+              />
+            </Field>
+            <Field label="Unpaid Leaves">
+              <input
+                type="number"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.unpaidLeaves}
+                onChange={(e) => onChange("unpaidLeaves", e.target.value)}
+              />
+            </Field>
+            <Field label="Sick Leaves">
+              <input
+                type="number"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.sickLeaves}
+                onChange={(e) => onChange("sickLeaves", e.target.value)}
               />
             </Field>
           </div>

@@ -10,7 +10,14 @@ const EmployeeSchema = new mongoose.Schema(
     company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
     address: { type: String },
     phone: { type: String },
-    documents: { type: [String], default: [] }
+    documents: { type: [String], default: [] },
+    reportingPerson: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    leaveBalances: {
+      casual: { type: Number, default: 0 },
+      paid: { type: Number, default: 0 },
+      unpaid: { type: Number, default: 0 },
+      sick: { type: Number, default: 0 }
+    }
   },
   { timestamps: true }
 );

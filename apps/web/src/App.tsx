@@ -19,6 +19,7 @@ import EmployeeDash from './pages/employee/Dashboard';
 import AttendanceRecords from './pages/employee/AttendanceRecords';
 import LeaveRequest from './pages/employee/LeaveRequest';
 import Documents from './pages/employee/Documents';
+import LeaveApprovals from './pages/employee/LeaveApprovals';
 import EmployeeDetails from './pages/admin/EmployeeDetails';
 
 export default function App() {
@@ -72,6 +73,7 @@ export default function App() {
         <Route index element={<EmployeeDash />} />
         <Route path="attendance" element={<AttendanceRecords />} />
         <Route path="leave" element={<LeaveRequest />} />
+        <Route path="approvals" element={<LeaveApprovals />} />
         <Route path="documents" element={<Documents />} />
       </Route>
 
