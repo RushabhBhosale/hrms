@@ -1,6 +1,13 @@
 export type PrimaryRole = 'SUPERADMIN' | 'ADMIN' | 'EMPLOYEE';
 export type SubRole = 'hr' | 'manager' | 'developer' | 'plain';
 
+export type LeaveBalances = {
+  casual: number;
+  paid: number;
+  unpaid: number;
+  sick: number;
+};
+
 export type Employee = {
   id: string;
   name: string;
@@ -8,6 +15,7 @@ export type Employee = {
   primaryRole: PrimaryRole;
   subRoles: SubRole[];
   company?: string;
+  leaveBalances: LeaveBalances;
 };
 
 export function setAuth(token: string, employee: Employee) {

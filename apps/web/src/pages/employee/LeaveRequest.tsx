@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
+import { getEmployee, setAuth, LeaveBalances } from "../../lib/auth";
 
 type Leave = {
   _id: string;
@@ -47,6 +48,7 @@ export default function LeaveRequest() {
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [balances, setBalances] = useState<LeaveBalances | null>(() => getEmployee()?.leaveBalances || null);
 
   async function load() {
     try {
@@ -63,6 +65,20 @@ export default function LeaveRequest() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    async function refreshBalances() {
+      try {
+        const res = await api.get("/auth/me");
+        setBalances(res.data.employee.leaveBalances);
+        const token = localStorage.getItem("token");
+        if (token) setAuth(token, res.data.employee);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    refreshBalances();
   }, []);
 
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -110,6 +126,18 @@ export default function LeaveRequest() {
         <div className="rounded-md border border-success/20 bg-green-50 px-4 py-2 text-sm text-success">
           {ok}
         </div>
+      )}
+
+      {balances && (
+        <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
+          <h3 className="text-lg font-semibold mb-4">Leave Balances</h3>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>Casual: {balances.casual}</div>
+            <div>Paid: {balances.paid}</div>
+            <div>Sick: {balances.sick}</div>
+            <div>Unpaid: {balances.unpaid}</div>
+          </div>
+        </section>
       )}
 
       {/* Form */}

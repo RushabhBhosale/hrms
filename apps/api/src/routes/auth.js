@@ -16,7 +16,8 @@ router.post('/login', async (req, res) => {
     email: employee.email,
     primaryRole: employee.primaryRole,
     subRoles: employee.subRoles,
-    company: employee.company
+    company: employee.company,
+    leaveBalances: employee.leaveBalances,
   };
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '2h' });
   res.json({ token, employee: payload });
@@ -31,7 +32,8 @@ router.get('/me', auth, async (req, res) => {
     email: employee.email,
     primaryRole: employee.primaryRole,
     subRoles: employee.subRoles,
-    company: employee.company
+    company: employee.company,
+    leaveBalances: employee.leaveBalances,
   };
   res.json({ employee: payload });
 });
