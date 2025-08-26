@@ -7,6 +7,7 @@ type AttRecord = {
   firstPunchIn?: string;
   lastPunchOut?: string;
   workedMs?: number;
+  autoPunchOut?: boolean;
 };
 
 function fmtDate(d: string | Date) {
@@ -359,6 +360,9 @@ export default function AttendanceRecords() {
                             </div>
                           </div>
                         )}
+                        {rec?.autoPunchOut && (
+                          <div className="absolute bottom-1 left-1 text-[10px] text-error">!</div>
+                        )}
                       </button>
                     );
                   })}
@@ -394,6 +398,9 @@ export default function AttendanceRecords() {
               <div>{fmtTime(detail.lastPunchOut)}</div>
               <div className="text-muted">Worked</div>
               <div>{fmtDur(inferWorkedMs(detail))}</div>
+              {detail.autoPunchOut && (
+                <div className="col-span-2 mt-2 text-xs text-error">Auto punched out</div>
+              )}
             </div>
             <div className="mt-4 flex justify-end">
               <button
