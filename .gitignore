@@ -3,3 +3,4 @@ node_modules
 *.log
 apps/**/dist
 apps/**/build
+apps/**/tsconfig.tsbuildinfo

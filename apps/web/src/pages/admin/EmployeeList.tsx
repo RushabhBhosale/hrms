@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 
 type CompanyEmployee = {
@@ -105,7 +106,14 @@ export default function EmployeeList() {
               ) : (
                 filtered.map((u) => (
                   <tr key={u.id} className="border-t border-border/70">
-                    <Td>{u.name}</Td>
+                    <Td>
+                      <Link
+                        to={`/admin/employees/${u.id}`}
+                        className="text-primary underline"
+                      >
+                        {u.name}
+                      </Link>
+                    </Td>
                     <Td>
                       <span className="truncate inline-block max-w-[28rem] align-middle">
                         {u.email}
@@ -143,7 +151,14 @@ export default function EmployeeList() {
           ) : (
             filtered.map((u) => (
               <div key={u.id} className="p-4">
-                <div className="font-medium">{u.name}</div>
+                <div className="font-medium">
+                  <Link
+                    to={`/admin/employees/${u.id}`}
+                    className="text-primary underline"
+                  >
+                    {u.name}
+                  </Link>
+                </div>
                 <div className="text-sm text-muted">{u.email}</div>
                 <div className="mt-2">
                   <RoleBadge role={u.subRoles?.[0]} />

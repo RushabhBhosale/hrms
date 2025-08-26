@@ -9,6 +9,7 @@ import {
   Menu,
   X,
   User,
+  FileText,
 } from "lucide-react";
 
 export default function EmployeeLayout() {
@@ -24,12 +25,14 @@ export default function EmployeeLayout() {
     { to: "/app", label: "Dashboard", icon: Home },
     { to: "/app/attendance", label: "Attendance", icon: Clock8 },
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
+    { to: "/app/documents", label: "Documents", icon: FileText },
   ];
 
   const title = useMemo(() => {
     if (pathname === "/app") return "Dashboard";
     if (pathname.startsWith("/app/attendance")) return "Attendance";
     if (pathname.startsWith("/app/leave")) return "Leave";
+    if (pathname.startsWith("/app/documents")) return "Documents";
     return "Employee";
   }, [pathname]);
 
