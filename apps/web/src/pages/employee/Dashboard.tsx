@@ -182,9 +182,7 @@ export default function EmployeeDash() {
           General
         </div>
         <RoleGuard sub={["hr"]}>
-          <div className="p-4 rounded-lg border border-border bg-surface shadow-sm">
-            HR Panel
-          </div>
+          <HRPanel />
         </RoleGuard>
         <RoleGuard sub={["manager"]}>
           <div className="p-4 rounded-lg border border-border bg-surface shadow-sm">
@@ -192,6 +190,73 @@ export default function EmployeeDash() {
           </div>
         </RoleGuard>
       </div>
+    </div>
+  );
+}
+
+type CompanyEmployee = { id: string; name: string };
+
+function HRPanel() {
+  const [employees, setEmployees] = useState<CompanyEmployee[]>([]);
+  const [leaveMap, setLeaveMap] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        setErr(null);
+        setLoading(true);
+        const [emps, leaves] = await Promise.all([
+          api.get("/companies/employees"),
+          api.get("/leaves/company/today"),
+        ]);
+        setEmployees(emps.data.employees || []);
+        const map: Record<string, boolean> = {};
+        (leaves.data.leaves || []).forEach((l: any) => {
+          const id = l.employee.id || l.employee._id;
+          map[id] = true;
+        });
+        setLeaveMap(map);
+      } catch (e: any) {
+        setErr(e?.response?.data?.error || "Failed to load HR data");
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  return (
+    <div className="p-4 rounded-lg border border-border bg-surface shadow-sm">
+      <div className="mb-4 font-semibold">HR Panel</div>
+      {err && (
+        <div className="mb-4 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+          {err}
+        </div>
+      )}
+      {loading ? (
+        <div>Loading…</div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left">
+              <th className="px-2 py-1">Employee</th>
+              <th className="px-2 py-1">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((e) => (
+              <tr key={e.id} className="border-t border-border/70">
+                <td className="px-2 py-1">{e.name}</td>
+                <td className="px-2 py-1">
+                  {leaveMap[e.id] ? "On Leave" : "Present"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
