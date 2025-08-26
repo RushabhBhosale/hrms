@@ -9,6 +9,7 @@ type Employee = {
   dob?: string;
   documents: string[];
   reportingPerson?: { id: string; name: string } | null;
+  subRoles: string[];
 };
 
 export default function EmployeeDetails() {
@@ -29,6 +30,10 @@ export default function EmployeeDetails() {
   const [uLoading, setULoading] = useState(false);
   const [uErr, setUErr] = useState<string | null>(null);
   const [uOk, setUOk] = useState<string | null>(null);
+  const [role, setRole] = useState("developer");
+  const [roleLoading, setRoleLoading] = useState(false);
+  const [roleErr, setRoleErr] = useState<string | null>(null);
+  const [roleOk, setRoleOk] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -37,6 +42,7 @@ export default function EmployeeDetails() {
         const res = await api.get(`/documents/${id}`);
         setEmployee(res.data.employee);
         setReportingPerson(res.data.employee.reportingPerson?.id || "");
+        setRole(res.data.employee.subRoles?.[0] || "developer");
       } catch (e: any) {
         setErr(e?.response?.data?.error || "Failed to load employee");
       } finally {
@@ -93,6 +99,23 @@ export default function EmployeeDetails() {
     }
   }
 
+  async function updateRole(e: FormEvent) {
+    e.preventDefault();
+    if (!id) return;
+    try {
+      setRoleLoading(true);
+      setRoleErr(null);
+      setRoleOk(null);
+      await api.put(`/companies/employees/${id}/role`, { role });
+      setRoleOk("Role updated");
+      setEmployee((prev) => (prev ? { ...prev, subRoles: [role] } : prev));
+    } catch (e: any) {
+      setRoleErr(e?.response?.data?.error || "Failed to update role");
+    } finally {
+      setRoleLoading(false);
+    }
+  }
+
   const base = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
   if (loading) return <div>Loading…</div>;
@@ -110,6 +133,29 @@ export default function EmployeeDetails() {
           </p>
         )}
       </div>
+      <section className="space-y-2">
+        <h3 className="font-semibold">Role</h3>
+        {roleErr && <div className="text-sm text-error">{roleErr}</div>}
+        {roleOk && <div className="text-sm text-success">{roleOk}</div>}
+        <form onSubmit={updateRole} className="flex items-center gap-2">
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+          >
+            <option value="hr">HR</option>
+            <option value="manager">Manager</option>
+            <option value="developer">Developer</option>
+          </select>
+          <button
+            type="submit"
+            disabled={roleLoading}
+            className="rounded-md bg-primary px-4 py-2 text-white disabled:opacity-50"
+          >
+            {roleLoading ? "Saving…" : "Save"}
+          </button>
+        </form>
+      </section>
       <section className="space-y-2">
         <h3 className="font-semibold">Reporting Person</h3>
         {uErr && (
@@ -185,4 +231,3 @@ export default function EmployeeDetails() {
     </div>
   );
 }
-

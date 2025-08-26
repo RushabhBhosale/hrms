@@ -227,6 +227,26 @@ router.put("/employees/:id/reporting", auth, async (req, res) => {
   });
 });
 
+// Admin: update role of an employee
+router.put("/employees/:id/role", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { role } = req.body;
+  if (!role || !["hr", "manager", "developer"].includes(role))
+    return res.status(400).json({ error: "Invalid role" });
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  const employee = await Employee.findById(req.params.id);
+  if (!employee || !employee.company.equals(company._id))
+    return res.status(404).json({ error: "Employee not found" });
+
+  employee.subRoles = [role];
+  await employee.save();
+  res.json({
+    employee: { id: employee._id, subRoles: employee.subRoles },
+  });
+});
+
 // Admin: list employees in their company
 router.get("/employees", auth, async (req, res) => {
   const allowed =
