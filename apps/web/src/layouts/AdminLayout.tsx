@@ -33,6 +33,7 @@ export default function AdminLayout() {
   const title = useMemo(() => {
     if (pathname === "/admin") return "Dashboard";
     if (pathname.startsWith("/admin/employees/add")) return "Add Employee";
+    if (pathname.startsWith("/admin/employees/")) return "Employee Details";
     if (pathname.startsWith("/admin/employees")) return "Employee List";
     if (pathname.startsWith("/admin/attendances")) return "Attendances";
     if (pathname.startsWith("/admin/leaves")) return "Leave Requests";

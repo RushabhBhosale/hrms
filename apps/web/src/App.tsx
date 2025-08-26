@@ -18,6 +18,8 @@ import LeaveRequests from './pages/admin/LeaveRequests';
 import EmployeeDash from './pages/employee/Dashboard';
 import AttendanceRecords from './pages/employee/AttendanceRecords';
 import LeaveRequest from './pages/employee/LeaveRequest';
+import Documents from './pages/employee/Documents';
+import EmployeeDetails from './pages/admin/EmployeeDetails';
 
 export default function App() {
   return (
@@ -52,6 +54,7 @@ export default function App() {
         <Route index element={<AdminDash />} />
         <Route path="employees/add" element={<AddEmployee />} />
         <Route path="employees" element={<EmployeeList />} />
+        <Route path="employees/:id" element={<EmployeeDetails />} />
         <Route path="attendances" element={<AttendanceList />} />
         <Route path="leaves" element={<LeaveRequests />} />
       </Route>
@@ -69,6 +72,7 @@ export default function App() {
         <Route index element={<EmployeeDash />} />
         <Route path="attendance" element={<AttendanceRecords />} />
         <Route path="leave" element={<LeaveRequest />} />
+        <Route path="documents" element={<Documents />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/login" replace />} />
