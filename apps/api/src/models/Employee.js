@@ -10,6 +10,7 @@ const EmployeeSchema = new mongoose.Schema(
     company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
     address: { type: String },
     phone: { type: String },
+    dob: { type: Date },
     documents: { type: [String], default: [] },
     reportingPerson: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
     leaveBalances: {

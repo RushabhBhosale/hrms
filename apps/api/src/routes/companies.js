@@ -88,6 +88,7 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     role,
     address,
     phone,
+    dob,
     reportingPerson,
   } = req.body;
   if (!name || !email || !password || !role)
@@ -120,9 +121,10 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     company: company._id,
     address,
     phone,
+    dob: dob ? new Date(dob) : undefined,
     documents,
-     reportingPerson: reporting ? reporting._id : undefined,
-     leaveBalances,
+    reportingPerson: reporting ? reporting._id : undefined,
+    leaveBalances,
   });
   res.json({
     employee: {
