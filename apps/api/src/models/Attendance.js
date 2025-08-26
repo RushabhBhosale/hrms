@@ -6,7 +6,8 @@ const AttendanceSchema = new mongoose.Schema({
   firstPunchIn: { type: Date },
   lastPunchOut: { type: Date },
   lastPunchIn: { type: Date },
-  workedMs: { type: Number, default: 0 }
+  workedMs: { type: Number, default: 0 },
+  autoPunchOut: { type: Boolean, default: false }
 });
 
 AttendanceSchema.index({ employee: 1, date: 1 }, { unique: true });
