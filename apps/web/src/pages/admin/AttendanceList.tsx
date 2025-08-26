@@ -8,6 +8,11 @@ type AttendanceRecord = {
 };
 
 type MonthRecord = AttendanceRecord & { date: string };
+type ReportRecord = {
+  employee: { id: string; name: string };
+  workedDays: number;
+  leaveDays: number;
+};
 
 function formatTime(ts?: string) {
   if (!ts) return "-";
@@ -34,12 +39,14 @@ function formatElapsed(ms: number) {
 export default function AttendanceList() {
   const [rows, setRows] = useState<AttendanceRecord[]>([]);
   const [monthRows, setMonthRows] = useState<MonthRecord[]>([]);
+  const [reportRows, setReportRows] = useState<ReportRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [monthLoading, setMonthLoading] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [now, setNow] = useState(Date.now());
-  const [view, setView] = useState<"today" | "month">("today");
+  const [view, setView] = useState<"today" | "month" | "report">("today");
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
 
   async function load() {
@@ -68,6 +75,19 @@ export default function AttendanceList() {
     }
   }
 
+  async function loadReport() {
+    try {
+      setReportLoading(true);
+      setErr(null);
+      const res = await api.get("/attendance/company/report", { params: { month } });
+      setReportRows(res.data.report || []);
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || "Failed to load attendance");
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
   // initial + pull every 60s for today view
   useEffect(() => {
     if (view !== "today") return;
@@ -85,6 +105,10 @@ export default function AttendanceList() {
 
   useEffect(() => {
     if (view === "month") loadMonth();
+  }, [view, month]);
+
+  useEffect(() => {
+    if (view === "report") loadReport();
   }, [view, month]);
 
   const filteredToday = useMemo(() => {
@@ -112,18 +136,34 @@ export default function AttendanceList() {
     );
   }, [monthRows, q]);
 
+  const filteredReport = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    const base = term
+      ? reportRows.filter((r) => r.employee.name.toLowerCase().includes(term))
+      : reportRows;
+    return [...base].sort((a, b) =>
+      a.employee.name.localeCompare(b.employee.name)
+    );
+  }, [reportRows, q]);
+
 
   return (
     <div className="space-y-8">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 className="text-3xl font-bold">
-            {view === "today" ? "Attendance (Today)" : "Attendance (Month)"}
+            {view === "today"
+              ? "Attendance (Today)"
+              : view === "month"
+              ? "Attendance (Month)"
+              : "Attendance (Summary)"}
           </h2>
           <p className="text-sm text-muted">
             {view === "today"
               ? "Live status of employees who have punched in/out today."
-              : "Attendance records for the selected month."}
+              : view === "month"
+              ? "Attendance records for the selected month."
+              : "Worked and leave days for each employee in the selected month."}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
@@ -147,8 +187,14 @@ export default function AttendanceList() {
               >
                 Month View
               </button>
+              <button
+                onClick={() => setView("report")}
+                className="h-10 rounded-md border border-border px-3"
+              >
+                Summary
+              </button>
             </>
-          ) : (
+          ) : view === "month" ? (
             <>
               <input
                 type="month"
@@ -167,6 +213,39 @@ export default function AttendanceList() {
                 className="h-10 rounded-md border border-border px-3"
               >
                 Today
+              </button>
+              <button
+                onClick={() => setView("report")}
+                className="h-10 rounded-md border border-border px-3"
+              >
+                Summary
+              </button>
+            </>
+          ) : (
+            <>
+              <input
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                className="h-10 rounded-md border border-border bg-surface px-3"
+              />
+              <button
+                onClick={loadReport}
+                className="h-10 rounded-md bg-primary px-4 text-white"
+              >
+                Load
+              </button>
+              <button
+                onClick={() => setView("today")}
+                className="h-10 rounded-md border border-border px-3"
+              >
+                Today
+              </button>
+              <button
+                onClick={() => setView("month")}
+                className="h-10 rounded-md border border-border px-3"
+              >
+                Month View
               </button>
             </>
           )}
@@ -296,7 +375,7 @@ export default function AttendanceList() {
             )}
           </div>
         </section>
-      ) : (
+      ) : view === "month" ? (
         <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
           <div className="border-b border-border px-4 py-3 flex items-center justify-between">
             <div className="text-sm text-muted">
@@ -371,6 +450,83 @@ export default function AttendanceList() {
                     <div>{formatTime(a.firstPunchIn)}</div>
                     <div className="text-muted">Last Out</div>
                     <div>{formatTime(a.lastPunchOut)}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      ) : (
+        <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
+          <div className="border-b border-border px-4 py-3 flex items-center justify-between">
+            <div className="text-sm text-muted">
+              {reportLoading
+                ? "Loading…"
+                : `${filteredReport.length} ${
+                    filteredReport.length === 1 ? "employee" : "employees"
+                  }`}
+            </div>
+          </div>
+          <div className="hidden md:block">
+            <table className="w-full text-sm">
+              <thead className="bg-bg">
+                <tr className="text-left">
+                  <Th>Name</Th>
+                  <Th>Worked Days</Th>
+                  <Th>Leave Days</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportLoading ? (
+                  <SkeletonRows rows={6} cols={3} />
+                ) : filteredReport.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-muted">
+                      No attendance records yet.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredReport.map((r) => (
+                    <tr
+                      key={r.employee.id}
+                      className="border-t border-border/70"
+                    >
+                      <Td className="font-medium">{r.employee.name}</Td>
+                      <Td>{r.workedDays}</Td>
+                      <Td>{r.leaveDays}</Td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="md:hidden divide-y divide-border">
+            {reportLoading ? (
+              <div className="p-4 space-y-3">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="rounded-md border border-border p-3 animate-pulse space-y-2"
+                  >
+                    <div className="h-4 w-40 bg-bg rounded" />
+                    <div className="h-3 w-56 bg-bg rounded" />
+                    <div className="h-6 w-24 bg-bg rounded" />
+                  </div>
+                ))}
+              </div>
+            ) : filteredReport.length === 0 ? (
+              <div className="px-4 py-6 text-center text-muted">
+                No attendance records yet.
+              </div>
+            ) : (
+              filteredReport.map((r) => (
+                <div key={r.employee.id} className="p-4">
+                  <div className="font-medium">{r.employee.name}</div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                    <div className="text-muted">Worked Days</div>
+                    <div>{r.workedDays}</div>
+                    <div className="text-muted">Leave Days</div>
+                    <div>{r.leaveDays}</div>
                   </div>
                 </div>
               ))
