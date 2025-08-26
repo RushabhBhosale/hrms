@@ -93,6 +93,10 @@ router.get('/report/:employeeId?', auth, async (req, res) => {
   const emp = await Employee.findById(targetId).select('company');
   const company = emp ? await Company.findById(emp.company).select('bankHolidays') : null;
 
+  const bankHolidays = (company?.bankHolidays || [])
+    .filter((h) => h.date >= start && h.date < end)
+    .map((h) => startOfDay(h.date).toISOString().slice(0, 10));
+
   const leaves = await Leave.find({
     employee: targetId,
     status: 'APPROVED',
@@ -114,7 +118,14 @@ router.get('/report/:employeeId?', auth, async (req, res) => {
     }
   }
 
-  res.json({ report: { workedDays, leaveDays: leaveDates.length, leaveDates } });
+  res.json({
+    report: {
+      workedDays,
+      leaveDays: leaveDates.length,
+      leaveDates,
+      bankHolidays,
+    },
+  });
 });
 
 router.get('/company/today', auth, async (req, res) => {

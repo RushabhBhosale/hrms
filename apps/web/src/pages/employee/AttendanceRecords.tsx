@@ -80,6 +80,7 @@ export default function AttendanceRecords() {
     workedDays: number;
     leaveDays: number;
     leaveDates: string[];
+    bankHolidays: string[];
   } | null>(null);
 
   const [detail, setDetail] = useState<AttRecord | null>(null);
@@ -184,6 +185,11 @@ export default function AttendanceRecords() {
     [summary]
   );
 
+  const holidaySet = useMemo(
+    () => new Set(summary?.bankHolidays || []),
+    [summary]
+  );
+
   function colorFor(ms?: number) {
     if (!ms || ms <= 0) return "bg-gray-200";
     const h = ms / 3600000;
@@ -202,6 +208,7 @@ export default function AttendanceRecords() {
     { label: "≤8h", cls: "bg-lime-400" },
     { label: "8h+", cls: "bg-green-500" },
     { label: "Leave", cls: "bg-blue-300" },
+    { label: "Holiday", cls: "bg-purple-300" },
   ];
 
   // Month navigation
@@ -328,10 +335,13 @@ export default function AttendanceRecords() {
                     const worked = rec ? inferWorkedMs(rec) : 0;
                     const key = toISODateOnly(date);
                     const isLeave = leaveSet.has(key);
+                    const isHoliday = holidaySet.has(key);
                     const color = inMonth
-                      ? isLeave
-                        ? "bg-blue-300"
-                        : colorFor(worked)
+                      ? isHoliday
+                        ? "bg-purple-300"
+                        : isLeave
+                          ? "bg-blue-300"
+                          : colorFor(worked)
                       : "bg-bg";
                     const isToday = isSameDay(date, today);
                     const isWeekend = [0, 6].includes(date.getDay());
@@ -352,9 +362,11 @@ export default function AttendanceRecords() {
                           isToday ? "outline outline-2 outline-primary/70" : "",
                         ].join(" ")}
                         title={
-                          isLeave
-                            ? `${fmtDate(date)} — Leave`
-                            : `${fmtDate(date)} — ${fmtDur(worked)}`
+                          isHoliday
+                            ? `${fmtDate(date)} — Holiday`
+                            : isLeave
+                              ? `${fmtDate(date)} — Leave`
+                              : `${fmtDate(date)} — ${fmtDur(worked)}`
                         }
                       >
                         {/* Day number (top-right) */}
@@ -380,6 +392,11 @@ export default function AttendanceRecords() {
                         {!rec && isLeave && (
                           <div className="mt-5 text-[11px] font-medium text-blue-700">
                             Leave
+                          </div>
+                        )}
+                        {!rec && isHoliday && (
+                          <div className="mt-5 text-[11px] font-medium text-purple-700">
+                            Holiday
                           </div>
                         )}
                         {rec?.autoPunchOut && (
