@@ -18,6 +18,7 @@ app.use('/companies', require('./routes/companies'));
 app.use('/attendance', require('./routes/attendance'));
 app.use('/leaves', require('./routes/leaves'));
 app.use('/documents', require('./routes/documents'));
+app.use('/projects', require('./routes/projects'));
 
 connectDB().then(() => {
   scheduleAutoPunchOut();
