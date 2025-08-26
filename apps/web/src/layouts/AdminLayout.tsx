@@ -11,6 +11,7 @@ import {
   Menu,
   X,
   User,
+  Settings,
 } from "lucide-react";
 
 export default function AdminLayout() {
@@ -27,6 +28,7 @@ export default function AdminLayout() {
     { to: "/admin/employees/add", label: "Add Employee", icon: UserPlus },
     { to: "/admin/employees", label: "Employee List", icon: Users },
     { to: "/admin/attendances", label: "Attendances", icon: CalendarCheck2 },
+    { to: "/admin/leave-settings", label: "Leave Settings", icon: Settings },
     { to: "/admin/leaves", label: "Leave Requests", icon: ClipboardList },
   ];
 
@@ -36,6 +38,7 @@ export default function AdminLayout() {
     if (pathname.startsWith("/admin/employees/")) return "Employee Details";
     if (pathname.startsWith("/admin/employees")) return "Employee List";
     if (pathname.startsWith("/admin/attendances")) return "Attendances";
+    if (pathname.startsWith("/admin/leave-settings")) return "Leave Settings";
     if (pathname.startsWith("/admin/leaves")) return "Leave Requests";
     return "Admin";
   }, [pathname]);

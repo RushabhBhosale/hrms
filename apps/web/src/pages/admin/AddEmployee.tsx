@@ -9,10 +9,6 @@ type FormState = {
   address: string;
   phone: string;
   reportingPerson: string;
-  casualLeaves: string;
-  paidLeaves: string;
-  unpaidLeaves: string;
-  sickLeaves: string;
 };
 
 export default function AddEmployee() {
@@ -24,10 +20,6 @@ export default function AddEmployee() {
     address: "",
     phone: "",
     reportingPerson: "",
-    casualLeaves: "0",
-    paidLeaves: "0",
-    unpaidLeaves: "0",
-    sickLeaves: "0",
   });
   const [docs, setDocs] = useState<FileList | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -82,10 +74,6 @@ export default function AddEmployee() {
         address: "",
         phone: "",
         reportingPerson: "",
-        casualLeaves: "0",
-        paidLeaves: "0",
-        unpaidLeaves: "0",
-        sickLeaves: "0",
       });
       setDocs(null);
       setOk("Employee added");
@@ -208,40 +196,6 @@ export default function AddEmployee() {
             </Field>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-4">
-            <Field label="Casual Leaves">
-              <input
-                type="number"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.casualLeaves}
-                onChange={(e) => onChange("casualLeaves", e.target.value)}
-              />
-            </Field>
-            <Field label="Paid Leaves">
-              <input
-                type="number"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.paidLeaves}
-                onChange={(e) => onChange("paidLeaves", e.target.value)}
-              />
-            </Field>
-            <Field label="Unpaid Leaves">
-              <input
-                type="number"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.unpaidLeaves}
-                onChange={(e) => onChange("unpaidLeaves", e.target.value)}
-              />
-            </Field>
-            <Field label="Sick Leaves">
-              <input
-                type="number"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.sickLeaves}
-                onChange={(e) => onChange("sickLeaves", e.target.value)}
-              />
-            </Field>
-          </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Documents">

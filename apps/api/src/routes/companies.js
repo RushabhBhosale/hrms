@@ -89,10 +89,6 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     address,
     phone,
     reportingPerson,
-    casualLeaves,
-    paidLeaves,
-    unpaidLeaves,
-    sickLeaves,
   } = req.body;
   if (!name || !email || !password || !role)
     return res.status(400).json({ error: "Missing fields" });
@@ -110,10 +106,10 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
       return res.status(400).json({ error: "Reporting person not found" });
   }
   const leaveBalances = {
-    casual: parseInt(casualLeaves, 10) || 0,
-    paid: parseInt(paidLeaves, 10) || 0,
-    unpaid: parseInt(unpaidLeaves, 10) || 0,
-    sick: parseInt(sickLeaves, 10) || 0,
+    casual: company.leavePolicy?.casual || 0,
+    paid: company.leavePolicy?.paid || 0,
+    unpaid: 0,
+    sick: company.leavePolicy?.sick || 0,
   };
   const employee = await Employee.create({
     name,
@@ -136,6 +132,39 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
       subRoles: employee.subRoles,
     },
   });
+});
+
+// Admin: get leave policy for their company
+router.get("/leave-policy", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "leavePolicy"
+  );
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  res.json({
+    leavePolicy: {
+      casual: company.leavePolicy?.casual || 0,
+      paid: company.leavePolicy?.paid || 0,
+      sick: company.leavePolicy?.sick || 0,
+    },
+  });
+});
+
+// Admin: update leave policy for their company
+router.put("/leave-policy", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { casual, paid, sick } = req.body;
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  company.leavePolicy = {
+    casual: parseInt(casual, 10) || 0,
+    paid: parseInt(paid, 10) || 0,
+    sick: parseInt(sick, 10) || 0,
+  };
+  await company.save();
+  res.json({ leavePolicy: company.leavePolicy });
 });
 
 // Admin: list employees in their company
