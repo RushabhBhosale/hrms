@@ -12,11 +12,21 @@ type Leave = {
 
 type FormState = { startDate: string; endDate: string; reason: string };
 
-function daysBetween(a: string, b: string) {
-  if (!a || !b) return 0;
-  const d1 = new Date(a + "T00:00:00");
-  const d2 = new Date(b + "T00:00:00");
-  return Math.max(0, Math.round((+d2 - +d1) / 86400000) + 1); // inclusive
+function daysBetween(start?: string, end?: string) {
+  if (!start || !end) return 0;
+
+  const d1 = new Date(start);
+  const d2 = new Date(end);
+
+  if (isNaN(d1.getTime()) || isNaN(d2.getTime())) {
+    console.warn("Invalid dates:", start, end);
+    return 0;
+  }
+
+  d1.setUTCHours(0, 0, 0, 0);
+  d2.setUTCHours(0, 0, 0, 0);
+
+  return Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 }
 
 export default function LeaveRequest() {
