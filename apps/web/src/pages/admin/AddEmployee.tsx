@@ -10,6 +10,7 @@ type FormState = {
   phone: string;
   dob: string;
   reportingPerson: string;
+  employeeId: string;
 };
 
 export default function AddEmployee() {
@@ -22,6 +23,7 @@ export default function AddEmployee() {
     phone: "",
     dob: "",
     reportingPerson: "",
+    employeeId: "",
   });
   const [docs, setDocs] = useState<FileList | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -37,7 +39,8 @@ export default function AddEmployee() {
       form.password &&
       form.role &&
       form.address.trim() &&
-      form.phone.trim()
+      form.phone.trim() &&
+      form.employeeId.trim()
     );
   }, [form]);
 
@@ -86,6 +89,7 @@ export default function AddEmployee() {
         phone: "",
         dob: "",
         reportingPerson: "",
+        employeeId: "",
       });
       setDocs(null);
       setOk("Employee added");
@@ -186,6 +190,14 @@ export default function AddEmployee() {
                   </option>
                 ))}
               </select>
+            </Field>
+            <Field label="Employee ID">
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="EMP001"
+                value={form.employeeId}
+                onChange={(e) => onChange("employeeId", e.target.value)}
+              />
             </Field>
           </div>
 

@@ -25,12 +25,14 @@ export default function SuperAdminLayout() {
     { to: "/superadmin", label: "Dashboard", icon: LayoutDashboard },
     { to: "/superadmin/companies", label: "Companies", icon: Building2 },
     { to: "/superadmin/companies/add", label: "Add Company", icon: PlusCircle },
+    { to: "/superadmin/profile", label: "Profile", icon: User },
   ];
 
   const title = useMemo(() => {
     if (pathname === "/superadmin") return "Dashboard";
     if (pathname.startsWith("/superadmin/companies/add")) return "Add Company";
     if (pathname.startsWith("/superadmin/companies")) return "Companies";
+    if (pathname.startsWith("/superadmin/profile")) return "Profile";
     return "Superadmin";
   }, [pathname]);
 

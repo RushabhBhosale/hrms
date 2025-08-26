@@ -140,14 +140,15 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     phone,
     dob,
     reportingPerson,
+    employeeId,
   } = req.body;
-  if (!name || !email || !password || !role)
+  if (!name || !email || !password || !role || !employeeId)
     return res.status(400).json({ error: "Missing fields" });
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   if (!company.roles.includes(role))
     return res.status(400).json({ error: "Invalid role" });
-  let existing = await Employee.findOne({ email });
+  let existing = await Employee.findOne({ $or: [{ email }, { employeeId }] });
   if (existing)
     return res.status(400).json({ error: "Employee already exists" });
   const passwordHash = await bcrypt.hash(password, 10);
@@ -174,6 +175,7 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     address,
     phone,
     dob: dob ? new Date(dob) : undefined,
+    employeeId,
     documents,
     reportingPerson: reporting ? reporting._id : undefined,
     leaveBalances,

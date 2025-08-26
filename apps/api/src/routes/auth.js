@@ -20,6 +20,10 @@ router.post('/login', async (req, res) => {
     subRoles: employee.subRoles,
     company: employee.company,
     leaveBalances: employee.leaveBalances,
+    employeeId: employee.employeeId,
+    aadharNumber: employee.aadharNumber,
+    panNumber: employee.panNumber,
+    bankDetails: employee.bankDetails,
   };
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '2h' });
   res.json({ token, employee: payload });
@@ -37,8 +41,27 @@ router.get('/me', auth, async (req, res) => {
     subRoles: employee.subRoles,
     company: employee.company,
     leaveBalances: employee.leaveBalances,
+    employeeId: employee.employeeId,
+    aadharNumber: employee.aadharNumber,
+    panNumber: employee.panNumber,
+    bankDetails: employee.bankDetails,
   };
   res.json({ employee: payload });
+});
+
+router.put('/me', auth, async (req, res) => {
+  const { aadharNumber, panNumber, bankName, bankAccountNumber, bankIfsc } = req.body;
+  const employee = await Employee.findById(req.employee.id);
+  if (!employee) return res.status(404).json({ error: 'Not found' });
+  if (aadharNumber !== undefined) employee.aadharNumber = aadharNumber;
+  if (panNumber !== undefined) employee.panNumber = panNumber;
+  employee.bankDetails = {
+    accountNumber: bankAccountNumber || employee.bankDetails?.accountNumber,
+    bankName: bankName || employee.bankDetails?.bankName,
+    ifsc: bankIfsc || employee.bankDetails?.ifsc,
+  };
+  await employee.save();
+  res.json({ message: 'Profile updated' });
 });
 
 module.exports = router;

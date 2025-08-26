@@ -11,6 +11,14 @@ const EmployeeSchema = new mongoose.Schema(
     address: { type: String },
     phone: { type: String },
     dob: { type: Date },
+    employeeId: { type: String, unique: true, index: true },
+    aadharNumber: { type: String },
+    panNumber: { type: String },
+    bankDetails: {
+      accountNumber: { type: String },
+      bankName: { type: String },
+      ifsc: { type: String }
+    },
     documents: { type: [String], default: [] },
     reportingPerson: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
     leaveBalances: {

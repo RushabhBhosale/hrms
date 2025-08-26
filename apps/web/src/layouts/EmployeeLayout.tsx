@@ -32,6 +32,7 @@ export default function EmployeeLayout() {
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
     { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
     { to: "/app/documents", label: "Documents", icon: FileText },
+    { to: "/app/profile", label: "Profile", icon: User },
   ];
 
   // if HR or Manager → add "Attendances"
@@ -50,6 +51,7 @@ export default function EmployeeLayout() {
     if (pathname.startsWith("/app/leave")) return "Leave";
     if (pathname.startsWith("/app/approvals")) return "Leave Approvals";
     if (pathname.startsWith("/app/documents")) return "Documents";
+    if (pathname.startsWith("/app/profile")) return "Profile";
     return "Employee";
   }, [pathname]);
 

@@ -8,6 +8,12 @@ export type LeaveBalances = {
   sick: number;
 };
 
+export type BankDetails = {
+  accountNumber?: string;
+  bankName?: string;
+  ifsc?: string;
+};
+
 export type Employee = {
   id: string;
   name: string;
@@ -16,6 +22,10 @@ export type Employee = {
   subRoles: SubRole[];
   company?: string;
   leaveBalances: LeaveBalances;
+  employeeId?: string;
+  aadharNumber?: string;
+  panNumber?: string;
+  bankDetails?: BankDetails;
 };
 
 export function setAuth(token: string, employee: Employee) {
