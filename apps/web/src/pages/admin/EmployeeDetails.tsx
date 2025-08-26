@@ -6,6 +6,7 @@ type Employee = {
   id: string;
   name: string;
   email: string;
+  dob?: string;
   documents: string[];
   reportingPerson?: { id: string; name: string } | null;
 };
@@ -103,6 +104,11 @@ export default function EmployeeDetails() {
       <div>
         <h2 className="text-3xl font-bold">{employee.name}</h2>
         <p className="text-sm text-muted">{employee.email}</p>
+        {employee.dob && (
+          <p className="text-sm text-muted">
+            {new Date(employee.dob).toLocaleDateString()}
+          </p>
+        )}
       </div>
       <section className="space-y-2">
         <h3 className="font-semibold">Reporting Person</h3>

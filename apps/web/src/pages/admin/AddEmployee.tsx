@@ -8,6 +8,7 @@ type FormState = {
   role: "hr" | "manager" | "developer";
   address: string;
   phone: string;
+  dob: string;
   reportingPerson: string;
 };
 
@@ -19,6 +20,7 @@ export default function AddEmployee() {
     role: "hr",
     address: "",
     phone: "",
+    dob: "",
     reportingPerson: "",
   });
   const [docs, setDocs] = useState<FileList | null>(null);
@@ -73,6 +75,7 @@ export default function AddEmployee() {
         role: "hr",
         address: "",
         phone: "",
+        dob: "",
         reportingPerson: "",
       });
       setDocs(null);
@@ -196,6 +199,17 @@ export default function AddEmployee() {
             </Field>
           </div>
 
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Date of Birth">
+              <input
+                type="date"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.dob}
+                onChange={(e) => onChange("dob", e.target.value)}
+              />
+            </Field>
+          </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Documents">
