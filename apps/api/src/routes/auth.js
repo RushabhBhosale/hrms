@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Employee = require('../models/Employee');
 const { auth } = require('../middleware/auth');
+const { syncLeaveBalances } = require('../utils/leaveBalances');
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -10,6 +11,7 @@ router.post('/login', async (req, res) => {
   if (!employee) return res.status(400).json({ error: 'Invalid credentials' });
   const ok = await bcrypt.compare(password, employee.passwordHash);
   if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
+  await syncLeaveBalances(employee);
   const payload = {
     id: employee._id.toString(),
     name: employee.name,
@@ -24,8 +26,9 @@ router.post('/login', async (req, res) => {
 });
 
 router.get('/me', auth, async (req, res) => {
-  const employee = await Employee.findById(req.employee.id).lean();
+  const employee = await Employee.findById(req.employee.id);
   if (!employee) return res.status(404).json({ error: 'Not found' });
+  await syncLeaveBalances(employee);
   const payload = {
     id: employee._id.toString(),
     name: employee.name,

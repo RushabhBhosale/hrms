@@ -4,6 +4,7 @@ const Employee = require('../models/Employee');
 const Company = require('../models/Company');
 const { auth } = require('../middleware/auth');
 const { requirePrimary } = require('../middleware/roles');
+const { syncLeaveBalances } = require('../utils/leaveBalances');
 
 // Employee creates a leave request
 router.post('/', auth, async (req, res) => {
@@ -64,6 +65,7 @@ router.post('/:id/approve', auth, async (req, res) => {
   )
     return res.status(403).json({ error: 'Forbidden' });
   const employee = await Employee.findById(leave.employee);
+  await syncLeaveBalances(employee);
   const company = await Company.findById(leave.company).select('bankHolidays');
   const start = new Date(leave.startDate);
   const end = new Date(leave.endDate);
