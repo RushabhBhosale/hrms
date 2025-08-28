@@ -5,6 +5,7 @@ const Company = require("../models/Company");
 const { auth } = require("../middleware/auth");
 const { requirePrimary } = require("../middleware/roles");
 const { syncLeaveBalances } = require("../utils/leaveBalances");
+const { sendMail, isEmailEnabled } = require("../utils/mailer");
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -29,6 +30,42 @@ router.post("/", auth, async (req, res) => {
       reason,
     });
     res.json({ leave });
+
+    // Fire-and-forget email notifications (do not block response)
+    ;(async () => {
+      if (!isEmailEnabled()) return;
+
+      try {
+        const [approver, company] = await Promise.all([
+          emp.reportingPerson ? Employee.findById(emp.reportingPerson).select('name email') : null,
+          Company.findById(emp.company).populate('admin', 'name email'),
+        ]);
+
+        const recipients = [];
+        if (approver?.email) recipients.push(approver.email);
+        if (company?.admin?.email) recipients.push(company.admin.email);
+        // De-duplicate
+        const to = Array.from(new Set(recipients));
+        if (to.length === 0) return;
+
+        const fmt = (d) => new Date(d).toISOString().slice(0, 10);
+        const sub = `New Leave Request: ${emp.name} (${type}) ${fmt(startDate)} → ${fmt(endDate)}`;
+        const html = `
+          <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; line-height:1.5;">
+            <h2 style="margin:0 0 12px;">New Leave Request</h2>
+            <p><strong>Employee:</strong> ${emp.name} &lt;${emp.email}&gt;</p>
+            <p><strong>Type:</strong> ${type}</p>
+            <p><strong>Period:</strong> ${fmt(startDate)} to ${fmt(endDate)}</p>
+            ${reason ? `<p><strong>Reason:</strong> ${String(reason).replace(/</g,'&lt;')}</p>` : ''}
+            <p style="margin-top:16px; color:#666; font-size:12px;">This is an automated notification from HRMS.</p>
+          </div>
+        `;
+
+        await sendMail({ to, subject: sub, html, text: `New leave request by ${emp.name} (${type}) from ${fmt(startDate)} to ${fmt(endDate)}${reason ? `\nReason: ${reason}` : ''}` });
+      } catch (e) {
+        console.warn('[leaves] Failed to send notification email:', e?.message || e);
+      }
+    })();
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

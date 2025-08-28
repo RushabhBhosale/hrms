@@ -64,6 +64,7 @@ export default function EmployeeDash() {
   // Add new task form
   const [newTaskProjectId, setNewTaskProjectId] = useState<string>("");
   const [newTaskTitle, setNewTaskTitle] = useState<string>("");
+  const [newTaskStatus, setNewTaskStatus] = useState<"PENDING" | "DONE">("PENDING");
   const [addingTask, setAddingTask] = useState(false);
   const [submittingPunchOut, setSubmittingPunchOut] = useState(false);
   const [punchOutErr, setPunchOutErr] = useState<string | null>(null);
@@ -150,6 +151,15 @@ export default function EmployeeDash() {
         assignedTo: me.id,
       });
       const t: Task = res.data.task;
+      // If user selected DONE, immediately set status to DONE (assignee-only action)
+      if (newTaskStatus === "DONE") {
+        try {
+          await api.put(`/projects/${newTaskProjectId}/tasks/${t._id}`, { status: "DONE" });
+          t.status = "DONE";
+        } catch (e) {
+          // Ignore status update failure; keep default PENDING
+        }
+      }
       const a: Assigned = {
         ...t,
         projectId: newTaskProjectId,
@@ -159,6 +169,7 @@ export default function EmployeeDash() {
       };
       setAssigned((prev) => [a, ...prev]);
       setNewTaskTitle("");
+      setNewTaskStatus("PENDING");
     } catch (e: any) {
       setPunchOutErr(e?.response?.data?.error || "Failed to add task");
     } finally {
@@ -429,6 +440,15 @@ export default function EmployeeDash() {
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
                 />
+                <select
+                  className="h-9 rounded-md border border-border bg-surface px-2"
+                  value={newTaskStatus}
+                  onChange={(e) => setNewTaskStatus(e.target.value as any)}
+                  title="Set initial status"
+                >
+                  <option value="PENDING">Pending</option>
+                  <option value="DONE">Done</option>
+                </select>
                 <button
                   className="h-9 rounded-md bg-secondary px-3 text-white disabled:opacity-60"
                   onClick={addNewTask}

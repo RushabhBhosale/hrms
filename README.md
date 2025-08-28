@@ -34,3 +34,18 @@ Log in at http://localhost:5173 with:
 
 - Email: superadmin@hrms.dev
 - Password: password
+
+## Email (SMTP)
+
+To enable email notifications (e.g., on leave requests), configure SMTP in `apps/api/.env`:
+
+```
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-smtp-username
+SMTP_PASS=your-smtp-password
+SMTP_FROM=HRMS <no-reply@yourdomain.com>
+```
+
+If SMTP is not configured, the server will skip sending emails and log a warning.
