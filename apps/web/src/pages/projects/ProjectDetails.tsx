@@ -39,7 +39,8 @@ export default function ProjectDetails() {
   const [priority, setPriority] = useState<'URGENT' | 'FIRST' | 'SECOND' | 'LEAST'>('SECOND');
 
   const [commentText, setCommentText] = useState<Record<string, string>>({});
-  const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string; note: string }>>({});
+  const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string }>>({});
+  const [openCommentsFor, setOpenCommentsFor] = useState<string | null>(null);
 
   const memberIds = useMemo(() => {
     if (!project) return [] as string[];
@@ -118,15 +119,15 @@ export default function ProjectDetails() {
     setTasks(tlist.data.tasks || []);
   }
 
-  async function addTime(taskId: string) {
+  async function saveTime(taskId: string) {
     const entry = timeEntry[taskId];
     const hours = parseFloat(entry?.hours || '0');
-    if (!hours || hours <= 0) return;
-    await api.post(`/projects/${id}/tasks/${taskId}/time`, {
-      hours,
-      note: entry?.note || '',
+    if (hours < 0) return;
+    // Replace total time instead of adding; send minutes
+    await api.put(`/projects/${id}/tasks/${taskId}`, {
+      timeSpentMinutes: Math.round(hours * 60),
     });
-    setTimeEntry((s) => ({ ...s, [taskId]: { hours: '', note: '' } }));
+    setTimeEntry((s) => ({ ...s, [taskId]: { hours: '' } }));
     const tlist = await api.get(`/projects/${id}/tasks`);
     setTasks(tlist.data.tasks || []);
   }
@@ -223,97 +224,151 @@ export default function ProjectDetails() {
 
       {/* Tasks list */}
       <div className="space-y-3">
-        {tasks.map((t) => (
-          <div key={t._id} className="border border-border bg-surface rounded-md p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                {(() => {
-                  return (
-                    <>
-                      <div className="font-semibold flex items-center gap-2">
-                        <span>{t.title}</span>
-                        {t.priority && (
-                          <span className="text-xs px-2 py-0.5 rounded border border-border bg-bg">
-                            {t.priority === 'URGENT'
-                              ? 'Urgent'
-                              : t.priority === 'FIRST'
-                              ? 'First Priority'
-                              : t.priority === 'SECOND'
-                              ? 'Second Priority'
-                              : 'Least Priority'}
-                          </span>
-                        )}
-                      </div>
-                      {t.description && (
-                        <div className="text-sm text-muted mt-1">{t.description}</div>
-                      )}
-                      <div className="mt-2 text-xs text-muted">Time spent: {Math.round(((t.timeSpentMinutes||0)/60)*100)/100} h</div>
-                    </>
-                  );
-                })()}
+        {tasks.map((t) => {
+          const assigneeName = employees.find((e) => e.id === String(t.assignedTo))?.name;
+          const statusLabel = t.status === 'PENDING' ? 'Pending' : t.status === 'INPROGRESS' ? 'In Progress' : 'Done';
+          const totalHours = Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100;
+          return (
+            <div key={t._id} className="border border-border bg-surface rounded-md p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-semibold flex items-center gap-2">
+                    <span>{t.title}</span>
+                    {t.priority && (
+                      <span className="text-xs px-2 py-0.5 rounded border border-border bg-bg">
+                        {t.priority === 'URGENT'
+                          ? 'Urgent'
+                          : t.priority === 'FIRST'
+                          ? 'First Priority'
+                          : t.priority === 'SECOND'
+                          ? 'Second Priority'
+                          : 'Least Priority'}
+                      </span>
+                    )}
+                  </div>
+                  {t.description && (
+                    <div className="text-sm text-muted mt-1">{t.description}</div>
+                  )}
+                  <div className="mt-2 text-xs text-muted flex gap-4">
+                    <span>Assigned to: {assigneeName || 'Member'}</span>
+                    <span>Status: {statusLabel}</span>
+                    <span>Time spent: {totalHours} h</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setOpenCommentsFor(t._id)}
+                    className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
+                  >
+                    Comments ({(t.comments || []).length || 0})
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                {(() => {
-                  const label = t.status === 'PENDING' ? 'Pending' : t.status === 'INPROGRESS' ? 'In Progress' : 'Done';
-                  return <span className="text-sm text-muted">Status: {label}</span>;
-                })()}
-              </div>
-            </div>
-            {/* Comments (chat-style) for project members */}
-            <div className="mt-4">
-              <div className="text-sm font-medium mb-2">Comments</div>
-              <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
-                {(t.comments || []).length === 0 && (
-                  <div className="text-xs text-muted">No comments yet.</div>
-                )}
-                {(t.comments || []).slice(-25).map((c, idx) => {
-                  const isMe = String(me?.id) === String(c.author);
-                  const authorName = isMe
-                    ? 'You'
-                    : employees.find((e) => e.id === String(c.author))?.name || 'Member';
-                  return (
-                    <div key={idx} className={["flex", isMe ? 'justify-end' : 'justify-start'].join(' ')}>
-                      <div
-                        className={[
-                          'rounded-lg px-3 py-2 max-w-[80%] text-sm',
-                          isMe ? 'bg-primary text-white' : 'bg-bg border border-border',
-                        ].join(' ')}
-                      >
-                        <div className="text-[11px] opacity-80 mb-0.5">
-                          {authorName} • {new Date((c as any).createdAt).toLocaleString()}
-                        </div>
-                        <div>{(c as any).text}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  className="flex-1 h-9 rounded border border-border bg-bg px-3 text-sm"
-                  placeholder="Write a comment…"
-                  value={commentText[t._id] || ''}
-                  onChange={(e) => setCommentText((s) => ({ ...s, [t._id]: e.target.value }))}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      addComment(t._id);
+
+              {/* Manual time entry (set total hours) */}
+              {canCollaborate && (
+                <div className="mt-3 grid sm:grid-cols-[140px_120px] gap-2 items-center">
+                  <input
+                    className="h-9 rounded border border-border bg-bg px-3 text-sm"
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    placeholder="Total hours"
+                    value={timeEntry[t._id]?.hours || ''}
+                    onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value } }))}
+                  />
+                  <button
+                    onClick={() => saveTime(t._id)}
+                    className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg disabled:opacity-50"
+                    disabled={
+                      timeEntry[t._id]?.hours === undefined ||
+                      timeEntry[t._id]?.hours === '' ||
+                      parseFloat(timeEntry[t._id]?.hours || '0') < 0
                     }
-                  }}
-                />
-                <button
-                  onClick={() => addComment(t._id)}
-                  className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
-                  disabled={!commentText[t._id] || !commentText[t._id].trim()}
-                >
-                  Send
-                </button>
-              </div>
+                  >
+                    Save Time
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
         {tasks.length === 0 && <div className="text-sm text-muted">No tasks yet.</div>}
       </div>
+
+      {/* Comments modal */}
+      {openCommentsFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setOpenCommentsFor(null)} />
+          <div className="relative z-10 w-[min(640px,92vw)] max-h-[80vh] overflow-hidden rounded-md border border-border bg-surface">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <div className="font-semibold text-sm">Comments</div>
+              <button
+                className="h-8 px-3 rounded-md border border-border text-sm hover:bg-bg"
+                onClick={() => setOpenCommentsFor(null)}
+              >
+                Close
+              </button>
+            </div>
+            {(() => {
+              const task = tasks.find((x) => x._id === openCommentsFor);
+              if (!task) return null;
+              return (
+                <div className="p-4">
+                  <div className="text-sm font-medium mb-2">{task.title}</div>
+                  <div className="max-h-[48vh] overflow-y-auto space-y-2 pr-1">
+                    {(task.comments || []).length === 0 && (
+                      <div className="text-xs text-muted">No comments yet.</div>
+                    )}
+                    {(task.comments || []).slice(-100).map((c, idx) => {
+                      const isMe = String(me?.id) === String(c.author);
+                      const authorName = isMe
+                        ? 'You'
+                        : employees.find((e) => e.id === String(c.author))?.name || 'Member';
+                      return (
+                        <div key={idx} className={["flex", isMe ? 'justify-end' : 'justify-start'].join(' ')}>
+                          <div
+                            className={[
+                              'rounded-lg px-3 py-2 max-w-[80%] text-sm',
+                              isMe ? 'bg-primary text-white' : 'bg-bg border border-border',
+                            ].join(' ')}
+                          >
+                            <div className="text-[11px] opacity-80 mb-0.5">
+                              {authorName} • {new Date((c as any).createdAt).toLocaleString()}
+                            </div>
+                            <div>{(c as any).text}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      className="flex-1 h-9 rounded border border-border bg-bg px-3 text-sm"
+                      placeholder="Write a comment…"
+                      value={commentText[task._id] || ''}
+                      onChange={(e) => setCommentText((s) => ({ ...s, [task._id]: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          addComment(task._id);
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => addComment(task._id)}
+                      className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
+                      disabled={!commentText[task._id] || !commentText[task._id].trim()}
+                    >
+                      Send
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

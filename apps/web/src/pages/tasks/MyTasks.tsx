@@ -54,24 +54,25 @@ export default function MyTasks() {
     }
   }
 
-  async function addTime(t: Task) {
+  async function saveTime(t: Task) {
     const entry = timeEntry[t._id];
     const hours = parseFloat(entry?.hours || '0');
-    if (!hours || hours <= 0) {
-      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter hours to add time' } }));
+    if (isNaN(hours) || hours < 0) {
+      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter total hours (>= 0)' } }));
       return;
     }
     const projectId = typeof t.project === 'string' ? t.project : t.project._id;
     try {
-      await api.post(`/projects/${projectId}/tasks/${t._id}/time`, {
-        hours,
+      // Replace total time instead of adding; send minutes
+      await api.put(`/projects/${projectId}/tasks/${t._id}`, {
+        timeSpentMinutes: Math.round(hours * 60),
       });
       setTimeEntry((s) => ({ ...s, [t._id]: { hours: '' } }));
-      setMsg((m) => ({ ...m, [t._id]: { ok: 'Time entry added' } }));
+      setMsg((m) => ({ ...m, [t._id]: { ok: 'Time updated' } }));
       await load();
     } catch (e: any) {
       const apiErr = e?.response?.data?.error;
-      const txt = apiErr || 'Failed to add time. Are you a member of this project?';
+      const txt = apiErr || 'Failed to update time. Are you a member of this project?';
       setMsg((m) => ({ ...m, [t._id]: { err: txt } }));
     }
   }
@@ -147,18 +148,22 @@ export default function MyTasks() {
               <input
                 className="h-9 rounded border border-border bg-bg px-3 text-sm"
                 type="number"
-                min={0.1}
+                min={0}
                 step={0.1}
-                placeholder="Hours"
+                placeholder="Total hours"
                 value={timeEntry[t._id]?.hours || ''}
                 onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value } }))}
               />
               <button
-                onClick={() => addTime(t)}
+                onClick={() => saveTime(t)}
                 className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg disabled:opacity-50"
-                disabled={!timeEntry[t._id]?.hours || parseFloat(timeEntry[t._id]?.hours || '0') <= 0}
+                disabled={
+                  timeEntry[t._id]?.hours === undefined ||
+                  timeEntry[t._id]?.hours === '' ||
+                  parseFloat(timeEntry[t._id]?.hours || '0') < 0
+                }
               >
-                Add Time
+                Save Time
               </button>
             </div>
             {msg[t._id]?.err && (
