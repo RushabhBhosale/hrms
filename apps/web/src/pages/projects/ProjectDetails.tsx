@@ -122,11 +122,9 @@ export default function ProjectDetails() {
   async function saveTime(taskId: string) {
     const entry = timeEntry[taskId];
     const hours = parseFloat(entry?.hours || '0');
-    if (hours < 0) return;
-    // Replace total time instead of adding; send minutes
-    await api.put(`/projects/${id}/tasks/${taskId}`, {
-      timeSpentMinutes: Math.round(hours * 60),
-    });
+    if (isNaN(hours) || hours <= 0) return;
+    // Replace total time for this task
+    await api.put(`/projects/${id}/tasks/${taskId}/time`, { hours });
     setTimeEntry((s) => ({ ...s, [taskId]: { hours: '' } }));
     const tlist = await api.get(`/projects/${id}/tasks`);
     setTasks(tlist.data.tasks || []);
@@ -265,7 +263,7 @@ export default function ProjectDetails() {
                 </div>
               </div>
 
-              {/* Manual time entry (set total hours) */}
+              {/* Manual time entry (add hours) */}
               {canCollaborate && (
                 <div className="mt-3 grid sm:grid-cols-[140px_120px] gap-2 items-center">
                   <input
@@ -273,7 +271,7 @@ export default function ProjectDetails() {
                     type="number"
                     min={0}
                     step={0.1}
-                    placeholder="Total hours"
+                    placeholder="Set hours"
                     value={timeEntry[t._id]?.hours || ''}
                     onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value } }))}
                   />
@@ -283,7 +281,7 @@ export default function ProjectDetails() {
                     disabled={
                       timeEntry[t._id]?.hours === undefined ||
                       timeEntry[t._id]?.hours === '' ||
-                      parseFloat(timeEntry[t._id]?.hours || '0') < 0
+                      parseFloat(timeEntry[t._id]?.hours || '0') <= 0
                     }
                   >
                     Save Time

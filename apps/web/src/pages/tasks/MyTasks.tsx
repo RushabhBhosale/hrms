@@ -57,16 +57,14 @@ export default function MyTasks() {
   async function saveTime(t: Task) {
     const entry = timeEntry[t._id];
     const hours = parseFloat(entry?.hours || '0');
-    if (isNaN(hours) || hours < 0) {
-      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter total hours (>= 0)' } }));
+    if (isNaN(hours) || hours <= 0) {
+      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter hours (> 0)' } }));
       return;
     }
     const projectId = typeof t.project === 'string' ? t.project : t.project._id;
     try {
-      // Replace total time instead of adding; send minutes
-      await api.put(`/projects/${projectId}/tasks/${t._id}`, {
-        timeSpentMinutes: Math.round(hours * 60),
-      });
+      // Replace total time for this task
+      await api.put(`/projects/${projectId}/tasks/${t._id}/time`, { hours });
       setTimeEntry((s) => ({ ...s, [t._id]: { hours: '' } }));
       setMsg((m) => ({ ...m, [t._id]: { ok: 'Time updated' } }));
       await load();
@@ -150,7 +148,7 @@ export default function MyTasks() {
                 type="number"
                 min={0}
                 step={0.1}
-                placeholder="Total hours"
+                placeholder="Set hours"
                 value={timeEntry[t._id]?.hours || ''}
                 onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value } }))}
               />
@@ -160,7 +158,7 @@ export default function MyTasks() {
                 disabled={
                   timeEntry[t._id]?.hours === undefined ||
                   timeEntry[t._id]?.hours === '' ||
-                  parseFloat(timeEntry[t._id]?.hours || '0') < 0
+                  parseFloat(timeEntry[t._id]?.hours || '0') <= 0
                 }
               >
                 Save Time

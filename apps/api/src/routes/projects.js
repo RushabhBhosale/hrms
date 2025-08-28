@@ -78,6 +78,71 @@ router.get('/tasks/assigned', auth, async (req, res) => {
   }
 });
 
+// Tasks worked on by an employee for a given day across company projects
+// Query params: employeeId (optional, defaults to current user), date (ISO or yyyy-mm-dd, optional defaults to today)
+router.get('/tasks/worked', auth, async (req, res) => {
+  try {
+    const isHr = (req.employee.subRoles || []).includes('hr');
+    const isManager = (req.employee.subRoles || []).includes('manager');
+    const isAdminUser = isAdmin(req.employee);
+
+    const employeeId = String(req.query.employeeId || req.employee.id);
+    // Authorization: allow self, or admin/hr/manager
+    const isSelf = String(employeeId) === String(req.employee.id);
+    if (!isSelf && !(isAdminUser || isHr || isManager)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Parse date
+    let d = req.query.date ? new Date(req.query.date) : new Date();
+    if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid date' });
+    const start = new Date(d);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    // Limit to tasks within the same company
+    const projects = await Project.find({ company: req.employee.company })
+      .select('_id title')
+      .lean();
+    const projectIds = projects.map((p) => p._id);
+
+    // Find tasks that have time logs for the employee within [start, end)
+    const rawTasks = await Task.find({
+      project: { $in: projectIds },
+      timeLogs: {
+        $elemMatch: {
+          addedBy: employeeId,
+          createdAt: { $gte: start, $lt: end },
+        },
+      },
+    })
+      .populate('project', 'title')
+      .select('title status timeLogs project')
+      .lean();
+
+    // Reduce logs to the selected day and compute minutes per task
+    const tasks = rawTasks.map((t) => {
+      const dayLogs = (t.timeLogs || []).filter(
+        (l) => String(l.addedBy) === String(employeeId) && l.createdAt >= start && l.createdAt < end
+      );
+      const minutes = dayLogs.reduce((acc, l) => acc + (l.minutes || 0), 0);
+      return {
+        _id: t._id,
+        title: t.title,
+        status: t.status,
+        project: t.project ? { _id: t.project._id, title: t.project.title } : null,
+        minutes,
+        logs: dayLogs.map((l) => ({ minutes: l.minutes, note: l.note, createdAt: l.createdAt })),
+      };
+    });
+
+    res.json({ tasks });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load worked tasks' });
+  }
+});
+
 // Get single project
 router.get('/:id', auth, async (req, res) => {
   const project = await Project.findById(req.params.id);
@@ -264,6 +329,34 @@ router.post('/:id/tasks/:taskId/time', auth, async (req, res) => {
     latest: task.timeLogs[task.timeLogs.length - 1],
     taskId: task._id,
   });
+});
+
+// Set total time on a task (replace), without altering historical logs
+// Allows reducing or increasing the total; members or admins only
+router.put('/:id/tasks/:taskId/time', auth, async (req, res) => {
+  const project = await Project.findById(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+  if (!isProjectMember(req.employee, project) && !isAdmin(req.employee))
+    return res.status(403).json({ error: 'Forbidden' });
+  const task = await Task.findOne({ _id: req.params.taskId, project: project._id });
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  let totalMinutes = 0;
+  if (req.body.hours !== undefined) {
+    const h = parseFloat(req.body.hours);
+    if (!isFinite(h) || h < 0) return res.status(400).json({ error: 'Invalid hours' });
+    totalMinutes = Math.round(h * 60);
+  } else if (req.body.minutes !== undefined) {
+    const m = parseInt(req.body.minutes, 10);
+    if (!isFinite(m) || m < 0) return res.status(400).json({ error: 'Invalid minutes' });
+    totalMinutes = m;
+  } else {
+    return res.status(400).json({ error: 'Provide hours or minutes' });
+  }
+
+  task.timeSpentMinutes = totalMinutes;
+  await task.save();
+  res.json({ timeSpentMinutes: task.timeSpentMinutes, taskId: task._id });
 });
 
 module.exports = router;

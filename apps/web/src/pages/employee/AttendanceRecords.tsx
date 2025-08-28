@@ -85,6 +85,17 @@ export default function AttendanceRecords() {
   } | null>(null);
 
   const [detail, setDetail] = useState<AttRecord | null>(null);
+  type DayTask = {
+    _id: string;
+    title: string;
+    status: "PENDING" | "INPROGRESS" | "DONE";
+    project?: { _id: string; title: string } | null;
+    minutes: number;
+    logs: { minutes: number; note?: string; createdAt: string }[];
+  };
+  const [dayTasks, setDayTasks] = useState<DayTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksErr, setTasksErr] = useState<string | null>(null);
 
   // Report list moved to dedicated page
 
@@ -252,6 +263,13 @@ export default function AttendanceRecords() {
       "0"
     )}`;
     setMonth(newMonth);
+  }
+
+  function fmtMinutes(mins?: number) {
+    if (!mins || mins <= 0) return "-";
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}h ${m}m`;
   }
 
   const weekHeaders = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -453,7 +471,26 @@ export default function AttendanceRecords() {
                     return (
                       <button
                         key={date.toISOString()}
-                        onClick={() => rec && !hidden && setDetail(rec)}
+                        onClick={async () => {
+                          if (!rec || hidden) return;
+                          setDetail(rec);
+                          // Fetch tasks worked on that day for selected employee
+                          setTasksErr(null);
+                          setDayTasks([]);
+                          setTasksLoading(true);
+                          try {
+                            const res = await api.get("/projects/tasks/worked", {
+                              params: { employeeId, date: rec.date },
+                            });
+                            setDayTasks(res.data.tasks || []);
+                          } catch (e: any) {
+                            setTasksErr(
+                              e?.response?.data?.error || "Failed to load tasks"
+                            );
+                          } finally {
+                            setTasksLoading(false);
+                          }
+                        }}
                         disabled={!rec || hidden}
                         className={[
                           "relative h-20 rounded border p-2 text-left transition",
@@ -553,6 +590,37 @@ export default function AttendanceRecords() {
                 <div className="col-span-2 mt-2 text-xs text-error">
                   Auto punched out
                 </div>
+              )}
+            </div>
+            <div className="mt-4">
+              <div className="text-sm font-medium mb-2">Tasks</div>
+              {tasksLoading && (
+                <div className="text-sm text-muted">Loading tasks…</div>
+              )}
+              {tasksErr && (
+                <div className="rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+                  {tasksErr}
+                </div>
+              )}
+              {!tasksLoading && !tasksErr && dayTasks.length === 0 && (
+                <div className="text-sm text-muted">No tasks logged for this day.</div>
+              )}
+              {!tasksLoading && !tasksErr && dayTasks.length > 0 && (
+                <ul className="space-y-2">
+                  {dayTasks.map((t) => (
+                    <li key={t._id} className="flex items-start justify-between gap-3 text-sm">
+                      <div>
+                        <div className="font-medium">{t.title}</div>
+                        {t.project?.title && (
+                          <div className="text-muted text-xs">{t.project.title}</div>
+                        )}
+                      </div>
+                      <div className="shrink-0 inline-flex rounded-full bg-white/70 px-2 py-[2px] text-[11px] font-medium">
+                        {fmtMinutes(t.minutes)}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
             <div className="mt-4 flex justify-end">
