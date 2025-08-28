@@ -16,6 +16,9 @@ import EmployeeList from './pages/admin/EmployeeList';
 import LeaveRequests from './pages/admin/LeaveRequests';
 import LeaveSettings from './pages/admin/LeaveSettings';
 import RoleSettings from './pages/admin/RoleSettings';
+import ProjectsAdmin from './pages/admin/Projects';
+import MyProjects from './pages/projects/MyProjects';
+import ProjectDetails from './pages/projects/ProjectDetails';
 
 import EmployeeDash from './pages/employee/Dashboard';
 import AttendanceRecords from './pages/employee/AttendanceRecords';
@@ -60,6 +63,8 @@ export default function App() {
         <Route path="employees/add" element={<AddEmployee />} />
         <Route path="employees" element={<EmployeeList />} />
         <Route path="employees/:id" element={<EmployeeDetails />} />
+        <Route path="projects" element={<ProjectsAdmin />} />
+        <Route path="projects/:id" element={<ProjectDetails />} />
         <Route path="attendances" element={<AttendanceRecords />} />
         <Route path="report" element={<MonthlyReport />} />
         <Route path="leave-settings" element={<LeaveSettings />} />
@@ -99,6 +104,8 @@ export default function App() {
         <Route path="leave" element={<LeaveRequest />} />
         <Route path="approvals" element={<LeaveApprovals />} />
         <Route path="documents" element={<Documents />} />
+        <Route path="projects" element={<MyProjects />} />
+        <Route path="projects/:id" element={<ProjectDetails />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 

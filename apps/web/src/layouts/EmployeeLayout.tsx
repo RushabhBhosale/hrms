@@ -29,6 +29,7 @@ export default function EmployeeLayout() {
       ? []
       : [{ to: "/app/attendance", label: "Attendance", icon: Clock8 }]),
 
+    { to: "/app/projects", label: "Projects", icon: Users },
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
     { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
     { to: "/app/documents", label: "Documents", icon: FileText },
@@ -54,6 +55,7 @@ export default function EmployeeLayout() {
     if (pathname.startsWith("/app/attendances")) return "Attendances";
     if (pathname.startsWith("/app/report")) return "Report";
     if (pathname.startsWith("/app/attendance")) return "Attendance";
+    if (pathname.startsWith("/app/projects")) return "Projects";
     if (pathname.startsWith("/app/leave")) return "Leave";
     if (pathname.startsWith("/app/approvals")) return "Leave Approvals";
     if (pathname.startsWith("/app/documents")) return "Documents";
