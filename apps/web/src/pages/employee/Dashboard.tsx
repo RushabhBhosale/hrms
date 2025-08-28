@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import RoleGuard from "../../components/RoleGuard";
+import { getEmployee } from "../../lib/auth";
 
 type Attendance = {
   firstPunchIn?: string;
@@ -31,6 +32,7 @@ export default function EmployeeDash() {
   const [pending, setPending] = useState<"in" | "out" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
+  const me = getEmployee();
 
   // Assigned tasks widget
   type Task = {
@@ -44,6 +46,35 @@ export default function EmployeeDash() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksErr, setTasksErr] = useState<string | null>(null);
+
+  // Punch-out modal state
+  const [showPunchOut, setShowPunchOut] = useState(false);
+  type Assigned = Task & {
+    projectId: string;
+    projectTitle: string;
+    checked?: boolean;
+    hours?: string; // user input hours, e.g. 1.5
+  };
+  const [assigned, setAssigned] = useState<Assigned[]>([]);
+  const [assignedLoading, setAssignedLoading] = useState(false);
+  const [assignedErr, setAssignedErr] = useState<string | null>(null);
+  const [workedToday, setWorkedToday] = useState<{ minutes: number; dateKey: string } | null>(null);
+  const [workedTasksToday, setWorkedTasksToday] = useState<{ taskId: string; minutes: number }[]>([]);
+  const [projects, setProjects] = useState<{ _id: string; title: string }[]>([]);
+  // Add new task form
+  const [newTaskProjectId, setNewTaskProjectId] = useState<string>("");
+  const [newTaskTitle, setNewTaskTitle] = useState<string>("");
+  const [addingTask, setAddingTask] = useState(false);
+  const [submittingPunchOut, setSubmittingPunchOut] = useState(false);
+  const [punchOutErr, setPunchOutErr] = useState<string | null>(null);
+
+  const remainingMinutes = useMemo(() => {
+    // Use elapsed as up-to-now worked time in ms
+    const total = Math.round(elapsed / 60000); // minutes
+    const alreadyLogged = workedTasksToday.reduce((acc, t) => acc + (t.minutes || 0), 0);
+    const remain = total - alreadyLogged;
+    return remain > 0 ? remain : 0;
+  }, [elapsed, workedTasksToday]);
 
   async function load() {
     try {
@@ -68,6 +99,93 @@ export default function EmployeeDash() {
       setErr(e?.response?.data?.error || `Failed to punch ${action}`);
     } finally {
       setPending(null);
+    }
+  }
+
+  async function openPunchOutModal() {
+    if (pending) return;
+    setPunchOutErr(null);
+    setShowPunchOut(true);
+    // load assigned tasks & today logs & projects
+    try {
+      setAssignedErr(null);
+      setAssignedLoading(true);
+      const [assignedRes, workedRes, projectsRes] = await Promise.all([
+        api.get("/projects/tasks/assigned"),
+        api.get("/projects/tasks/worked"),
+        api.get("/projects"),
+      ]);
+      const list: Task[] = assignedRes.data.tasks || [];
+      const normalized: Assigned[] = list.map((t) => ({
+        ...t,
+        projectId: typeof t.project === "string" ? (t.project as string) : (t.project?._id as string),
+        projectTitle: typeof t.project === "string" ? "" : (t.project?.title || ""),
+        checked: false,
+        hours: "",
+      }));
+      setAssigned(normalized);
+      const tasksToday: { tasks: { _id: string; minutes: number; project?: { _id: string } }[] } = workedRes.data || { tasks: [] };
+      setWorkedTasksToday(
+        (tasksToday.tasks || []).map((t) => ({ taskId: t._id, minutes: t.minutes || 0 }))
+      );
+      setWorkedToday({ minutes: Math.round(elapsed / 60000), dateKey: new Date().toISOString().slice(0, 10) });
+      setProjects((projectsRes.data.projects || []).map((p: any) => ({ _id: p._id, title: p.title })));
+      if (!newTaskProjectId && (projectsRes.data.projects || []).length > 0) {
+        setNewTaskProjectId(projectsRes.data.projects[0]._id);
+      }
+    } catch (e: any) {
+      setAssignedErr(e?.response?.data?.error || "Failed to load tasks");
+    } finally {
+      setAssignedLoading(false);
+    }
+  }
+
+  async function addNewTask() {
+    if (!newTaskTitle.trim() || !newTaskProjectId || !me?.id) return;
+    try {
+      setAddingTask(true);
+      const res = await api.post(`/projects/${newTaskProjectId}/tasks`, {
+        title: newTaskTitle.trim(),
+        description: "",
+        assignedTo: me.id,
+      });
+      const t: Task = res.data.task;
+      const a: Assigned = {
+        ...t,
+        projectId: newTaskProjectId,
+        projectTitle: projects.find((p) => p._id === newTaskProjectId)?.title || "",
+        checked: true,
+        hours: remainingMinutes > 0 ? (remainingMinutes / 60).toFixed(2) : "1",
+      };
+      setAssigned((prev) => [a, ...prev]);
+      setNewTaskTitle("");
+    } catch (e: any) {
+      setPunchOutErr(e?.response?.data?.error || "Failed to add task");
+    } finally {
+      setAddingTask(false);
+    }
+  }
+
+  async function submitPunchOutWithTasks() {
+    if (submittingPunchOut) return;
+    setPunchOutErr(null);
+    try {
+      setSubmittingPunchOut(true);
+      // For each selected task, log time if hours > 0
+      const selected = assigned.filter((t) => t.checked);
+      for (const t of selected) {
+        const h = parseFloat(t.hours || "0");
+        const minutes = Math.round(h * 60);
+        if (!minutes || minutes <= 0) continue; // skip empty entries
+        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time`, { minutes });
+      }
+      // Finally punch out
+      await punch("out");
+      setShowPunchOut(false);
+    } catch (e: any) {
+      setPunchOutErr(e?.response?.data?.error || "Failed to punch out with tasks");
+    } finally {
+      setSubmittingPunchOut(false);
     }
   }
 
@@ -203,7 +321,7 @@ export default function EmployeeDash() {
             {punchedIn ? (
               <button
                 className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
-                onClick={() => punch("out")}
+                onClick={openPunchOutModal}
                 disabled={pending === "out"}
               >
                 {pending === "out" ? "Punching Out…" : "Punch Out"}
@@ -269,6 +387,156 @@ export default function EmployeeDash() {
           </div>
         </RoleGuard>
       </div>
+
+      {/* Punch-out modal */}
+      {showPunchOut && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowPunchOut(false)} />
+          <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-lg font-semibold">Log today’s tasks</h4>
+              <button className="text-sm underline" onClick={() => setShowPunchOut(false)}>Close</button>
+            </div>
+            {punchOutErr && (
+              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{punchOutErr}</div>
+            )}
+            <div className="text-xs text-muted mb-3">
+              {workedToday ? (
+                <>
+                  Total today: {Math.round((elapsed/60000))} mins • Logged: {workedTasksToday.reduce((a,b)=>a+b.minutes,0)} mins • Remaining: {remainingMinutes} mins
+                </>
+              ) : (
+                <>Today: {new Date().toLocaleDateString()}</>
+              )}
+            </div>
+
+            {/* Add new task */}
+            <div className="mb-4 rounded border border-border p-3 bg-white">
+              <div className="mb-2 text-sm font-medium">Add a task</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="h-9 rounded-md border border-border bg-surface px-2"
+                  value={newTaskProjectId}
+                  onChange={(e) => setNewTaskProjectId(e.target.value)}
+                >
+                  {projects.map((p) => (
+                    <option key={p._id} value={p._id}>{p.title}</option>
+                  ))}
+                </select>
+                <input
+                  className="h-9 flex-1 min-w-[160px] rounded-md border border-border bg-surface px-2"
+                  placeholder="Task title"
+                  value={newTaskTitle}
+                  onChange={(e) => setNewTaskTitle(e.target.value)}
+                />
+                <button
+                  className="h-9 rounded-md bg-secondary px-3 text-white disabled:opacity-60"
+                  onClick={addNewTask}
+                  disabled={addingTask || !newTaskTitle.trim() || !newTaskProjectId}
+                >
+                  {addingTask ? "Adding…" : "Add"}
+                </button>
+              </div>
+            </div>
+
+            {/* Assigned tasks list */}
+            {assignedErr && (
+              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{assignedErr}</div>
+            )}
+            {assignedLoading ? (
+              <div className="text-sm text-muted">Loading tasks…</div>
+            ) : (
+              <div className="max-h-80 overflow-auto pr-1">
+                {assigned.length === 0 ? (
+                  <div className="text-sm text-muted">No assigned tasks.</div>
+                ) : (
+                  <div className="space-y-4">
+                    {Array.from(
+                      assigned.reduce((map, t) => {
+                        const key = t.projectId || "misc";
+                        if (!map.has(key)) map.set(key, { title: t.projectTitle || "(No project)", items: [] as Assigned[] });
+                        map.get(key)!.items.push(t);
+                        return map;
+                      }, new Map<string, { title: string; items: Assigned[] }>())
+                    ).map(([pid, group]) => (
+                      <div key={pid} className="">
+                        <div className="text-sm font-medium mb-1">{group.title}</div>
+                        <ul className="space-y-2">
+                          {group.items.map((t) => (
+                            <li key={t._id} className="flex items-center gap-3 border border-border rounded px-3 py-2">
+                              <label className="inline-flex items-center gap-2 flex-1">
+                                <input
+                                  type="checkbox"
+                                  checked={!!t.checked}
+                                  onChange={(e) =>
+                                    setAssigned((prev) =>
+                                      prev.map((x) =>
+                                        x._id === t._id ? { ...x, checked: e.target.checked } : x
+                                      )
+                                    )
+                                  }
+                                />
+                                <span className="text-sm">{t.title}</span>
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted">Hours</span>
+                                <input
+                                  type="number"
+                                  step="0.25"
+                                  min="0"
+                                  className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm"
+                                  value={t.hours || ""}
+                                  onChange={(e) =>
+                                    setAssigned((prev) =>
+                                      prev.map((x) => (x._id === t._id ? { ...x, hours: e.target.value } : x))
+                                    )
+                                  }
+                                  placeholder="0"
+                                  disabled={!t.checked}
+                                />
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mt-4 flex items-center justify-between">
+              <button
+                className="rounded-md border border-border px-4 py-2 text-sm"
+                onClick={() => setShowPunchOut(false)}
+                disabled={submittingPunchOut}
+              >
+                Cancel
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded-md border border-border px-3 py-2 text-sm"
+                  onClick={async () => {
+                    await punch("out");
+                    setShowPunchOut(false);
+                  }}
+                  disabled={submittingPunchOut}
+                  title="Punch out without logging tasks"
+                >
+                  Skip for now
+                </button>
+                <button
+                  className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
+                  onClick={submitPunchOutWithTasks}
+                  disabled={submittingPunchOut}
+                >
+                  {submittingPunchOut ? "Submitting…" : "Submit & Punch Out"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
