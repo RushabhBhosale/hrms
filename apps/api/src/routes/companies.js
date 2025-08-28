@@ -305,7 +305,7 @@ router.put("/employees/:id/role", auth, async (req, res) => {
 // Admin: list employees in their company
 router.get("/employees", auth, async (req, res) => {
   const allowed =
-    ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+    ["ADMIN", "SUPERADMIN", "EMPLOYEE"].includes(req.employee.primaryRole) ||
     (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
   if (!allowed) return res.status(403).json({ error: "Forbidden" });
 

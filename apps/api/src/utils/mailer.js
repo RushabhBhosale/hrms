@@ -20,14 +20,39 @@ function createTransporter() {
   const port = SMTP_PORT ? parseInt(SMTP_PORT, 10) : 587;
   const secure = String(SMTP_SECURE || '').toLowerCase() === 'true' || port === 465;
 
+  // Some providers (e.g., Gmail app passwords) are shown with spaces; strip them.
+  const sanitizedPass = SMTP_PASS ? SMTP_PASS.replace(/\s+/g, '') : undefined;
+
   const transporter = nodemailer.createTransport({
     host: SMTP_HOST,
     port,
     secure,
-    auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+    auth: SMTP_USER ? { user: SMTP_USER, pass: sanitizedPass } : undefined,
+    logger: String(process.env.SMTP_DEBUG || '').toLowerCase() === 'true',
+    debug: String(process.env.SMTP_DEBUG || '').toLowerCase() === 'true',
   });
 
-  transporter._defaultFrom = SMTP_FROM || SMTP_USER || undefined;
+  // Default From: use provided, else SMTP user. For Gmail, prefer SMTP_USER to avoid alias issues.
+  const isGmail = String(SMTP_HOST || '').toLowerCase().includes('gmail');
+  let defaultFrom = SMTP_FROM || SMTP_USER || undefined;
+  if (isGmail && SMTP_USER) {
+    // For Gmail, enforce the actual Gmail address, but preserve display name if provided
+    if (SMTP_FROM) {
+      const m = String(SMTP_FROM).match(/^([^<]+)</);
+      const name = m ? m[1].trim() : null;
+      defaultFrom = name ? `${name} <${SMTP_USER}>` : SMTP_USER;
+    } else {
+      defaultFrom = SMTP_USER;
+    }
+  }
+  transporter._defaultFrom = defaultFrom;
+
+  // Proactive verification (non-fatal): helps surface auth/connection errors at startup
+  transporter.verify().then(() => {
+    console.log(`[mailer] SMTP ready on ${SMTP_HOST}:${port} (secure=${secure})`);
+  }).catch((e) => {
+    console.warn('[mailer] SMTP verify failed:', e?.message || e);
+  });
   return transporter;
 }
 
@@ -62,7 +87,7 @@ async function sendMail(opts) {
     return { skipped: true };
   }
 
-  const from = opts.from || transporter._defaultFrom;
+  let from = opts.from || transporter._defaultFrom;
   if (!from) {
     console.warn('[mailer] Email skipped: missing FROM address (set SMTP_FROM or SMTP_USER)');
     return { skipped: true };
@@ -83,4 +108,3 @@ async function sendMail(opts) {
 }
 
 module.exports = { sendMail, isEmailEnabled };
-

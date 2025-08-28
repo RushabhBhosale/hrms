@@ -19,6 +19,8 @@ type FormState = {
   type: "CASUAL" | "PAID" | "UNPAID" | "SICK";
 };
 
+type EmployeeLite = { id: string; name: string; email: string };
+
 function daysBetween(start?: string, end?: string) {
   if (!start || !end) return 0;
 
@@ -49,6 +51,8 @@ export default function LeaveRequest() {
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [balances, setBalances] = useState<LeaveBalances | null>(() => getEmployee()?.leaveBalances || null);
+  const [employees, setEmployees] = useState<EmployeeLite[]>([]);
+  const [notifyIds, setNotifyIds] = useState<string[]>([]);
 
   async function load() {
     try {
@@ -81,6 +85,24 @@ export default function LeaveRequest() {
     refreshBalances();
   }, []);
 
+  // Load company employees for notification selection
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get("/companies/employees");
+        const me = getEmployee();
+        let list: EmployeeLite[] = (res.data.employees || []).map((e: any) => ({ id: e.id, name: e.name, email: e.email }));
+        // Exclude self from list
+        if (me) list = list.filter((e) => e.id !== me.id);
+        // Sort by name
+        list.sort((a, b) => a.name.localeCompare(b.name));
+        setEmployees(list);
+      } catch (_) {
+        // ignore; UI will hide selector if cannot load
+      }
+    })();
+  }, []);
+
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const canSubmit = useMemo(() => {
     if (!form.startDate || !form.endDate) return false;
@@ -95,8 +117,9 @@ export default function LeaveRequest() {
     setOk(null);
     try {
       setSending(true);
-      await api.post("/leaves", form);
+      await api.post("/leaves", { ...form, notify: notifyIds });
       setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" });
+      setNotifyIds([]);
       setOk("Leave request submitted");
       await load();
     } catch (e: any) {
@@ -202,6 +225,40 @@ export default function LeaveRequest() {
             </div>
           </div>
 
+          {/* Notify recipients */}
+          {employees.length > 0 && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Notify Others (optional)</label>
+              <div className="text-xs text-muted">Default recipients: Company Admin and your Reporting Person</div>
+              <div className="rounded-md border border-border p-3 bg-bg">
+                <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2">
+                  {employees.map((emp) => {
+                    const checked = notifyIds.includes(emp.id);
+                    return (
+                      <label key={emp.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={checked}
+                          onChange={(e) => {
+                            setNotifyIds((prev) =>
+                              e.target.checked
+                                ? Array.from(new Set([...prev, emp.id]))
+                                : prev.filter((id) => id !== emp.id)
+                            );
+                          }}
+                        />
+                        <span className="truncate">
+                          {emp.name} <span className="text-muted">({emp.email})</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="pt-2 flex items-center gap-2">
             <button
               type="submit"
@@ -214,7 +271,7 @@ export default function LeaveRequest() {
               type="button"
               className="rounded-md border border-border px-3 py-2"
               onClick={() =>
-                setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" })
+                { setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" }); setNotifyIds([]); }
               }
               disabled={sending}
             >

@@ -15,7 +15,7 @@ function startOfDay(d) {
 
 // Employee creates a leave request
 router.post("/", auth, async (req, res) => {
-  const { startDate, endDate, reason, type } = req.body;
+  const { startDate, endDate, reason, type, notify } = req.body;
   try {
     const emp = await Employee.findById(req.employee.id);
     if (!emp) return res.status(400).json({ error: "Employee not found" });
@@ -44,6 +44,20 @@ router.post("/", auth, async (req, res) => {
         const recipients = [];
         if (approver?.email) recipients.push(approver.email);
         if (company?.admin?.email) recipients.push(company.admin.email);
+        // Optional: additional recipients provided by requester (same company only)
+        if (Array.isArray(notify) && notify.length) {
+          try {
+            const ids = notify
+              .map((x) => String(x))
+              .filter((x) => x && x.length >= 12);
+            if (ids.length) {
+              const extras = await Employee.find({ _id: { $in: ids }, company: emp.company }).select('email');
+              for (const u of extras) if (u?.email) recipients.push(u.email);
+            }
+          } catch (_) {
+            // ignore extras errors; continue with defaults
+          }
+        }
         // De-duplicate
         const to = Array.from(new Set(recipients));
         if (to.length === 0) return;
