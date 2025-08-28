@@ -137,17 +137,19 @@ router.post('/:id/tasks', auth, async (req, res) => {
   // Allow any project member or admin to create tasks
   if (!isProjectMember(req.employee, project) && !isAdmin(req.employee))
     return res.status(403).json({ error: 'Forbidden' });
-  const { title, description, assignedTo } = req.body;
+  const { title, description, assignedTo, priority } = req.body;
   const allowed = [String(project.teamLead), ...(project.members || []).map((m) => String(m))];
   if (!allowed.includes(String(assignedTo)))
     return res.status(400).json({ error: 'Assignee not in project' });
-  const task = await Task.create({
+  const newTask = {
     project: project._id,
     title,
     description,
     assignedTo,
     createdBy: req.employee.id,
-  });
+  };
+  if (priority) newTask.priority = priority; // enum enforced by schema
+  const task = await Task.create(newTask);
   res.json({ task });
 });
 
@@ -172,7 +174,7 @@ router.put('/:id/tasks/:taskId', auth, async (req, res) => {
   const isLeadOrAdmin = String(project.teamLead) === String(req.employee.id) || isAdmin(req.employee);
   const task = await Task.findOne({ _id: req.params.taskId, project: project._id });
   if (!task) return res.status(404).json({ error: 'Not found' });
-  const { title, description, status, assignedTo } = req.body;
+  const { title, description, status, assignedTo, priority } = req.body;
   // Status updates: only the assignee may change status
   if (status !== undefined) {
     const isAssignee = String(task.assignedTo) === String(req.employee.id);
@@ -181,7 +183,7 @@ router.put('/:id/tasks/:taskId', auth, async (req, res) => {
   }
 
   // Core fields (title/description/assignee): team lead or admin only
-  if (title !== undefined || description !== undefined || assignedTo !== undefined) {
+  if (title !== undefined || description !== undefined || assignedTo !== undefined || priority !== undefined) {
     if (!isLeadOrAdmin) return res.status(403).json({ error: 'Forbidden' });
   }
   if (title !== undefined) task.title = title;
@@ -192,6 +194,7 @@ router.put('/:id/tasks/:taskId', auth, async (req, res) => {
       return res.status(400).json({ error: 'Assignee not in project' });
     task.assignedTo = assignedTo;
   }
+  if (priority !== undefined) task.priority = priority; // enum enforced by schema
   await task.save();
   res.json({ task });
 });

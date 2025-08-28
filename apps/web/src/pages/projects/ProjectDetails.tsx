@@ -20,6 +20,7 @@ type Task = {
   assignedTo: string;
   createdBy: string;
   status: 'PENDING' | 'INPROGRESS' | 'DONE';
+  priority?: 'URGENT' | 'FIRST' | 'SECOND' | 'LEAST';
   comments?: { author: string; text: string; createdAt: string }[];
   timeSpentMinutes?: number;
 };
@@ -35,6 +36,7 @@ export default function ProjectDetails() {
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [assignee, setAssignee] = useState('');
+  const [priority, setPriority] = useState<'URGENT' | 'FIRST' | 'SECOND' | 'LEAST'>('SECOND');
 
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string; note: string }>>({});
@@ -94,10 +96,12 @@ export default function ProjectDetails() {
         title: newTitle,
         description: newDesc,
         assignedTo: assignee,
+        priority,
       });
       setNewTitle('');
       setNewDesc('');
       setAssignee('');
+      setPriority('SECOND');
       const tlist = await api.get(`/projects/${id}/tasks`);
       setTasks(tlist.data.tasks || []);
     } finally {
@@ -190,6 +194,16 @@ export default function ProjectDetails() {
                 </option>
               ))}
             </select>
+            <select
+              className="h-10 rounded border border-border bg-bg px-3"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as any)}
+            >
+              <option value="URGENT">Urgent</option>
+              <option value="FIRST">First Priority</option>
+              <option value="SECOND">Second Priority</option>
+              <option value="LEAST">Least Priority</option>
+            </select>
             <div className="md:col-span-2">
               <textarea
                 className="w-full rounded border border-border bg-bg px-3 py-2 min-h-20"
@@ -214,116 +228,38 @@ export default function ProjectDetails() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 {(() => {
-                  const isAssignee = me && String(t.assignedTo) === String(me.id);
-                  const hrOrManager = (me?.subRoles || []).some((r) => r === 'hr' || r === 'manager');
-                  const limited = hrOrManager && !isAssignee;
                   return (
                     <>
-                      <div className="font-semibold">{t.title}</div>
-                      {!limited && t.description && (
+                      <div className="font-semibold flex items-center gap-2">
+                        <span>{t.title}</span>
+                        {t.priority && (
+                          <span className="text-xs px-2 py-0.5 rounded border border-border bg-bg">
+                            {t.priority === 'URGENT'
+                              ? 'Urgent'
+                              : t.priority === 'FIRST'
+                              ? 'First Priority'
+                              : t.priority === 'SECOND'
+                              ? 'Second Priority'
+                              : 'Least Priority'}
+                          </span>
+                        )}
+                      </div>
+                      {t.description && (
                         <div className="text-sm text-muted mt-1">{t.description}</div>
                       )}
-                      {!limited && (
-                        <div className="mt-2 text-xs text-muted">Time spent: {Math.round(((t.timeSpentMinutes||0)/60)*100)/100} h</div>
-                      )}
+                      <div className="mt-2 text-xs text-muted">Time spent: {Math.round(((t.timeSpentMinutes||0)/60)*100)/100} h</div>
                     </>
                   );
                 })()}
               </div>
               <div className="flex items-center gap-2">
                 {(() => {
-                  const isAssignee = me && String(t.assignedTo) === String(me.id);
-                  const canChange = !!isAssignee; // only assignee may update status
-                  if (!canChange) {
-                    // Show read-only status (especially for HR/Manager)
-                    const label = t.status === 'PENDING' ? 'Pending' : t.status === 'INPROGRESS' ? 'In Progress' : 'Done';
-                    return (
-                      <span className="text-sm text-muted">Status: {label}</span>
-                    );
-                  }
-                  return (
-                    <select
-                      className="h-9 rounded border border-border bg-bg px-2 text-sm disabled:opacity-50"
-                      value={t.status}
-                      onChange={(e) => updateStatus(t._id, e.target.value as Task['status'])}
-                      disabled={!canChange}
-                    >
-                      <option value="PENDING">Pending</option>
-                      <option value="INPROGRESS">In Progress</option>
-                      <option value="DONE">Done</option>
-                    </select>
-                  );
+                  const label = t.status === 'PENDING' ? 'Pending' : t.status === 'INPROGRESS' ? 'In Progress' : 'Done';
+                  return <span className="text-sm text-muted">Status: {label}</span>;
                 })()}
               </div>
             </div>
-
-            {/* Add time (assignee only) */}
-            {(() => {
-              const isAssignee = me && String(t.assignedTo) === String(me.id);
-              if (!isAssignee) return null;
-              return (
-                <div className="mt-3 grid sm:grid-cols-[140px_1fr_100px] gap-2 items-center">
-                  <input
-                    className="h-9 rounded border border-border bg-bg px-3 text-sm"
-                    type="number"
-                    min={0.1}
-                    step={0.1}
-                    placeholder="Hours"
-                    value={timeEntry[t._id]?.hours || ''}
-                    onChange={(e) =>
-                      setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value, note: s[t._id]?.note || '' } }))
-                    }
-                  />
-                  <input
-                    className="h-9 rounded border border-border bg-bg px-3 text-sm"
-                    placeholder="Note (optional)"
-                    value={timeEntry[t._id]?.note || ''}
-                    onChange={(e) =>
-                      setTimeEntry((s) => ({ ...s, [t._id]: { hours: s[t._id]?.hours || '', note: e.target.value } }))
-                    }
-                  />
-                  <button
-                    onClick={() => addTime(t._id)}
-                    className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
-                  >
-                    Add Time
-                  </button>
-                </div>
-              );
-            })()}
-
-            {/* Comments (assignee only) */}
-            {(() => {
-              const isAssignee = me && String(t.assignedTo) === String(me.id);
-              if (!isAssignee) return null;
-              return (
-                <div className="mt-4">
-                  <div className="text-sm font-medium">Comments</div>
-                  <div className="mt-2 space-y-2">
-                    {(t.comments || []).map((c, idx) => (
-                      <div key={idx} className="text-sm border border-border rounded px-3 py-2 bg-bg">
-                        <div>{c.text}</div>
-                        <div className="text-xs text-muted mt-1">{new Date(c.createdAt).toLocaleString()}</div>
-                      </div>
-                    ))}
-                    <div className="flex gap-2">
-                      <input
-                        className="flex-1 h-9 rounded border border-border bg-bg px-3 text-sm"
-                        placeholder="Add a comment"
-                        value={commentText[t._id] || ''}
-                        onChange={(e) => setCommentText((s) => ({ ...s, [t._id]: e.target.value }))}
-                      />
-                      <button
-                        onClick={() => addComment(t._id)}
-                        className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
-                      >
-                        Comment
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+            {/* Interaction (status/time/comments) intentionally hidden on add-task page to keep it focused */}
           </div>
         ))}
         {tasks.length === 0 && <div className="text-sm text-muted">No tasks yet.</div>}
