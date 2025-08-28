@@ -288,7 +288,7 @@ export default function AttendanceRecords() {
       {/* Monthly report */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <h3 className="text-xl font-semibold">Monthly Report</h3>
+          <h3 className="text-xl font-semibold">MonthlyReport</h3>
           <div className="hidden md:flex items-center gap-2">
             {legend.map((b, i) => (
               <div key={i} className="flex items-center gap-1 text-xs">
@@ -299,7 +299,7 @@ export default function AttendanceRecords() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 bg-white">
           {canViewOthers && (
             <>
               <input

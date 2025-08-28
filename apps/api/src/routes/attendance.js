@@ -458,21 +458,6 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       if (inCell.value) inCell.numFmt = "h:mm AM/PM";
       if (outCell.value) outCell.numFmt = "h:mm AM/PM";
     }
-    // // Adjust styles for date/time columns
-    // const dateCol = 1,
-    //   inCol = 2,
-    //   outCol = 3;
-    // for (let i = tableHeaderRow + 1; i <= ws.rowCount; i++) {
-    //   const r = ws.getRow(i);
-    //   const dCell = r.getCell(dateCol);
-    //   const inCell = r.getCell(inCol);
-    //   const outCell = r.getCell(outCol);
-    //   // Leave dates as text (YYYY-MM-DD)
-    //   dCell.numFmt = "@";
-    //   // Time cells as time if present
-    //   if (inCell.value) inCell.numFmt = "h:mm AM/PM";
-    //   if (outCell.value) outCell.numFmt = "h:mm AM/PM";
-    // }
 
     res.setHeader(
       "Content-Type",
