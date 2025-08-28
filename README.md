@@ -27,7 +27,7 @@ npm run dev
 Seed a superadmin in another terminal:
 
 ```bash
-curl -X POST http://localhost:4001/seed/superadmin   -H 'Content-Type: application/json'   -d '{"name":"Super Admin","email":"superadmin@hrms.dev","password":"password"}'
+curl -X POST http://localhost:4000/seed/superadmin   -H 'Content-Type: application/json'   -d '{"name":"Super Admin","email":"superadmin@hrms.dev","password":"password"}'
 ```
 
 Log in at http://localhost:5173 with:

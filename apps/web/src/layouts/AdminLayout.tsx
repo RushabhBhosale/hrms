@@ -13,6 +13,7 @@ import {
   User,
   Settings,
   UserCog,
+  FileText,
 } from "lucide-react";
 
 export default function AdminLayout() {
@@ -30,6 +31,7 @@ export default function AdminLayout() {
     { to: "/admin/employees", label: "Employee List", icon: Users },
     { to: "/admin/roles", label: "Roles", icon: UserCog },
     { to: "/admin/attendances", label: "Attendances", icon: CalendarCheck2 },
+    { to: "/admin/report", label: "Report", icon: FileText },
     { to: "/admin/leave-settings", label: "Leave Settings", icon: Settings },
     { to: "/admin/leaves", label: "Leave Requests", icon: ClipboardList },
     { to: "/admin/profile", label: "Profile", icon: User },
@@ -43,6 +45,7 @@ export default function AdminLayout() {
     if (pathname.startsWith("/admin/roles")) return "Roles";
     if (pathname.startsWith("/admin/attendances")) return "Attendances";
     if (pathname.startsWith("/admin/leave-settings")) return "Leave Settings";
+    if (pathname.startsWith("/admin/report")) return "Report";
     if (pathname.startsWith("/admin/leaves")) return "Leave Requests";
     if (pathname.startsWith("/admin/profile")) return "Profile";
     return "Admin";

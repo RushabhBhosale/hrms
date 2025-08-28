@@ -86,6 +86,8 @@ export default function AttendanceRecords() {
 
   const [detail, setDetail] = useState<AttRecord | null>(null);
 
+  // Report list moved to dedicated page
+
   // ADMIN/HR filters
   const [showWeekends, setShowWeekends] = useState(true);
   const [onlyWorked, setOnlyWorked] = useState(false);
@@ -139,6 +141,8 @@ export default function AttendanceRecords() {
     })();
   }, [month, employeeId]);
 
+  // Monthly list removed from this page; see Report page
+
   const filtered = useMemo(
     () => rows.filter((r) => r.date.slice(0, 7) === month),
     [rows, month]
@@ -185,7 +189,25 @@ export default function AttendanceRecords() {
     [grid]
   );
 
-  const leaveSet = useMemo(() => new Set(summary?.leaveDates || []), [summary]);
+  // Computed leave set: approved leaves + days without punches (working days only, not weekends/holidays, and not in the future)
+  const leaveSet = useMemo(() => {
+    const s = new Set(summary?.leaveDates || []);
+    // mark missing punch days as leave (for the selected month)
+    const [y, m] = month.split("-").map(Number);
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 0); // end of month
+    const today = new Date();
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dow = d.getDay();
+      const isWeekend = dow === 0 || dow === 6;
+      const key = toISODateOnly(d);
+      const inFuture = d > today;
+      if (isWeekend || inFuture) continue;
+      if ((summary?.bankHolidays || []).includes(key)) continue;
+      if (!byDate.get(key)) s.add(key);
+    }
+    return s;
+  }, [summary, byDate, month]);
 
   const holidaySet = useMemo(
     () => new Set(summary?.bankHolidays || []),
@@ -504,6 +526,9 @@ export default function AttendanceRecords() {
           </div>
         </div>
       </section>
+
+      {/* Monthly list (admin/hr/manager) */}
+      {/* Report list moved to dedicated Report page */}
 
       {/* Detail modal */}
       {detail && (

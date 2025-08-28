@@ -23,6 +23,7 @@ import LeaveRequest from './pages/employee/LeaveRequest';
 import Documents from './pages/employee/Documents';
 import LeaveApprovals from './pages/employee/LeaveApprovals';
 import EmployeeDetails from './pages/admin/EmployeeDetails';
+import MonthlyReport from './pages/report/MonthlyReport';
 
 export default function App() {
   return (
@@ -60,6 +61,7 @@ export default function App() {
         <Route path="employees" element={<EmployeeList />} />
         <Route path="employees/:id" element={<EmployeeDetails />} />
         <Route path="attendances" element={<AttendanceRecords />} />
+        <Route path="report" element={<MonthlyReport />} />
         <Route path="leave-settings" element={<LeaveSettings />} />
         <Route path="roles" element={<RoleSettings />} />
         <Route path="leaves" element={<LeaveRequests />} />
@@ -83,6 +85,14 @@ export default function App() {
           element={
           <RoleGuard sub={["hr", "manager"]}>
               <AttendanceRecords />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="report"
+          element={
+            <RoleGuard sub={["hr", "manager"]}>
+              <MonthlyReport />
             </RoleGuard>
           }
         />

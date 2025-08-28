@@ -42,11 +42,17 @@ export default function EmployeeLayout() {
       label: "Attendances",
       icon: Users,
     });
+    links.splice(2, 0, {
+      to: "/app/report",
+      label: "Report",
+      icon: FileText,
+    });
   }
 
   const title = useMemo(() => {
     if (pathname === "/app") return "Dashboard";
     if (pathname.startsWith("/app/attendances")) return "Attendances";
+    if (pathname.startsWith("/app/report")) return "Report";
     if (pathname.startsWith("/app/attendance")) return "Attendance";
     if (pathname.startsWith("/app/leave")) return "Leave";
     if (pathname.startsWith("/app/approvals")) return "Leave Approvals";
