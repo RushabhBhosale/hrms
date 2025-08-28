@@ -59,6 +59,25 @@ router.get('/', auth, async (req, res) => {
   res.json({ projects });
 });
 
+// Assigned tasks for current user across company projects
+// Must be declared before parameterized routes like "/:id"
+router.get('/tasks/assigned', auth, async (req, res) => {
+  try {
+    // Limit to tasks within the same company
+    const projects = await Project.find({ company: req.employee.company }).select('_id').lean();
+    const projectIds = projects.map((p) => p._id);
+    const tasks = await Task.find({
+      project: { $in: projectIds },
+      assignedTo: req.employee.id,
+    })
+      .populate('project', 'title')
+      .lean();
+    res.json({ tasks });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load assigned tasks' });
+  }
+});
+
 // Get single project
 router.get('/:id', auth, async (req, res) => {
   const project = await Project.findById(req.params.id);
@@ -138,11 +157,15 @@ router.get('/:id/tasks', auth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Not found' });
   if (!canViewProject(req.employee, project))
     return res.status(403).json({ error: 'Forbidden' });
-  const tasks = await Task.find({ project: project._id }).lean();
+  const isHrOrManager = (req.employee.subRoles || []).some((r) => r === 'hr' || r === 'manager');
+  const isPrivileged = isAdmin(req.employee) || isHrOrManager;
+  const baseQuery = { project: project._id };
+  const query = isPrivileged ? baseQuery : { ...baseQuery, assignedTo: req.employee.id };
+  const tasks = await Task.find(query).lean();
   res.json({ tasks });
 });
 
-// Update a task - team lead or admin
+// Update a task
 router.put('/:id/tasks/:taskId', auth, async (req, res) => {
   const project = await Project.findById(req.params.id);
   if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -150,21 +173,19 @@ router.put('/:id/tasks/:taskId', auth, async (req, res) => {
   const task = await Task.findOne({ _id: req.params.taskId, project: project._id });
   if (!task) return res.status(404).json({ error: 'Not found' });
   const { title, description, status, assignedTo } = req.body;
-  // Only team lead or admin can modify core fields (title, desc, assignee)
-  if (!isLeadOrAdmin) {
-    // Permit assigned user to update status only
+  // Status updates: only the assignee may change status
+  if (status !== undefined) {
     const isAssignee = String(task.assignedTo) === String(req.employee.id);
-    if (!isAssignee) return res.status(403).json({ error: 'Forbidden' });
-    if (status !== undefined) {
-      task.status = status;
-      await task.save();
-      return res.json({ task });
-    }
-    return res.status(403).json({ error: 'Forbidden' });
+    if (!isAssignee) return res.status(403).json({ error: 'Only assignee may update status' });
+    task.status = status;
+  }
+
+  // Core fields (title/description/assignee): team lead or admin only
+  if (title !== undefined || description !== undefined || assignedTo !== undefined) {
+    if (!isLeadOrAdmin) return res.status(403).json({ error: 'Forbidden' });
   }
   if (title !== undefined) task.title = title;
   if (description !== undefined) task.description = description;
-  if (status !== undefined) task.status = status;
   if (assignedTo !== undefined) {
     const allowed = [String(project.teamLead), ...(project.members || []).map((m) => String(m))];
     if (!allowed.includes(String(assignedTo)))
@@ -221,9 +242,17 @@ router.post('/:id/tasks/:taskId/time', auth, async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   const task = await Task.findOne({ _id: req.params.taskId, project: project._id });
   if (!task) return res.status(404).json({ error: 'Task not found' });
-  const minutes = parseInt(req.body.minutes, 10);
+  // Accept either hours (preferred) or minutes for backward compatibility
+  let minutes = 0;
+  if (req.body.hours !== undefined) {
+    const h = parseFloat(req.body.hours);
+    if (!isFinite(h) || h <= 0) return res.status(400).json({ error: 'Invalid hours' });
+    minutes = Math.round(h * 60);
+  } else {
+    minutes = parseInt(req.body.minutes, 10);
+    if (!minutes || minutes <= 0) return res.status(400).json({ error: 'Invalid minutes' });
+  }
   const note = req.body.note;
-  if (!minutes || minutes <= 0) return res.status(400).json({ error: 'Invalid minutes' });
   task.timeLogs.push({ minutes, note, addedBy: req.employee.id });
   task.timeSpentMinutes = (task.timeSpentMinutes || 0) + minutes;
   await task.save();

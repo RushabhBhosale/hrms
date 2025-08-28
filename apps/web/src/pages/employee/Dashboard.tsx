@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import RoleGuard from "../../components/RoleGuard";
 
@@ -30,6 +31,19 @@ export default function EmployeeDash() {
   const [pending, setPending] = useState<"in" | "out" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
+
+  // Assigned tasks widget
+  type Task = {
+    _id: string;
+    title: string;
+    status: "PENDING" | "INPROGRESS" | "DONE";
+    timeSpentMinutes?: number;
+    project: { _id: string; title: string } | string;
+    updatedAt?: string;
+  };
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksErr, setTasksErr] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -101,6 +115,36 @@ export default function EmployeeDash() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  // Load assigned tasks (top 5 by recent update, incomplete first)
+  useEffect(() => {
+    (async () => {
+      try {
+        setTasksErr(null);
+        setTasksLoading(true);
+        const res = await api.get("/projects/tasks/assigned");
+        const list: Task[] = res.data.tasks || [];
+        const sorted = list
+          .slice()
+          .sort((a, b) => {
+            // Incomplete before done
+            const ad = a.status === "DONE" ? 1 : 0;
+            const bd = b.status === "DONE" ? 1 : 0;
+            if (ad !== bd) return ad - bd;
+            // Newest first
+            const au = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+            const bu = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+            return bu - au;
+          })
+          .slice(0, 5);
+        setTasks(sorted);
+      } catch (e: any) {
+        setTasksErr(e?.response?.data?.error || "Failed to load tasks");
+      } finally {
+        setTasksLoading(false);
+      }
+    })();
   }, []);
 
   const punchedIn = Boolean(
@@ -179,7 +223,42 @@ export default function EmployeeDash() {
 
       <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
         <div className="p-4 rounded-lg border border-border bg-surface shadow-sm">
-          General
+          <div className="flex items-center justify-between mb-2">
+            <div className="font-semibold">My Tasks</div>
+            <Link to="/app/tasks" className="text-sm underline text-accent">
+              View all
+            </Link>
+          </div>
+          {tasksErr && (
+            <div className="mb-2 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-xs text-error">
+              {tasksErr}
+            </div>
+          )}
+          {tasksLoading ? (
+            <div className="text-sm text-muted">Loading…</div>
+          ) : tasks.length === 0 ? (
+            <div className="text-sm text-muted">No tasks assigned.</div>
+          ) : (
+            <ul className="space-y-2">
+              {tasks.map((t) => (
+                <li key={t._id} className="border border-border rounded px-3 py-2">
+                  <div className="text-xs text-muted">
+                    {typeof t.project === "string" ? t.project : t.project?.title}
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium">{t.title}</div>
+                    <span className="text-xs text-muted">
+                      {t.status === "PENDING"
+                        ? "Pending"
+                        : t.status === "INPROGRESS"
+                        ? "In Progress"
+                        : "Done"}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
         <RoleGuard sub={["hr"]}>
           <HRPanel />

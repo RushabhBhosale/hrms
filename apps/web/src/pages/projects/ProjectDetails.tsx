@@ -37,7 +37,7 @@ export default function ProjectDetails() {
   const [assignee, setAssignee] = useState('');
 
   const [commentText, setCommentText] = useState<Record<string, string>>({});
-  const [timeEntry, setTimeEntry] = useState<Record<string, { minutes: string; note: string }>>({});
+  const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string; note: string }>>({});
 
   const memberIds = useMemo(() => {
     if (!project) return [] as string[];
@@ -56,7 +56,7 @@ export default function ProjectDetails() {
     return isAdmin || isMember;
   }, [project, me, memberIds]);
 
-  const canCollaborate = canCreateTask; // same rule for comments/time
+  const canCollaborate = canCreateTask; // placeholder; will check per-task for assignee only
 
   async function loadAll() {
     if (!id) return;
@@ -116,13 +116,13 @@ export default function ProjectDetails() {
 
   async function addTime(taskId: string) {
     const entry = timeEntry[taskId];
-    const minutes = parseInt(entry?.minutes || '0', 10);
-    if (!minutes || minutes <= 0) return;
+    const hours = parseFloat(entry?.hours || '0');
+    if (!hours || hours <= 0) return;
     await api.post(`/projects/${id}/tasks/${taskId}/time`, {
-      minutes,
+      hours,
       note: entry?.note || '',
     });
-    setTimeEntry((s) => ({ ...s, [taskId]: { minutes: '', note: '' } }));
+    setTimeEntry((s) => ({ ...s, [taskId]: { hours: '', note: '' } }));
     const tlist = await api.get(`/projects/${id}/tasks`);
     setTasks(tlist.data.tasks || []);
   }
@@ -213,15 +213,34 @@ export default function ProjectDetails() {
           <div key={t._id} className="border border-border bg-surface rounded-md p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="font-semibold">{t.title}</div>
-                {t.description && <div className="text-sm text-muted mt-1">{t.description}</div>}
-                <div className="mt-2 text-xs text-muted">Time spent: {Math.round(((t.timeSpentMinutes||0)/60)*100)/100} h</div>
+                {(() => {
+                  const isAssignee = me && String(t.assignedTo) === String(me.id);
+                  const hrOrManager = (me?.subRoles || []).some((r) => r === 'hr' || r === 'manager');
+                  const limited = hrOrManager && !isAssignee;
+                  return (
+                    <>
+                      <div className="font-semibold">{t.title}</div>
+                      {!limited && t.description && (
+                        <div className="text-sm text-muted mt-1">{t.description}</div>
+                      )}
+                      {!limited && (
+                        <div className="mt-2 text-xs text-muted">Time spent: {Math.round(((t.timeSpentMinutes||0)/60)*100)/100} h</div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-2">
                 {(() => {
-                  const isLeadOrAdmin = me && (me.primaryRole === 'ADMIN' || me.primaryRole === 'SUPERADMIN' || (project && project.teamLead === me.id));
                   const isAssignee = me && String(t.assignedTo) === String(me.id);
-                  const canChange = !!(isLeadOrAdmin || isAssignee);
+                  const canChange = !!isAssignee; // only assignee may update status
+                  if (!canChange) {
+                    // Show read-only status (especially for HR/Manager)
+                    const label = t.status === 'PENDING' ? 'Pending' : t.status === 'INPROGRESS' ? 'In Progress' : 'Done';
+                    return (
+                      <span className="text-sm text-muted">Status: {label}</span>
+                    );
+                  }
                   return (
                     <select
                       className="h-9 rounded border border-border bg-bg px-2 text-sm disabled:opacity-50"
@@ -238,62 +257,73 @@ export default function ProjectDetails() {
               </div>
             </div>
 
-            {/* Add time */}
-            <div className="mt-3 grid sm:grid-cols-[140px_1fr_100px] gap-2 items-center">
-              <input
-                className="h-9 rounded border border-border bg-bg px-3 text-sm"
-                type="number"
-                min={1}
-                placeholder="Minutes"
-                value={timeEntry[t._id]?.minutes || ''}
-                onChange={(e) =>
-                  setTimeEntry((s) => ({ ...s, [t._id]: { minutes: e.target.value, note: s[t._id]?.note || '' } }))
-                }
-              />
-              <input
-                className="h-9 rounded border border-border bg-bg px-3 text-sm"
-                placeholder="Note (optional)"
-                value={timeEntry[t._id]?.note || ''}
-                onChange={(e) =>
-                  setTimeEntry((s) => ({ ...s, [t._id]: { minutes: s[t._id]?.minutes || '', note: e.target.value } }))
-                }
-              />
-              <button
-                onClick={() => addTime(t._id)}
-                className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg disabled:opacity-50"
-                disabled={!canCollaborate}
-              >
-                Add Time
-              </button>
-            </div>
-
-            {/* Comments */}
-            <div className="mt-4">
-              <div className="text-sm font-medium">Comments</div>
-              <div className="mt-2 space-y-2">
-                {(t.comments || []).map((c, idx) => (
-                  <div key={idx} className="text-sm border border-border rounded px-3 py-2 bg-bg">
-                    <div>{c.text}</div>
-                    <div className="text-xs text-muted mt-1">{new Date(c.createdAt).toLocaleString()}</div>
-                  </div>
-                ))}
-                <div className="flex gap-2">
+            {/* Add time (assignee only) */}
+            {(() => {
+              const isAssignee = me && String(t.assignedTo) === String(me.id);
+              if (!isAssignee) return null;
+              return (
+                <div className="mt-3 grid sm:grid-cols-[140px_1fr_100px] gap-2 items-center">
                   <input
-                    className="flex-1 h-9 rounded border border-border bg-bg px-3 text-sm"
-                    placeholder="Add a comment"
-                    value={commentText[t._id] || ''}
-                    onChange={(e) => setCommentText((s) => ({ ...s, [t._id]: e.target.value }))}
+                    className="h-9 rounded border border-border bg-bg px-3 text-sm"
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    placeholder="Hours"
+                    value={timeEntry[t._id]?.hours || ''}
+                    onChange={(e) =>
+                      setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value, note: s[t._id]?.note || '' } }))
+                    }
+                  />
+                  <input
+                    className="h-9 rounded border border-border bg-bg px-3 text-sm"
+                    placeholder="Note (optional)"
+                    value={timeEntry[t._id]?.note || ''}
+                    onChange={(e) =>
+                      setTimeEntry((s) => ({ ...s, [t._id]: { hours: s[t._id]?.hours || '', note: e.target.value } }))
+                    }
                   />
                   <button
-                    onClick={() => addComment(t._id)}
-                    className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg disabled:opacity-50"
-                    disabled={!canCollaborate}
+                    onClick={() => addTime(t._id)}
+                    className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
                   >
-                    Comment
+                    Add Time
                   </button>
                 </div>
-              </div>
-            </div>
+              );
+            })()}
+
+            {/* Comments (assignee only) */}
+            {(() => {
+              const isAssignee = me && String(t.assignedTo) === String(me.id);
+              if (!isAssignee) return null;
+              return (
+                <div className="mt-4">
+                  <div className="text-sm font-medium">Comments</div>
+                  <div className="mt-2 space-y-2">
+                    {(t.comments || []).map((c, idx) => (
+                      <div key={idx} className="text-sm border border-border rounded px-3 py-2 bg-bg">
+                        <div>{c.text}</div>
+                        <div className="text-xs text-muted mt-1">{new Date(c.createdAt).toLocaleString()}</div>
+                      </div>
+                    ))}
+                    <div className="flex gap-2">
+                      <input
+                        className="flex-1 h-9 rounded border border-border bg-bg px-3 text-sm"
+                        placeholder="Add a comment"
+                        value={commentText[t._id] || ''}
+                        onChange={(e) => setCommentText((s) => ({ ...s, [t._id]: e.target.value }))}
+                      />
+                      <button
+                        onClick={() => addComment(t._id)}
+                        className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
+                      >
+                        Comment
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         ))}
         {tasks.length === 0 && <div className="text-sm text-muted">No tasks yet.</div>}
