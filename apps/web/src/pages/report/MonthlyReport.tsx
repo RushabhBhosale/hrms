@@ -120,7 +120,7 @@ export default function MonthlyReport() {
             </button>
           </div>
           <button
-            className="rounded-md border border-border px-3 py-2 text-sm"
+            className="rounded-md border border-border px-3 py-3 text-sm bg-white"
             onClick={async () => {
               try {
                 const name =
