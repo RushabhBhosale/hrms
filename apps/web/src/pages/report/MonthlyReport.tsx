@@ -165,21 +165,32 @@ export default function MonthlyReport() {
                   <th className="px-3 py-2 font-medium">Punch In</th>
                   <th className="px-3 py-2 font-medium">Punch Out</th>
                   <th className="px-3 py-2 font-medium">Time Spent</th>
-                  <th className="px-3 py-2 font-medium">Day Type</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((d) => {
-                  const statusLabel = d.status === 'WEEKEND' ? 'Weekend' : d.status === 'HOLIDAY' ? 'Holiday' : d.status === 'LEAVE' ? 'Leave' : d.status === 'WORKED' ? 'Worked' : '';
-                  const typeLabel = statusLabel ? (d.dayType === 'FULL_DAY' ? 'Full Day' : 'Half Day') : '';
+                  // Merge day type and status like the Excel export:
+                  // - WORKED => Full Day / Half Day
+                  // - Otherwise => Weekend / Holiday / Leave (or blank for future)
+                  const statusLabel =
+                    d.status === 'WORKED'
+                      ? d.dayType === 'FULL_DAY'
+                        ? 'Full Day'
+                        : 'Half Day'
+                      : d.status === 'WEEKEND'
+                      ? 'Weekend'
+                      : d.status === 'HOLIDAY'
+                      ? 'Holiday'
+                      : d.status === 'LEAVE'
+                      ? 'Leave'
+                      : '';
                   return (
                     <tr key={d.date} className="border-t border-border/60">
                       <td className="px-3 py-2 whitespace-nowrap">{d.date}</td>
                       <td className="px-3 py-2">{fmtTime(d.firstPunchIn)}</td>
                       <td className="px-3 py-2">{fmtTime(d.lastPunchOut)}</td>
                       <td className="px-3 py-2">{statusLabel ? fmtDur(d.timeSpentMs) : ''}</td>
-                      <td className="px-3 py-2 font-medium">{typeLabel}</td>
                       <td className="px-3 py-2">{statusLabel}</td>
                     </tr>
                   );

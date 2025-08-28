@@ -373,6 +373,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
         }
       }
       const dayType = timeSpentMs > 6 * 3600000 ? "FULL_DAY" : "HALF_DAY";
+      const inFuture = d > new Date();
       let status = "";
       if (inFuture) status = "";
       else if (isWeekend) status = "WEEKEND";
@@ -395,8 +396,12 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
         "Punch In": rec?.firstPunchIn ? new Date(rec.firstPunchIn) : null,
         "Punch Out": rec?.lastPunchOut ? new Date(rec.lastPunchOut) : null,
         "Time Spent (hrs)": Math.round((timeSpentMs / 3600000) * 100) / 100,
-        "Day Type": dayType === "FULL_DAY" ? "Full Day" : "Half Day",
-        Status: status,
+        Status:
+          status === "WORKED"
+            ? dayType === "FULL_DAY"
+              ? "Full Day"
+              : "Half Day"
+            : status,
         "Leave Unit": leaveUnit,
       });
     }
@@ -411,8 +416,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       { header: "Punch In", key: "Punch In", width: 18 },
       { header: "Punch Out", key: "Punch Out", width: 18 },
       { header: "Time Spent (hrs)", key: "Time Spent (hrs)", width: 18 },
-      { header: "Day Type", key: "Day Type", width: 12 },
-      { header: "Status", key: "Status", width: 12 },
+      { header: "Status", key: "Status", width: 16 },
       { header: "Leave Unit", key: "Leave Unit", width: 12 },
     ];
 
@@ -429,6 +433,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
     // Table header row
     ws.addRow(ws.columns.map((c) => c.header));
     ws.getRow(ws.rowCount).font = { bold: true };
+    const tableHeaderRow = ws.rowCount; // remember header row index for formatting
 
     // Data rows
     ws.addRows(
@@ -439,35 +444,35 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       }))
     );
 
-    // // Format date/time columns for data rows (after header)
-    // const firstDataRow = ws.rowCount - rows.length + 1; // header row index + 1
-    // const dateCol = 1,
-    //   inCol = 2,
-    //   outCol = 3;
-    // for (let i = firstDataRow; i <= ws.rowCount; i++) {
-    //   const r = ws.getRow(i);
-    //   const dCell = r.getCell(dateCol);
-    //   const inCell = r.getCell(inCol);
-    //   const outCell = r.getCell(outCol);
-    //   dCell.numFmt = "@";
-    //   if (inCell.value) inCell.numFmt = "h:mm AM/PM";
-    //   if (outCell.value) outCell.numFmt = "h:mm AM/PM";
-    // }
-    // Adjust styles for date/time columns
+    // Format date/time columns for data rows (after header)
+    const firstDataRow = ws.rowCount - rows.length + 1; // header row index + 1
     const dateCol = 1,
       inCol = 2,
       outCol = 3;
-    for (let i = tableHeaderRow + 1; i <= ws.rowCount; i++) {
+    for (let i = firstDataRow; i <= ws.rowCount; i++) {
       const r = ws.getRow(i);
       const dCell = r.getCell(dateCol);
       const inCell = r.getCell(inCol);
       const outCell = r.getCell(outCol);
-      // Leave dates as text (YYYY-MM-DD)
       dCell.numFmt = "@";
-      // Time cells as time if present
       if (inCell.value) inCell.numFmt = "h:mm AM/PM";
       if (outCell.value) outCell.numFmt = "h:mm AM/PM";
     }
+    // // Adjust styles for date/time columns
+    // const dateCol = 1,
+    //   inCol = 2,
+    //   outCol = 3;
+    // for (let i = tableHeaderRow + 1; i <= ws.rowCount; i++) {
+    //   const r = ws.getRow(i);
+    //   const dCell = r.getCell(dateCol);
+    //   const inCell = r.getCell(inCol);
+    //   const outCell = r.getCell(outCol);
+    //   // Leave dates as text (YYYY-MM-DD)
+    //   dCell.numFmt = "@";
+    //   // Time cells as time if present
+    //   if (inCell.value) inCell.numFmt = "h:mm AM/PM";
+    //   if (outCell.value) outCell.numFmt = "h:mm AM/PM";
+    // }
 
     res.setHeader(
       "Content-Type",
