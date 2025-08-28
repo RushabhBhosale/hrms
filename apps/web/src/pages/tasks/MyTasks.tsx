@@ -18,7 +18,8 @@ export default function MyTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string; note: string }>>({});
+  // Keep notes separate from time: only track hours for time entry
+  const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string }>>({});
   const [statusFilter, setStatusFilter] = useState<'ALL' | Task['status']>('ALL');
   const [msg, setMsg] = useState<Record<string, { ok?: string; err?: string }>>({});
 
@@ -57,16 +58,15 @@ export default function MyTasks() {
     const entry = timeEntry[t._id];
     const hours = parseFloat(entry?.hours || '0');
     if (!hours || hours <= 0) {
-      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter hours to save a note' } }));
+      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter hours to add time' } }));
       return;
     }
     const projectId = typeof t.project === 'string' ? t.project : t.project._id;
     try {
       await api.post(`/projects/${projectId}/tasks/${t._id}/time`, {
         hours,
-        note: entry?.note || '',
       });
-      setTimeEntry((s) => ({ ...s, [t._id]: { hours: '', note: '' } }));
+      setTimeEntry((s) => ({ ...s, [t._id]: { hours: '' } }));
       setMsg((m) => ({ ...m, [t._id]: { ok: 'Time entry added' } }));
       await load();
     } catch (e: any) {
@@ -130,25 +130,7 @@ export default function MyTasks() {
                 <div className="mt-2 text-xs text-muted">
                   Time spent: {Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100} h
                 </div>
-                {t.timeLogs && t.timeLogs.length > 0 && (
-                  <div className="mt-2 text-xs">
-                    <div className="text-muted">Recent notes:</div>
-                    {(t.timeLogs || [])
-                      .slice(-3)
-                      .reverse()
-                      .map((l, i) => (
-                        <div key={i} className="mt-1">
-                          {l.note ? (
-                            <span>
-                              
-                              <span className="text-muted">•</span> {l.note}
-                              <span className="text-muted"> — {new Date(l.createdAt).toLocaleString()}</span>
-                            </span>
-                          ) : null}
-                        </div>
-                      ))}
-                  </div>
-                )}
+                {/* Notes are separated from time; hide time-log notes display */}
               </div>
               <select
                 className="h-9 rounded border border-border bg-bg px-2 text-sm"
@@ -161,7 +143,7 @@ export default function MyTasks() {
               </select>
             </div>
 
-            <div className="mt-3 grid sm:grid-cols-[140px_1fr_120px] gap-2 items-center">
+            <div className="mt-3 grid sm:grid-cols-[140px_120px] gap-2 items-center">
               <input
                 className="h-9 rounded border border-border bg-bg px-3 text-sm"
                 type="number"
@@ -169,17 +151,7 @@ export default function MyTasks() {
                 step={0.1}
                 placeholder="Hours"
                 value={timeEntry[t._id]?.hours || ''}
-                onChange={(e) =>
-                  setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value, note: s[t._id]?.note || '' } }))
-                }
-              />
-              <input
-                className="h-9 rounded border border-border bg-bg px-3 text-sm"
-                placeholder="Note for this time entry (optional)"
-                value={timeEntry[t._id]?.note || ''}
-                onChange={(e) =>
-                  setTimeEntry((s) => ({ ...s, [t._id]: { hours: s[t._id]?.hours || '', note: e.target.value } }))
-                }
+                onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value } }))}
               />
               <button
                 onClick={() => addTime(t)}

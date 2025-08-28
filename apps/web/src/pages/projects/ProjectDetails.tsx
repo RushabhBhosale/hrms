@@ -259,7 +259,57 @@ export default function ProjectDetails() {
                 })()}
               </div>
             </div>
-            {/* Interaction (status/time/comments) intentionally hidden on add-task page to keep it focused */}
+            {/* Comments (chat-style) for project members */}
+            <div className="mt-4">
+              <div className="text-sm font-medium mb-2">Comments</div>
+              <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                {(t.comments || []).length === 0 && (
+                  <div className="text-xs text-muted">No comments yet.</div>
+                )}
+                {(t.comments || []).slice(-25).map((c, idx) => {
+                  const isMe = String(me?.id) === String(c.author);
+                  const authorName = isMe
+                    ? 'You'
+                    : employees.find((e) => e.id === String(c.author))?.name || 'Member';
+                  return (
+                    <div key={idx} className={["flex", isMe ? 'justify-end' : 'justify-start'].join(' ')}>
+                      <div
+                        className={[
+                          'rounded-lg px-3 py-2 max-w-[80%] text-sm',
+                          isMe ? 'bg-primary text-white' : 'bg-bg border border-border',
+                        ].join(' ')}
+                      >
+                        <div className="text-[11px] opacity-80 mb-0.5">
+                          {authorName} • {new Date((c as any).createdAt).toLocaleString()}
+                        </div>
+                        <div>{(c as any).text}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  className="flex-1 h-9 rounded border border-border bg-bg px-3 text-sm"
+                  placeholder="Write a comment…"
+                  value={commentText[t._id] || ''}
+                  onChange={(e) => setCommentText((s) => ({ ...s, [t._id]: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      addComment(t._id);
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => addComment(t._id)}
+                  className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
+                  disabled={!commentText[t._id] || !commentText[t._id].trim()}
+                >
+                  Send
+                </button>
+              </div>
+            </div>
           </div>
         ))}
         {tasks.length === 0 && <div className="text-sm text-muted">No tasks yet.</div>}
