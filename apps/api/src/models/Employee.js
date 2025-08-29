@@ -26,7 +26,12 @@ const EmployeeSchema = new mongoose.Schema(
       paid: { type: Number, default: 0 },
       unpaid: { type: Number, default: 0 },
       sick: { type: Number, default: 0 }
-    }
+    },
+    // Password reset (OTP) fields
+    resetOtpHash: { type: String },
+    resetOtpExpires: { type: Date },
+    resetOtpAttempts: { type: Number, default: 0 },
+    resetOtpLastSentAt: { type: Date },
   },
   { timestamps: true }
 );

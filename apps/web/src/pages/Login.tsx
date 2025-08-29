@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { api } from '../lib/api';
 import { setAuth } from '../lib/auth';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Login() {
   const nav = useNavigate();
@@ -42,6 +42,9 @@ export default function Login() {
           <input value={password} onChange={e=>setPassword(e.target.value)} className="w-full border rounded px-3 h-10" type="password" />
         </div>
         <button disabled={loading} className="w-full h-10 rounded bg-black text-white">{loading ? '...' : 'Login'}</button>
+        <div className="text-right text-sm">
+          <Link className="text-blue-600 hover:underline" to="/forgot-password">Forgot password?</Link>
+        </div>
       </form>
     </div>
   );

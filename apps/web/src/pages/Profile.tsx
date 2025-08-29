@@ -30,6 +30,12 @@ export default function Profile() {
   });
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [pwOk, setPwOk] = useState<string | null>(null);
+  const [pwErr, setPwErr] = useState<string | null>(null);
+  const [pwLoading, setPwLoading] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -200,6 +206,87 @@ export default function Profile() {
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white"
             >
               Save
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface shadow-sm">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="text-lg font-semibold">Change Password</h3>
+        </div>
+        {pwErr && (
+          <div className="mx-6 mt-4 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+            {pwErr}
+          </div>
+        )}
+        {pwOk && (
+          <div className="mx-6 mt-4 rounded-md border border-success/20 bg-green-50 px-4 py-2 text-sm text-success">
+            {pwOk}
+          </div>
+        )}
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setPwErr(null);
+            setPwOk(null);
+            if (newPassword !== confirmPassword) {
+              setPwErr('Passwords do not match');
+              return;
+            }
+            setPwLoading(true);
+            try {
+              await api.post('/auth/change-password', { currentPassword, newPassword });
+              setPwOk('Password updated');
+              setCurrentPassword('');
+              setNewPassword('');
+              setConfirmPassword('');
+            } catch (e: any) {
+              setPwErr(e?.response?.data?.error || 'Failed to change password');
+            } finally {
+              setPwLoading(false);
+            }
+          }}
+          className="px-6 py-5 space-y-5"
+        >
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Current password">
+              <input
+                type="password"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+              />
+            </Field>
+            <Field label="New password (min 8 chars)">
+              <input
+                type="password"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                minLength={8}
+                required
+              />
+            </Field>
+            <Field label="Confirm password">
+              <input
+                type="password"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                minLength={8}
+                required
+              />
+            </Field>
+          </div>
+          <div className="pt-2">
+            <button
+              type="submit"
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white"
+              disabled={pwLoading}
+            >
+              {pwLoading ? '...' : 'Update password'}
             </button>
           </div>
         </form>
