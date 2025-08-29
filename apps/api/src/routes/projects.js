@@ -4,6 +4,7 @@ const { requirePrimary } = require('../middleware/roles');
 const Project = require('../models/Project');
 const Task = require('../models/Task');
 const Employee = require('../models/Employee');
+const { sendMail, isEmailEnabled } = require('../utils/mailer');
 const Attendance = require('../models/Attendance');
 
 function startOfDay(d) {
@@ -69,6 +70,34 @@ router.post('/', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (req, res)
       company: req.employee.company,
     });
     res.json({ project });
+
+    // Fire-and-forget email notification to team lead and members
+    ;(async () => {
+      try {
+        if (!isEmailEnabled()) return;
+        const ids = [teamLead, ...(Array.isArray(members) ? members : [])]
+          .map((x) => String(x))
+          .filter((x) => x && x.length >= 12);
+        if (!ids.length) return;
+        const people = await Employee.find({ _id: { $in: ids } }).select('name email').lean();
+        const to = Array.from(new Set(people.map((p) => p?.email).filter(Boolean)));
+        if (!to.length) return;
+        const sub = `Assigned to Project: ${title}`;
+        const safeDesc = description ? String(description).replace(/</g, '&lt;') : '';
+        const html = `
+          <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; line-height:1.5;">
+            <h2 style="margin:0 0 12px;">You've been added to a project</h2>
+            <p><strong>Project:</strong> ${title}</p>
+            ${safeDesc ? `<p><strong>Description:</strong> ${safeDesc}</p>` : ''}
+            <p><strong>Assigned By:</strong> ${req.employee.name || 'Administrator'}</p>
+            <p style="margin-top:16px; color:#666; font-size:12px;">This is an automated notification from HRMS.</p>
+          </div>
+        `;
+        await sendMail({ to, subject: sub, html, text: `You have been added to project: ${title}` });
+      } catch (e) {
+        console.warn('[projects] Failed to send project assignment email:', e?.message || e);
+      }
+    })();
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -248,6 +277,30 @@ router.post('/:id/tasks', auth, async (req, res) => {
   if (priority) newTask.priority = priority; // enum enforced by schema
   const task = await Task.create(newTask);
   res.json({ task });
+
+  // Fire-and-forget email notification to the assignee
+  ;(async () => {
+    try {
+      if (!isEmailEnabled()) return;
+      const assignee = await Employee.findById(assignedTo).select('name email').lean();
+      if (!assignee?.email) return;
+      const sub = `New Task Assigned: ${title}`;
+      const safeDesc = description ? String(description).replace(/</g, '&lt;') : '';
+      const html = `
+        <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; line-height:1.5;">
+          <h2 style="margin:0 0 12px;">A new task has been assigned to you</h2>
+          <p><strong>Task:</strong> ${title}</p>
+          ${safeDesc ? `<p><strong>Description:</strong> ${safeDesc}</p>` : ''}
+          <p><strong>Project:</strong> ${project.title}</p>
+          <p><strong>Assigned By:</strong> ${req.employee.name || 'Project Member'}</p>
+          <p style="margin-top:16px; color:#666; font-size:12px;">This is an automated notification from HRMS.</p>
+        </div>
+      `;
+      await sendMail({ to: assignee.email, subject: sub, html, text: `You have been assigned a new task: ${title} (Project: ${project.title})` });
+    } catch (e) {
+      console.warn('[projects] Failed to send task assignment email:', e?.message || e);
+    }
+  })();
 });
 
 // List tasks for a project
@@ -272,6 +325,7 @@ router.put('/:id/tasks/:taskId', auth, async (req, res) => {
   const task = await Task.findOne({ _id: req.params.taskId, project: project._id });
   if (!task) return res.status(404).json({ error: 'Not found' });
   const { title, description, status, assignedTo, priority } = req.body;
+  const prevAssignee = String(task.assignedTo);
   // Status updates: only the assignee may change status
   if (status !== undefined) {
     const isAssignee = String(task.assignedTo) === String(req.employee.id);
@@ -294,6 +348,32 @@ router.put('/:id/tasks/:taskId', auth, async (req, res) => {
   if (priority !== undefined) task.priority = priority; // enum enforced by schema
   await task.save();
   res.json({ task });
+
+  // If assignee changed, notify the new assignee
+  if (assignedTo !== undefined && String(assignedTo) !== prevAssignee) {
+    ;(async () => {
+      try {
+        if (!isEmailEnabled()) return;
+        const assignee = await Employee.findById(assignedTo).select('name email').lean();
+        if (!assignee?.email) return;
+        const sub = `Task Reassigned: ${task.title}`;
+        const safeDesc = task.description ? String(task.description).replace(/</g, '&lt;') : '';
+        const html = `
+          <div style=\"font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; line-height:1.5;\">
+            <h2 style=\"margin:0 0 12px;\">A task has been assigned to you</h2>
+            <p><strong>Task:</strong> ${task.title}</p>
+            ${safeDesc ? `<p><strong>Description:</strong> ${safeDesc}</p>` : ''}
+            <p><strong>Project:</strong> ${project.title}</p>
+            <p><strong>Assigned By:</strong> ${req.employee.name || 'Project Lead'}</p>
+            <p style=\"margin-top:16px; color:#666; font-size:12px;\">This is an automated notification from HRMS.</p>
+          </div>
+        `;
+        await sendMail({ to: assignee.email, subject: sub, html, text: `You have been assigned the task: ${task.title} (Project: ${project.title})` });
+      } catch (e) {
+        console.warn('[projects] Failed to send reassignment email:', e?.message || e);
+      }
+    })();
+  }
 });
 
 // Delete a task - team lead or admin
