@@ -31,8 +31,18 @@ export default function EmployeeDash() {
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<"in" | "out" | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Missing punch-out days (this month)
+  const [missingDays, setMissingDays] = useState<string[]>([]);
+  const [missingLoading, setMissingLoading] = useState(false);
+  const [missingErr, setMissingErr] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const me = getEmployee();
+
+  function fmtDateKey(key: string) {
+    const [y, m, d] = key.split("-").map((x) => parseInt(x, 10));
+    const local = new Date(y, (m || 1) - 1, d || 1);
+    return local.toLocaleDateString();
+  }
 
   // My projects (assigned to me as member or team lead)
   type MyProject = { _id: string; title: string; description?: string; isPersonal?: boolean };
@@ -78,6 +88,21 @@ export default function EmployeeDash() {
   const [usePersonal, setUsePersonal] = useState(false);
   const [personalProjectId, setPersonalProjectId] = useState<string>("");
 
+  // Backfill (log tasks for a past missing punch-out day)
+  const [showBackfill, setShowBackfill] = useState(false);
+  const [backfillDate, setBackfillDate] = useState<string | null>(null);
+  const [backfillErr, setBackfillErr] = useState<string | null>(null);
+  const [backfillLoading, setBackfillLoading] = useState(false);
+  const [backfillSubmitting, setBackfillSubmitting] = useState(false);
+  const [workedTasksForDay, setWorkedTasksForDay] = useState<{ taskId: string; minutes: number }[]>([]);
+
+  // Set punch-out for a past day
+  const [showSetOut, setShowSetOut] = useState(false);
+  const [setOutDate, setSetOutDate] = useState<string | null>(null);
+  const [setOutTime, setSetOutTime] = useState<string>("");
+  const [setOutErr, setSetOutErr] = useState<string | null>(null);
+  const [setOutSubmitting, setSetOutSubmitting] = useState(false);
+
   const remainingMinutes = useMemo(() => {
     // Use elapsed as up-to-now worked time in ms
     const total = Math.round(elapsed / 60000); // minutes
@@ -99,6 +124,8 @@ export default function EmployeeDash() {
     } finally {
       setLoading(false);
     }
+    // Refresh missing punch-outs in parallel
+    loadMissingOut();
   }
 
   async function punch(action: "in" | "out") {
@@ -111,6 +138,20 @@ export default function EmployeeDash() {
       setErr(e?.response?.data?.error || `Failed to punch ${action}`);
     } finally {
       setPending(null);
+    }
+  }
+
+  async function loadMissingOut() {
+    try {
+      setMissingErr(null);
+      setMissingLoading(true);
+      const ym = new Date().toISOString().slice(0, 7);
+      const res = await api.get("/attendance/missing-out", { params: { month: ym } });
+      setMissingDays(res.data?.days || []);
+    } catch (e: any) {
+      setMissingErr(e?.response?.data?.error || "Failed to load missing punch-outs");
+    } finally {
+      setMissingLoading(false);
     }
   }
 
@@ -149,6 +190,40 @@ export default function EmployeeDash() {
       setAssignedErr(e?.response?.data?.error || "Failed to load tasks");
     } finally {
       setAssignedLoading(false);
+    }
+  }
+
+  async function openBackfillModal(dateKey: string) {
+    if (pending) return;
+    setBackfillErr(null);
+    setBackfillDate(dateKey);
+    setShowBackfill(true);
+    try {
+      setBackfillLoading(true);
+      const [assignedRes, workedRes, projectsRes] = await Promise.all([
+        api.get("/projects/tasks/assigned"),
+        api.get("/projects/tasks/worked", { params: { date: dateKey } }),
+        api.get("/projects"),
+      ]);
+      const list: Task[] = assignedRes.data.tasks || [];
+      const normalized: Assigned[] = list.map((t) => ({
+        ...t,
+        projectId: typeof t.project === "string" ? (t.project as string) : (t.project?._id as string),
+        projectTitle: typeof t.project === "string" ? "" : (t.project?.title || ""),
+        checked: false,
+        hours: "",
+      }));
+      setAssigned(normalized);
+      const tasksDay: { tasks: { _id: string; minutes: number }[] } = workedRes.data || { tasks: [] };
+      setWorkedTasksForDay((tasksDay.tasks || []).map((t) => ({ taskId: t._id, minutes: t.minutes || 0 })));
+      setProjects((projectsRes.data.projects || []).map((p: any) => ({ _id: p._id, title: p.title })));
+      if (!newTaskProjectId && (projectsRes.data.projects || []).length > 0) {
+        setNewTaskProjectId(projectsRes.data.projects[0]._id);
+      }
+    } catch (e: any) {
+      setBackfillErr(e?.response?.data?.error || "Failed to load tasks");
+    } finally {
+      setBackfillLoading(false);
     }
   }
 
@@ -217,6 +292,28 @@ export default function EmployeeDash() {
       setPunchOutErr(e?.response?.data?.error || "Failed to punch out with tasks");
     } finally {
       setSubmittingPunchOut(false);
+    }
+  }
+
+  async function submitBackfillTasks() {
+    if (backfillSubmitting || !backfillDate) return;
+    setBackfillErr(null);
+    try {
+      setBackfillSubmitting(true);
+      const selected = assigned.filter((t) => t.checked);
+      for (const t of selected) {
+        const h = parseFloat(t.hours || "0");
+        const minutes = Math.round(h * 60);
+        if (!minutes || minutes <= 0) continue;
+        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time-at`, { minutes, date: backfillDate });
+      }
+      setShowBackfill(false);
+      // Refresh worked summary for that bucket and missing list
+      await loadMissingOut();
+    } catch (e: any) {
+      setBackfillErr(e?.response?.data?.error || "Failed to log tasks for the day");
+    } finally {
+      setBackfillSubmitting(false);
     }
   }
 
@@ -355,6 +452,45 @@ export default function EmployeeDash() {
                 />
                 {punchedIn ? "Punched In" : "Punched Out"}
               </span>
+            </div>
+            <div className="mt-3 text-sm">
+              <div className="text-muted mb-1">Missing punch-outs (this month)</div>
+              {missingLoading ? (
+                <div className="text-muted">Loading…</div>
+              ) : missingErr ? (
+                <div className="text-error">{missingErr}</div>
+              ) : missingDays.length === 0 ? (
+                <div className="text-muted">None 🎉</div>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {missingDays.slice(0, 7).map((d) => (
+                      <div key={d} className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-full border border-border text-xs">
+                          {fmtDateKey(d)}
+                        </span>
+                      <button className="text-xs underline" onClick={() => openBackfillModal(d)}>
+                        Log tasks
+                      </button>
+                      <button className="text-xs underline" onClick={() => {
+                        setSetOutDate(d);
+                        setSetOutTime("");
+                        setSetOutErr(null);
+                        setShowSetOut(true);
+                      }}>
+                        Set punch-out
+                      </button>
+                    </div>
+                  ))}
+                    {missingDays.length > 7 && (
+                      <span className="text-xs text-muted">+{missingDays.length - 7} more</span>
+                    )}
+                    <Link to="/app/attendance" className="text-xs underline">
+                      Review
+                    </Link>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -680,6 +816,127 @@ export default function EmployeeDash() {
                   {submittingPunchOut ? "Submitting…" : "Submit & Punch Out"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Backfill tasks modal */}
+      {showBackfill && backfillDate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowBackfill(false)} />
+          <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-lg font-semibold">Log tasks for {fmtDateKey(backfillDate)}</h4>
+              <button className="text-sm underline" onClick={() => setShowBackfill(false)}>Close</button>
+            </div>
+            {backfillErr && (
+              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{backfillErr}</div>
+            )}
+            <div className="text-xs text-muted mb-3">
+              Already logged: {workedTasksForDay.reduce((a,b)=>a+b.minutes,0)} mins
+            </div>
+            {backfillLoading ? (
+              <div className="text-sm text-muted">Loading…</div>
+            ) : (
+              <div className="space-y-3">
+                <div className="text-sm font-medium">Assigned tasks</div>
+                <ul className="space-y-2 max-h-72 overflow-auto pr-1">
+                  {assigned.map((t) => (
+                    <li key={t._id} className="border border-border rounded px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="mr-2">
+                          <input
+                            type="checkbox"
+                            className="mr-2"
+                            checked={!!t.checked}
+                            onChange={(e) =>
+                              setAssigned((prev) => prev.map((x) => (x._id === t._id ? { ...x, checked: e.target.checked } : x)))
+                            }
+                          />
+                          <span className="font-medium text-sm">{t.title}</span>
+                          <span className="ml-2 text-xs text-muted">{t.projectTitle}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted">Hours</span>
+                          <input
+                            type="number"
+                            step="0.25"
+                            min="0"
+                            className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm"
+                            value={t.hours || ""}
+                            onChange={(e) =>
+                              setAssigned((prev) => prev.map((x) => (x._id === t._id ? { ...x, hours: e.target.value } : x)))
+                            }
+                            placeholder="0"
+                            disabled={!t.checked}
+                          />
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="mt-4 flex items-center justify-between">
+              <button className="rounded-md border border-border px-4 py-2 text-sm" onClick={() => setShowBackfill(false)} disabled={backfillSubmitting}>
+                Cancel
+              </button>
+              <button className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60" onClick={submitBackfillTasks} disabled={backfillSubmitting}>
+                {backfillSubmitting ? "Submitting…" : "Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Set punch-out time modal */}
+      {showSetOut && setOutDate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowSetOut(false)} />
+          <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-lg font-semibold">Set punch-out for {fmtDateKey(setOutDate)}</h4>
+              <button className="text-sm underline" onClick={() => setShowSetOut(false)}>Close</button>
+            </div>
+            {setOutErr && (
+              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{setOutErr}</div>
+            )}
+            <div className="space-y-3">
+              <label className="text-sm flex items-center gap-2">
+                <span className="w-28">Punch-out time</span>
+                <input
+                  type="time"
+                  className="h-9 rounded-md border border-border bg-surface px-2"
+                  value={setOutTime}
+                  onChange={(e) => setSetOutTime(e.target.value)}
+                />
+              </label>
+              <div className="text-xs text-muted">Example: 18:00</div>
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button className="rounded-md border border-border px-4 py-2 text-sm" onClick={() => setShowSetOut(false)} disabled={setOutSubmitting}>
+                Cancel
+              </button>
+              <button
+                className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
+                disabled={!setOutTime || setOutSubmitting}
+                onClick={async () => {
+                  try {
+                    setSetOutErr(null);
+                    setSetOutSubmitting(true);
+                    await api.post('/attendance/punchout-at', { date: setOutDate, time: setOutTime });
+                    setShowSetOut(false);
+                    await loadMissingOut();
+                  } catch (e: any) {
+                    setSetOutErr(e?.response?.data?.error || 'Failed to set punch-out time');
+                  } finally {
+                    setSetOutSubmitting(false);
+                  }
+                }}
+              >
+                {setOutSubmitting ? 'Saving…' : 'Save'}
+              </button>
             </div>
           </div>
         </div>

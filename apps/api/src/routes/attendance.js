@@ -615,4 +615,106 @@ router.get("/company/report", auth, async (req, res) => {
   res.json({ report });
 });
 
+// List days in a month where an employee punched in but did not punch out
+// GET /attendance/missing-out/:employeeId?  (self or hr/manager/admin)
+// Optional query: ?month=yyyy-mm (defaults to current month)
+router.get("/missing-out/:employeeId?", auth, async (req, res) => {
+  try {
+    const targetId = req.params.employeeId || req.employee.id;
+    const isSelf = String(targetId) === String(req.employee.id);
+    const canViewOthers =
+      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+      (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+    if (!isSelf && !canViewOthers)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const { month } = req.query; // yyyy-mm
+    let start;
+    if (month) {
+      start = startOfDay(new Date(month + "-01"));
+    } else {
+      const now = new Date();
+      start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    }
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+
+    const records = await Attendance.find({
+      employee: targetId,
+      date: { $gte: start, $lt: end },
+      firstPunchIn: { $exists: true },
+      $or: [{ lastPunchOut: { $exists: false } }, { lastPunchOut: null }],
+    })
+      .select("date firstPunchIn lastPunchIn workedMs autoPunchOut")
+      .sort({ date: -1 })
+      .lean();
+
+    // Build date-only keys based on server-local date (avoid UTC shift)
+    const days = records.map((r) => {
+      const d = new Date(r.date);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    });
+    res.json({ employeeId: String(targetId), month: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}`, days });
+  } catch (e) {
+    console.error("missing-out error", e);
+    res.status(500).json({ error: "Failed to list missing punch-outs" });
+  }
+});
+
+// Manually set punch-out time for a specific day (self or admin/hr/manager)
+// Body: { date: 'yyyy-mm-dd', time: 'HH:mm' }
+router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
+  try {
+    const targetId = req.params.employeeId || req.employee.id;
+    const isSelf = String(targetId) === String(req.employee.id);
+    const canEditOthers =
+      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+      (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+    if (!isSelf && !canEditOthers)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const { date, time } = req.body || {};
+    if (!date || !time) return res.status(400).json({ error: "Missing date or time" });
+
+    const day = startOfDay(new Date(date));
+    if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
+
+    // Compose punch-out timestamp in server-local time on that day
+    const [hh, mm] = String(time).split(":").map((x) => parseInt(x, 10));
+    if (!isFinite(hh) || !isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59)
+      return res.status(400).json({ error: "Invalid time" });
+    const out = new Date(day);
+    out.setHours(hh, mm, 0, 0);
+
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+    if (!(out >= day && out < nextDay))
+      return res.status(400).json({ error: "Time not within selected day" });
+
+    const record = await Attendance.findOne({ employee: targetId, date: day });
+    if (!record) return res.status(404).json({ error: "Attendance record not found" });
+    if (record.lastPunchOut)
+      return res.status(400).json({ error: "Already punched out for this day" });
+    if (!record.lastPunchIn)
+      return res.status(400).json({ error: "No open punch-in to close" });
+
+    const lastIn = new Date(record.lastPunchIn);
+    if (!(out > lastIn))
+      return res.status(400).json({ error: "Punch-out must be after last punch-in" });
+
+    record.workedMs = (record.workedMs || 0) + (out.getTime() - lastIn.getTime());
+    record.lastPunchOut = out;
+    record.lastPunchIn = undefined;
+    await record.save();
+
+    res.json({ attendance: record });
+  } catch (e) {
+    console.error("punchout-at error", e);
+    res.status(500).json({ error: "Failed to set punch-out time" });
+  }
+});
+
 module.exports = router;

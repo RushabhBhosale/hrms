@@ -498,6 +498,102 @@ router.post('/:id/tasks/:taskId/time', auth, async (req, res) => {
   });
 });
 
+// Add a back-dated time log to a task for a specific calendar date.
+// Enforces the daily cap only when the target date is today; skips cap for past days.
+// Body: { minutes | hours, date: 'yyyy-mm-dd' or ISO, note? }
+router.post('/:id/tasks/:taskId/time-at', auth, async (req, res) => {
+  const project = await Project.findById(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+  if (!isProjectMember(req.employee, project) && !isAdmin(req.employee))
+    return res.status(403).json({ error: 'Forbidden' });
+  const task = await Task.findOne({ _id: req.params.taskId, project: project._id });
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  // Parse minutes/hours
+  let minutes = 0;
+  if (req.body.hours !== undefined) {
+    const h = parseFloat(req.body.hours);
+    if (!isFinite(h) || h <= 0) return res.status(400).json({ error: 'Invalid hours' });
+    minutes = Math.round(h * 60);
+  } else {
+    minutes = parseInt(req.body.minutes, 10);
+    if (!minutes || minutes <= 0) return res.status(400).json({ error: 'Invalid minutes' });
+  }
+  const note = req.body.note;
+
+  // Parse date
+  if (!req.body.date) return res.status(400).json({ error: 'Missing date' });
+  const d = new Date(req.body.date);
+  if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid date' });
+  const start = startOfDay(d);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  const todayStart = startOfDay(new Date());
+  const isToday = start.getTime() === todayStart.getTime();
+
+  // Enforce cap only for today
+  if (isToday) {
+    try {
+      const now = new Date();
+      // Current effective worked minutes for today
+      const attendance = await Attendance.findOne({ employee: req.employee.id, date: start });
+      let workedMs = 0;
+      if (attendance) {
+        workedMs = attendance.workedMs || 0;
+        if (attendance.lastPunchIn && !attendance.lastPunchOut) {
+          // Add in-progress time
+          workedMs += now.getTime() - new Date(attendance.lastPunchIn).getTime();
+        }
+      }
+      const workedMinutes = Math.max(0, Math.floor(workedMs / 60000));
+      const maxAllowedToday = Math.max(0, workedMinutes - 60);
+
+      // Sum already-logged minutes today across all company projects by this employee
+      const companyProjects = await Project.find({ company: req.employee.company })
+        .select('_id')
+        .lean();
+      const projectIds = companyProjects.map((p) => p._id);
+      const rawTasks = await Task.find({
+        project: { $in: projectIds },
+        timeLogs: {
+          $elemMatch: {
+            addedBy: req.employee.id,
+            createdAt: { $gte: start, $lt: end },
+          },
+        },
+      })
+        .select('timeLogs')
+        .lean();
+      const alreadyLogged = rawTasks.reduce((acc, t) => {
+        const mins = (t.timeLogs || [])
+          .filter((l) => String(l.addedBy) === String(req.employee.id) && l.createdAt >= start && l.createdAt < end)
+          .reduce((s, l) => s + (l.minutes || 0), 0);
+        return acc + mins;
+      }, 0);
+
+      const remaining = Math.max(0, maxAllowedToday - alreadyLogged);
+      if (minutes > remaining) {
+        return res.status(400).json({
+          error: `Exceeds allowed time for today. Remaining: ${remaining} minutes (worked ${workedMinutes}m minus 60m break).` ,
+        });
+      }
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to validate daily time cap' });
+    }
+  }
+
+  // Push time log with createdAt set to the middle of the target day for clarity
+  const createdAt = new Date(start.getTime() + 12 * 60 * 60 * 1000);
+  task.timeLogs.push({ minutes, note, addedBy: req.employee.id, createdAt });
+  task.timeSpentMinutes = (task.timeSpentMinutes || 0) + minutes;
+  await task.save();
+  res.json({
+    timeSpentMinutes: task.timeSpentMinutes,
+    latest: task.timeLogs[task.timeLogs.length - 1],
+    taskId: task._id,
+  });
+});
+
 // Set total time on a task (replace), without altering historical logs
 // Allows reducing or increasing the total; members or admins only
 router.put('/:id/tasks/:taskId/time', auth, async (req, res) => {
