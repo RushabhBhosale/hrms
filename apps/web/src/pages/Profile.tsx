@@ -1,7 +1,13 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../lib/api";
+import { setAuth } from "../lib/auth";
 
 interface FormState {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  dob: string; // yyyy-mm-dd
   aadharNumber: string;
   panNumber: string;
   bankName: string;
@@ -11,6 +17,11 @@ interface FormState {
 
 export default function Profile() {
   const [form, setForm] = useState<FormState>({
+    name: "",
+    email: "",
+    phone: "",
+    address: "",
+    dob: "",
     aadharNumber: "",
     panNumber: "",
     bankName: "",
@@ -26,6 +37,11 @@ export default function Profile() {
         const res = await api.get("/auth/me");
         const emp = res.data.employee || {};
         setForm({
+          name: emp.name || "",
+          email: emp.email || "",
+          phone: emp.phone || "",
+          address: emp.address || "",
+          dob: emp.dob ? new Date(emp.dob).toISOString().slice(0, 10) : "",
           aadharNumber: emp.aadharNumber || "",
           panNumber: emp.panNumber || "",
           bankName: emp.bankDetails?.bankName || "",
@@ -48,15 +64,25 @@ export default function Profile() {
     setErr(null);
     try {
       await api.put("/auth/me", {
+        name: form.name,
+        email: form.email,
+        phone: form.phone,
+        address: form.address,
+        dob: form.dob,
         aadharNumber: form.aadharNumber,
         panNumber: form.panNumber,
         bankName: form.bankName,
         bankAccountNumber: form.bankAccountNumber,
         bankIfsc: form.bankIfsc,
       });
+      // Refresh local auth cache with latest profile
+      const me = await api.get("/auth/me");
+      const token = localStorage.getItem("token") || "";
+      if (token && me.data?.employee) setAuth(token, me.data.employee);
       setOk("Profile updated");
-    } catch {
-      setErr("Failed to update profile");
+    } catch (e: any) {
+      const msg = e?.response?.data?.error || "Failed to update profile";
+      setErr(msg);
     }
   }
 
@@ -84,6 +110,49 @@ export default function Profile() {
         </div>
 
         <form onSubmit={submit} className="px-6 py-5 space-y-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Full Name">
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.name}
+                onChange={(e) => onChange("name", e.target.value)}
+              />
+            </Field>
+            <Field label="Email">
+              <input
+                type="email"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.email}
+                onChange={(e) => onChange("email", e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Phone">
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.phone}
+                onChange={(e) => onChange("phone", e.target.value)}
+              />
+            </Field>
+            <Field label="Address">
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.address}
+                onChange={(e) => onChange("address", e.target.value)}
+              />
+            </Field>
+            <Field label="Date of Birth">
+              <input
+                type="date"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.dob}
+                onChange={(e) => onChange("dob", e.target.value)}
+              />
+            </Field>
+          </div>
+
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Aadhar Number">
               <input
@@ -153,4 +222,3 @@ function Field({
     </div>
   );
 }
-
