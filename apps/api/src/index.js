@@ -3,7 +3,6 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const { connectDB } = require('./config');
-const { scheduleAutoPunchOut } = require('./jobs/autoPunchOut');
 
 const app = express();
 app.use(express.json());
@@ -21,7 +20,6 @@ app.use('/documents', require('./routes/documents'));
 app.use('/projects', require('./routes/projects'));
 
 connectDB().then(() => {
-  scheduleAutoPunchOut();
   const port = process.env.PORT || 4000;
   app.listen(port, () => console.log('API on ' + port));
 });
