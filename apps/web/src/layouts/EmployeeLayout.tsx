@@ -90,14 +90,21 @@ export default function EmployeeLayout() {
             <NavLink
               key={to}
               to={to}
-              className={({ isActive }) =>
-                [
+              className={() => {
+                const isActive = (() => {
+                  // Dashboard should only be active on exact path
+                  if (to === "/app") return pathname === "/app";
+                  // Default: exact or nested under the link
+                  return pathname === to || pathname.startsWith(to + "/");
+                })();
+
+                return [
                   "flex items-center gap-3 rounded-md px-3 py-2 transition",
-                  pathname === to || pathname.startsWith(to)
+                  isActive
                     ? "bg-primary/10 text-sidebar-active font-semibold"
                     : "hover:bg-sidebar-hover",
-                ].join(" ")
-              }
+                ].join(" ");
+              }}
               title={label}
             >
               <Icon size={18} />

@@ -77,15 +77,28 @@ export default function AdminLayout() {
             <NavLink
               key={to}
               to={to}
-              className={({ isActive }) =>
-                [
+              className={() => {
+                const isActive = (() => {
+                  // Dashboard should only be active on exact path
+                  if (to === "/admin") return pathname === "/admin";
+                  // Employee List: active on list and details, but not on add
+                  if (to === "/admin/employees") {
+                    return (
+                      pathname.startsWith("/admin/employees") &&
+                      !pathname.startsWith("/admin/employees/add")
+                    );
+                  }
+                  // Default: exact or nested under the link
+                  return pathname === to || pathname.startsWith(to + "/");
+                })();
+
+                return [
                   "flex items-center gap-3 rounded-md px-3 py-2 transition",
-                  // mark active if exact or path startsWith
-                  pathname === to || pathname.startsWith(to)
+                  isActive
                     ? "bg-primary/10 text-sidebar-active font-semibold"
                     : "hover:bg-sidebar-hover",
-                ].join(" ")
-              }
+                ].join(" ");
+              }}
               title={label}
             >
               <Icon size={18} />
