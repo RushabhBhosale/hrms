@@ -112,6 +112,14 @@ export default function EmployeeDash() {
   const [workedTasksForDay, setWorkedTasksForDay] = useState<
     { taskId: string; minutes: number }[]
   >([]);
+  // Backfill: require setting punch-out time first
+  const [backfillOutTime, setBackfillOutTime] = useState<string>("");
+  const [backfillSavingOut, setBackfillSavingOut] = useState(false);
+  const [backfillAttendance, setBackfillAttendance] = useState<{
+    firstPunchIn?: string;
+    lastPunchOut?: string;
+    workedMs?: number;
+  } | null>(null);
 
   // Set punch-out for a past day
   const [showSetOut, setShowSetOut] = useState(false);
@@ -246,6 +254,8 @@ export default function EmployeeDash() {
     setBackfillErr(null);
     setBackfillDate(dateKey);
     setShowBackfill(true);
+    setBackfillOutTime("");
+    setBackfillAttendance(null);
     try {
       setBackfillLoading(true);
       const [assignedRes, workedRes, projectsRes] = await Promise.all([
@@ -319,7 +329,25 @@ export default function EmployeeDash() {
           ? "Personal"
           : projects.find((p) => p._id === targetProjectId)?.title || "",
         checked: true,
-        hours: remainingMinutes > 0 ? (remainingMinutes / 60).toFixed(2) : "1",
+        // Prefer remaining for active modal (backfill vs today)
+        hours:
+          showBackfill && backfillAttendance
+            ? (() => {
+                const worked = Math.max(
+                  0,
+                  Math.floor((backfillAttendance.workedMs || 0) / 60000)
+                );
+                const cap = Math.max(0, worked - 60);
+                const already = workedTasksForDay.reduce(
+                  (acc, t) => acc + (t.minutes || 0),
+                  0
+                );
+                const remain = Math.max(0, cap - already);
+                return remain > 0 ? (remain / 60).toFixed(2) : "1";
+              })()
+            : remainingMinutes > 0
+            ? (remainingMinutes / 60).toFixed(2)
+            : "1",
       };
       setAssigned((prev) => [a, ...prev]);
       setNewTaskTitle("");
@@ -376,8 +404,40 @@ export default function EmployeeDash() {
     if (backfillSubmitting || !backfillDate) return;
     setBackfillErr(null);
     try {
-      setBackfillSubmitting(true);
+      // Require punch-out time to be set first
+      if (!backfillAttendance || !backfillAttendance.lastPunchOut) {
+        setBackfillErr("Please set punch-out time first.");
+        return;
+      }
+
+      // Compute remaining cap = worked - 60 - alreadyLogged
+      const worked = Math.max(
+        0,
+        Math.floor((backfillAttendance.workedMs || 0) / 60000)
+      );
+      const cap = Math.max(0, worked - 60);
+      const already = workedTasksForDay.reduce(
+        (acc, t) => acc + (t.minutes || 0),
+        0
+      );
+      const remainingForDay = Math.max(0, cap - already);
+
+      // Pre-validate selected minutes against remaining cap
       const selected = assigned.filter((t) => t.checked);
+      const requested = selected.reduce(
+        (acc, t) =>
+          acc + Math.max(0, Math.round(parseFloat(t.hours || "0") * 60)),
+        0
+      );
+      if (requested > remainingForDay) {
+        const over = requested - remainingForDay;
+        setBackfillErr(
+          `Selected time exceeds allowed by ${over} minutes. Reduce to at most ${remainingForDay} minutes.`
+        );
+        return;
+      }
+
+      setBackfillSubmitting(true);
       for (const t of selected) {
         const h = parseFloat(t.hours || "0");
         const minutes = Math.round(h * 60);
@@ -903,17 +963,6 @@ export default function EmployeeDash() {
               </button>
               <div className="flex items-center gap-2">
                 <button
-                  className="rounded-md border border-border px-3 py-2 text-sm"
-                  onClick={async () => {
-                    await punch("out");
-                    setShowPunchOut(false);
-                  }}
-                  disabled={submittingPunchOut}
-                  title="Punch out without logging tasks"
-                >
-                  Skip for now
-                </button>
-                <button
                   className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
                   onClick={submitPunchOutWithTasks}
                   disabled={submittingPunchOut}
@@ -926,17 +975,17 @@ export default function EmployeeDash() {
         </div>
       )}
 
-      {/* Backfill tasks modal */}
+      {/* Backfill tasks modal (integrated with punch-out and add-task like today) */}
       {showBackfill && backfillDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/40"
             onClick={() => setShowBackfill(false)}
           />
-          <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg">
+          <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-lg font-semibold">
-                Log tasks for {fmtDateKey(backfillDate)}
+                Resolve {fmtDateKey(backfillDate)}
               </h4>
               <button
                 className="text-sm underline"
@@ -950,14 +999,175 @@ export default function EmployeeDash() {
                 {backfillErr}
               </div>
             )}
+            <div className="space-y-3 mb-4 rounded border border-border p-3 bg-white">
+              <div className="text-sm font-medium">
+                Step 1: Set punch-out time
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm flex items-center gap-2">
+                  <span className="w-28">Punch-out time</span>
+                  <input
+                    type="time"
+                    className="h-9 rounded-md border border-border bg-surface px-2"
+                    value={backfillOutTime}
+                    onChange={(e) => setBackfillOutTime(e.target.value)}
+                  />
+                </label>
+                <button
+                  className="h-9 rounded-md bg-accent px-3 text-white disabled:opacity-60"
+                  onClick={async () => {
+                    if (!backfillDate || !backfillOutTime) return;
+                    try {
+                      setBackfillErr(null);
+                      setBackfillSavingOut(true);
+                      const resp = await api.post("/attendance/punchout-at", {
+                        date: backfillDate,
+                        time: backfillOutTime,
+                      });
+                      setBackfillAttendance(resp.data.attendance || null);
+                      await loadMissingOut();
+                    } catch (e: any) {
+                      setBackfillErr(
+                        e?.response?.data?.error ||
+                          "Failed to set punch-out time"
+                      );
+                    } finally {
+                      setBackfillSavingOut(false);
+                    }
+                  }}
+                  disabled={!backfillOutTime || backfillSavingOut}
+                >
+                  {backfillSavingOut
+                    ? "Saving…"
+                    : backfillAttendance
+                    ? "Saved"
+                    : "Save"}
+                </button>
+              </div>
+              <div className="text-xs text-muted">
+                Example: 18:00. Total available after break will be calculated
+                from your first punch-in to this time minus 60 minutes.
+              </div>
+            </div>
+
             <div className="text-xs text-muted mb-3">
-              Already logged:{" "}
-              {workedTasksForDay.reduce((a, b) => a + b.minutes, 0)} mins
+              {backfillAttendance ? (
+                <>
+                  Total worked:{" "}
+                  {Math.max(
+                    0,
+                    Math.floor((backfillAttendance.workedMs || 0) / 60000)
+                  )}{" "}
+                  mins • Logged:{" "}
+                  {workedTasksForDay.reduce((a, b) => a + b.minutes, 0)} mins •
+                  Remaining:{" "}
+                  {(() => {
+                    const worked = Math.max(
+                      0,
+                      Math.floor((backfillAttendance.workedMs || 0) / 60000)
+                    );
+                    const cap = Math.max(0, worked - 60);
+                    const already = workedTasksForDay.reduce(
+                      (acc, t) => acc + (t.minutes || 0),
+                      0
+                    );
+                    return Math.max(0, cap - already);
+                  })()}{" "}
+                  mins
+                </>
+              ) : (
+                <>Set punch-out time first to unlock task logging.</>
+              )}
             </div>
             {backfillLoading ? (
               <div className="text-sm text-muted">Loading…</div>
             ) : (
               <div className="space-y-3">
+                {/* Add new task (same as punch-out modal) */}
+                <div className="mb-2 rounded border border-border p-3 bg-white">
+                  <div className="mb-2 text-sm font-medium">Add a task</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={usePersonal}
+                        onChange={async (e) => {
+                          const v = e.target.checked;
+                          setUsePersonal(v);
+                          if (v && !personalProjectId) {
+                            try {
+                              const resp = await api.get("/projects/personal");
+                              setPersonalProjectId(
+                                resp.data.project?._id || ""
+                              );
+                            } catch {}
+                          }
+                        }}
+                        disabled={!backfillAttendance}
+                        title={
+                          !backfillAttendance
+                            ? "Set punch-out time first"
+                            : undefined
+                        }
+                      />
+                      <span>Personal task</span>
+                    </label>
+                    <select
+                      className="h-9 rounded-md border border-border bg-surface px-2 disabled:opacity-50"
+                      value={newTaskProjectId}
+                      onChange={(e) => setNewTaskProjectId(e.target.value)}
+                      disabled={usePersonal || !backfillAttendance}
+                      title={
+                        !backfillAttendance
+                          ? "Set punch-out time first"
+                          : undefined
+                      }
+                    >
+                      {projects.map((p) => (
+                        <option key={p._id} value={p._id}>
+                          {p.title}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="h-9 flex-1 min-w-[160px] rounded-md border border-border bg-surface px-2"
+                      placeholder="Task title"
+                      value={newTaskTitle}
+                      onChange={(e) => setNewTaskTitle(e.target.value)}
+                      disabled={!backfillAttendance}
+                    />
+                    <select
+                      className="h-9 rounded-md border border-border bg-surface px-2"
+                      value={newTaskStatus}
+                      onChange={(e) => setNewTaskStatus(e.target.value as any)}
+                      title="Set initial status"
+                      disabled={!backfillAttendance}
+                    >
+                      <option value="PENDING">Pending</option>
+                      <option value="DONE">Done</option>
+                    </select>
+                    <button
+                      className="h-9 rounded-md bg-secondary px-3 text-white disabled:opacity-60"
+                      onClick={addNewTask}
+                      disabled={
+                        addingTask ||
+                        !newTaskTitle.trim() ||
+                        (!usePersonal && !newTaskProjectId) ||
+                        (usePersonal && !personalProjectId) ||
+                        !backfillAttendance
+                      }
+                      title={
+                        !backfillAttendance
+                          ? "Set punch-out time first"
+                          : undefined
+                      }
+                    >
+                      {addingTask ? "Adding…" : "Add"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Assigned tasks (grouped) */}
                 <div className="text-sm font-medium">Assigned tasks</div>
                 <ul className="space-y-2 max-h-72 overflow-auto pr-1">
                   {assigned.map((t) => (
@@ -979,6 +1189,12 @@ export default function EmployeeDash() {
                                     : x
                                 )
                               )
+                            }
+                            disabled={!backfillAttendance}
+                            title={
+                              !backfillAttendance
+                                ? "Set punch-out time first"
+                                : undefined
                             }
                           />
                           <span className="font-medium text-sm">{t.title}</span>
@@ -1004,7 +1220,12 @@ export default function EmployeeDash() {
                               )
                             }
                             placeholder="0"
-                            disabled={!t.checked}
+                            disabled={!t.checked || !backfillAttendance}
+                            title={
+                              !backfillAttendance && t.checked
+                                ? "Set punch-out time first"
+                                : undefined
+                            }
                           />
                         </div>
                       </div>
@@ -1017,14 +1238,17 @@ export default function EmployeeDash() {
               <button
                 className="rounded-md border border-border px-4 py-2 text-sm"
                 onClick={() => setShowBackfill(false)}
-                disabled={backfillSubmitting}
+                disabled={backfillSubmitting || backfillSavingOut}
               >
                 Cancel
               </button>
               <button
                 className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
                 onClick={submitBackfillTasks}
-                disabled={backfillSubmitting}
+                disabled={backfillSubmitting || !backfillAttendance}
+                title={
+                  !backfillAttendance ? "Set punch-out time first" : undefined
+                }
               >
                 {backfillSubmitting ? "Submitting…" : "Submit"}
               </button>
@@ -1040,7 +1264,7 @@ export default function EmployeeDash() {
             className="absolute inset-0 bg-black/40"
             onClick={() => setShowSetOut(false)}
           />
-          <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
+          <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-lg font-semibold">
                 Set punch-out for {fmtDateKey(setOutDate)}
@@ -1157,27 +1381,12 @@ export default function EmployeeDash() {
                       >
                         Log tasks
                       </button>
-                      <button
-                        className="rounded-md bg-accent px-3 py-1 text-white"
-                        onClick={() => {
-                          setShowMissing(false);
-                          setSetOutDate(d);
-                          setSetOutTime("");
-                          setSetOutErr(null);
-                          setShowSetOut(true);
-                        }}
-                      >
-                        Set punch-out
-                      </button>
                     </div>
                   </li>
                 ))}
               </ul>
             )}
             <div className="mt-4 flex items-center justify-between">
-              <Link to="/app/attendance" className="text-sm underline">
-                Review attendance
-              </Link>
               <button
                 className="rounded-md border border-border px-4 py-2 text-sm"
                 onClick={() => setShowMissing(false)}
