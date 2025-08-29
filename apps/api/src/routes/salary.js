@@ -38,6 +38,7 @@ router.post('/templates', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (
       label: String(f.label || '').trim(),
       type: ['text', 'number', 'date'].includes(f.type) ? f.type : 'text',
       required: !!f.required,
+      category: ['earning', 'deduction', 'info'].includes(f.category) ? f.category : 'info',
       defaultValue: f.defaultValue,
       order: typeof f.order === 'number' ? f.order : idx,
     })).filter(f => f.label && f.key);
