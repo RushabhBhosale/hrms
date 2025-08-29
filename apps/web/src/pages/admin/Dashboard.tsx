@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { api } from "../../lib/api";
 import { Users, UserCheck } from "lucide-react";
+
+type EmployeeLite = { id: string; name: string; email: string; subRoles: string[] };
+type ProjectLite = {
+  _id: string;
+  title: string;
+  teamLead: string;
+  members: string[];
+  isPersonal?: boolean;
+};
 
 type Attendance = {
   firstPunchIn?: string;
@@ -31,18 +40,33 @@ export default function AdminDash() {
   const [pending, setPending] = useState<"in" | "out" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
+  const [employees, setEmployees] = useState<EmployeeLite[]>([]);
+  const [projects, setProjects] = useState<ProjectLite[]>([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
 
   useEffect(() => {
     async function load() {
       try {
-        const employees = await api.get("/companies/employees");
-        const att = await api.get("/attendance/company/today");
+        setErr(null);
+        setLoadingProjects(true);
+        const [empRes, att, projRes] = await Promise.all([
+          api.get("/companies/employees"),
+          api.get("/attendance/company/today"),
+          api.get("/projects"),
+        ]);
+        const empList: EmployeeLite[] = empRes.data.employees || [];
+        const projList: ProjectLite[] = (projRes.data.projects || []).filter((p: ProjectLite) => !p.isPersonal);
+        setEmployees(empList);
+        setProjects(projList);
         setStats({
-          employees: employees.data.employees.length,
+          employees: empList.length,
           present: att.data.attendance.length,
         });
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
+        setErr(err?.response?.data?.error || "Failed to load dashboard data");
+      } finally {
+        setLoadingProjects(false);
       }
     }
     load();
@@ -112,6 +136,19 @@ export default function AdminDash() {
   const punchedIn = Boolean(
     attendance?.lastPunchIn && !attendance?.lastPunchOut
   );
+
+  const assignments = useMemo(() => {
+    if (!employees.length || !projects.length) return [] as { emp: EmployeeLite; projs: ProjectLite[] }[];
+    return employees
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((emp) => {
+        const projs = projects.filter(
+          (p) => p.teamLead === emp.id || (p.members || []).includes(emp.id)
+        );
+        return { emp, projs };
+      });
+  }, [employees, projects]);
 
   return (
     <div className="space-y-8">
@@ -197,6 +234,85 @@ export default function AdminDash() {
           tone="secondary"
         />
       </div>
+
+      {/* Project assignments */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">Project Assignments</h3>
+            <p className="text-sm text-muted">Employees and their assigned projects</p>
+          </div>
+          <button
+            onClick={() => {
+              // quick refresh of employees and projects
+              (async () => {
+                try {
+                  setLoadingProjects(true);
+                  const [empRes, projRes] = await Promise.all([
+                    api.get("/companies/employees"),
+                    api.get("/projects"),
+                  ]);
+                  const empList: EmployeeLite[] = empRes.data.employees || [];
+                  const projList: ProjectLite[] = (projRes.data.projects || []).filter((p: ProjectLite) => !p.isPersonal);
+                  setEmployees(empList);
+                  setProjects(projList);
+                  setStats((s) => ({ ...s, employees: empList.length }));
+                } finally {
+                  setLoadingProjects(false);
+                }
+              })();
+            }}
+            className="rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+            disabled={loadingProjects}
+          >
+            {loadingProjects ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+
+        <div className="mt-4 overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted">
+                <th className="py-2 pr-4 font-medium">Employee</th>
+                <th className="py-2 pr-4 font-medium">Email</th>
+                <th className="py-2 font-medium">Projects</th>
+              </tr>
+            </thead>
+            <tbody>
+              {assignments.map(({ emp, projs }) => (
+                <tr key={emp.id} className="border-t border-border/60">
+                  <td className="py-2 pr-4 whitespace-nowrap">{emp.name}</td>
+                  <td className="py-2 pr-4 text-muted whitespace-nowrap">{emp.email}</td>
+                  <td className="py-2">
+                    {projs.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {projs.map((p) => (
+                          <span
+                            key={p._id}
+                            className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-xs"
+                            title={p.title}
+                          >
+                            {p.title}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted">No assignments</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {assignments.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="py-4 text-center text-muted">
+                    {loadingProjects ? "Loading assignments…" : "No employees or projects found."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

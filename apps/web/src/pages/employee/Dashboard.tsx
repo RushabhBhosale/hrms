@@ -34,6 +34,12 @@ export default function EmployeeDash() {
   const timerRef = useRef<number | null>(null);
   const me = getEmployee();
 
+  // My projects (assigned to me as member or team lead)
+  type MyProject = { _id: string; title: string; description?: string; isPersonal?: boolean };
+  const [myProjects, setMyProjects] = useState<MyProject[]>([]);
+  const [projLoading, setProjLoading] = useState(false);
+  const [projErr, setProjErr] = useState<string | null>(null);
+
   // Assigned tasks widget
   type Task = {
     _id: string;
@@ -260,6 +266,23 @@ export default function EmployeeDash() {
     load();
   }, []);
 
+  // Load my visible projects (exclude personal)
+  useEffect(() => {
+    (async () => {
+      try {
+        setProjErr(null);
+        setProjLoading(true);
+        const res = await api.get("/projects");
+        const list: MyProject[] = (res.data.projects || []).filter((p: MyProject) => !p.isPersonal);
+        setMyProjects(list);
+      } catch (e: any) {
+        setProjErr(e?.response?.data?.error || "Failed to load projects");
+      } finally {
+        setProjLoading(false);
+      }
+    })();
+  }, []);
+
   // Load assigned tasks (top 5 by recent update, incomplete first)
   useEffect(() => {
     (async () => {
@@ -361,6 +384,73 @@ export default function EmployeeDash() {
               </button>
             )}
           </div>
+        </div>
+      </section>
+
+      {/* My Projects */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">My Projects</h3>
+            <p className="text-sm text-muted">Projects you're assigned to</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+              onClick={async () => {
+                try {
+                  setProjLoading(true);
+                  const res = await api.get('/projects');
+                  const list: MyProject[] = (res.data.projects || []).filter((p: MyProject) => !p.isPersonal);
+                  setMyProjects(list);
+                } finally {
+                  setProjLoading(false);
+                }
+              }}
+              disabled={projLoading}
+            >
+              {projLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+            <Link
+              to="/app/projects"
+              className="rounded-md border border-border px-3 py-2 text-sm"
+            >
+              View all
+            </Link>
+          </div>
+        </div>
+
+        {projErr && (
+          <div className="mt-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{projErr}</div>
+        )}
+
+        <div className="mt-4">
+          {projLoading ? (
+            <div className="text-sm text-muted">Loading projects…</div>
+          ) : myProjects.length === 0 ? (
+            <div className="text-sm text-muted">No project assignments.</div>
+          ) : (
+            <ul className="divide-y divide-border/60">
+              {myProjects.slice(0, 6).map((p) => (
+                <li key={p._id} className="py-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium leading-5">{p.title}</div>
+                      {p.description && (
+                        <div className="text-xs text-muted mt-0.5 line-clamp-2">{p.description}</div>
+                      )}
+                    </div>
+                    <Link
+                      to={`/app/projects/${p._id}`}
+                      className="text-xs underline whitespace-nowrap self-center"
+                    >
+                      Open
+                    </Link>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </section>
 
