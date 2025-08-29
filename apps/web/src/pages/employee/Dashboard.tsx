@@ -35,6 +35,7 @@ export default function EmployeeDash() {
   const [missingDays, setMissingDays] = useState<string[]>([]);
   const [missingLoading, setMissingLoading] = useState(false);
   const [missingErr, setMissingErr] = useState<string | null>(null);
+  const [showMissing, setShowMissing] = useState(false);
   const timerRef = useRef<number | null>(null);
   const me = getEmployee();
 
@@ -177,6 +178,13 @@ export default function EmployeeDash() {
       setMissingLoading(false);
     }
   }
+
+  const todayKey = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const blockingMissingDays = useMemo(
+    () => missingDays.filter((d) => d !== todayKey),
+    [missingDays, todayKey]
+  );
+  const hasBlockingMissing = blockingMissingDays.length > 0;
 
   async function openPunchOutModal() {
     if (pending) return;
@@ -529,55 +537,6 @@ export default function EmployeeDash() {
                 {punchedIn ? "Punched In" : "Punched Out"}
               </span>
             </div>
-            <div className="mt-3 text-sm">
-              {missingLoading ? (
-                <div className="text-muted">Loading…</div>
-              ) : missingErr ? (
-                <div className="text-error">{missingErr}</div>
-              ) : missingDays.length === 0 ? (
-                ""
-              ) : (
-                <div className="flex flex-col gap-1">
-                  <div className="text-muted mb-1">
-                    Missing punch-outs (this month)
-                  </div>
-                  <div className="flex flex-wrap gap-2 items-center">
-                    {missingDays.slice(0, 7).map((d) => (
-                      <div key={d} className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded-full border border-border text-xs">
-                          {fmtDateKey(d)}
-                        </span>
-                        <button
-                          className="text-xs underline"
-                          onClick={() => openBackfillModal(d)}
-                        >
-                          Log tasks
-                        </button>
-                        <button
-                          className="text-xs underline"
-                          onClick={() => {
-                            setSetOutDate(d);
-                            setSetOutTime("");
-                            setSetOutErr(null);
-                            setShowSetOut(true);
-                          }}
-                        >
-                          Set punch-out
-                        </button>
-                      </div>
-                    ))}
-                    {missingDays.length > 7 && (
-                      <span className="text-xs text-muted">
-                        +{missingDays.length - 7} more
-                      </span>
-                    )}
-                    <Link to="/app/attendance" className="text-xs underline">
-                      Review
-                    </Link>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -597,13 +556,29 @@ export default function EmployeeDash() {
                 {pending === "out" ? "Punching Out…" : "Punch Out"}
               </button>
             ) : (
-              <button
-                className="rounded-md bg-secondary px-4 py-2 text-white disabled:opacity-60"
-                onClick={() => punch("in")}
-                disabled={pending === "in"}
-              >
-                {pending === "in" ? "Punching In…" : "Punch In"}
-              </button>
+              <>
+                {hasBlockingMissing && (
+                  <button
+                    className="rounded-md border border-border px-3 py-2 text-sm"
+                    onClick={() => setShowMissing(true)}
+                    title="Resolve missing punch-outs to enable Punch In"
+                  >
+                    Resolve Missing
+                  </button>
+                )}
+                <button
+                  className="rounded-md bg-secondary px-4 py-2 text-white disabled:opacity-60"
+                  onClick={() => punch("in")}
+                  disabled={pending === "in" || hasBlockingMissing}
+                  title={
+                    hasBlockingMissing
+                      ? "You have missing punch-outs. Resolve them first."
+                      : undefined
+                  }
+                >
+                  {pending === "in" ? "Punching In…" : "Punch In"}
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1125,6 +1100,89 @@ export default function EmployeeDash() {
                 }}
               >
                 {setOutSubmitting ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Missing punch-outs modal */}
+      {showMissing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setShowMissing(false)}
+          />
+          <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-lg font-semibold">
+                Resolve Missing Punch-Outs
+              </h4>
+              <button
+                className="text-sm underline"
+                onClick={() => setShowMissing(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="text-sm text-muted mb-3">
+              You must resolve past days with a punch-in but no punch-out before
+              punching in again.
+            </div>
+            {missingLoading ? (
+              <div className="text-sm text-muted">Loading…</div>
+            ) : missingErr ? (
+              <div className="text-sm text-error">{missingErr}</div>
+            ) : blockingMissingDays.length === 0 ? (
+              <div className="text-sm">No unresolved days. You're all set!</div>
+            ) : (
+              <ul className="space-y-2 max-h-80 overflow-auto pr-1">
+                {blockingMissingDays.map((d) => (
+                  <li
+                    key={d}
+                    className="flex items-center justify-between gap-3 border border-border rounded px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded-full border border-border text-xs">
+                        {fmtDateKey(d)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="rounded-md border border-border px-3 py-1 text-sm"
+                        onClick={() => {
+                          setShowMissing(false);
+                          openBackfillModal(d);
+                        }}
+                      >
+                        Log tasks
+                      </button>
+                      <button
+                        className="rounded-md bg-accent px-3 py-1 text-white"
+                        onClick={() => {
+                          setShowMissing(false);
+                          setSetOutDate(d);
+                          setSetOutTime("");
+                          setSetOutErr(null);
+                          setShowSetOut(true);
+                        }}
+                      >
+                        Set punch-out
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-4 flex items-center justify-between">
+              <Link to="/app/attendance" className="text-sm underline">
+                Review attendance
+              </Link>
+              <button
+                className="rounded-md border border-border px-4 py-2 text-sm"
+                onClick={() => setShowMissing(false)}
+              >
+                Done
               </button>
             </div>
           </div>
