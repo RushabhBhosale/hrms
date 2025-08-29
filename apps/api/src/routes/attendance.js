@@ -4,6 +4,9 @@ const Attendance = require("../models/Attendance");
 const Employee = require("../models/Employee");
 const Leave = require("../models/Leave");
 const Company = require("../models/Company");
+const Project = require("../models/Project");
+const Task = require("../models/Task");
+const { sendMail, isEmailEnabled } = require("../utils/mailer");
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -34,6 +37,7 @@ router.post("/punch", auth, async (req, res) => {
     return res.json({ attendance: record });
   }
 
+  let didPunchOut = false;
   if (action === "in") {
     if (!record.lastPunchIn) {
       if (!record.firstPunchIn) record.firstPunchIn = now;
@@ -45,10 +49,135 @@ router.post("/punch", auth, async (req, res) => {
       record.workedMs += now.getTime() - record.lastPunchIn.getTime();
       record.lastPunchOut = now;
       record.lastPunchIn = undefined;
+      didPunchOut = true;
     }
   }
   await record.save();
   res.json({ attendance: record });
+
+  // Fire-and-forget: on punch-out, send daily task summary email to reporting person
+  if (didPunchOut) {
+    (async () => {
+      try {
+        if (!isEmailEnabled()) return;
+
+        // Load employee and reporting person
+        const emp = await Employee.findById(req.employee.id)
+          .select("name email company reportingPerson")
+          .lean();
+        if (!emp) return;
+        if (!emp.reportingPerson) return; // no reporting person configured
+        const rp = await Employee.findById(emp.reportingPerson)
+          .select("name email")
+          .lean();
+        if (!rp?.email) return;
+
+        // Determine the calendar day for the record
+        const dayStart = startOfDay(record.date);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setDate(dayEnd.getDate() + 1);
+
+        // Limit to projects within the same company
+        const companyProjects = await Project.find({ company: emp.company })
+          .select("_id title")
+          .lean();
+        const projectIds = companyProjects.map((p) => p._id);
+
+        // Tasks worked by this employee on that day
+        const rawTasks = await Task.find({
+          project: { $in: projectIds },
+          timeLogs: {
+            $elemMatch: {
+              addedBy: req.employee.id,
+              createdAt: { $gte: dayStart, $lt: dayEnd },
+            },
+          },
+        })
+          .populate("project", "title")
+          .select("title status timeLogs project")
+          .lean();
+
+        const tasks = rawTasks.map((t) => {
+          const logs = (t.timeLogs || []).filter(
+            (l) => String(l.addedBy) === String(req.employee.id) && l.createdAt >= dayStart && l.createdAt < dayEnd
+          );
+          const minutes = logs.reduce((acc, l) => acc + (l.minutes || 0), 0);
+          return {
+            id: String(t._id),
+            title: t.title,
+            status: t.status,
+            projectTitle: t.project ? t.project.title : "",
+            minutes,
+            logs: logs.map((l) => ({
+              minutes: l.minutes,
+              note: l.note,
+              createdAt: l.createdAt,
+            })),
+          };
+        });
+
+        // Build email
+        const y = dayStart.getFullYear();
+        const m = String(dayStart.getMonth() + 1).padStart(2, "0");
+        const d = String(dayStart.getDate()).padStart(2, "0");
+        const dateStr = `${y}-${m}-${d}`;
+        const totalMinutes = tasks.reduce((acc, t) => acc + (t.minutes || 0), 0);
+        const safe = (s) => (s ? String(s).replace(/</g, "&lt;") : "");
+
+        const rowsHtml = tasks.length
+          ? tasks
+              .map(
+                (t) => `
+              <tr>
+                <td style="padding:6px 8px; border:1px solid #eee;">${safe(t.projectTitle)}</td>
+                <td style="padding:6px 8px; border:1px solid #eee;">${safe(t.title)}</td>
+                <td style="padding:6px 8px; border:1px solid #eee; white-space:nowrap;">${Math.round(
+                  (t.minutes || 0) / 6
+                ) / 10} h</td>
+                <td style="padding:6px 8px; border:1px solid #eee; color:#666; font-size:12px;">${
+                  (t.logs || [])
+                    .filter((l) => l.note)
+                    .map((l) => `• ${safe(l.note)}`)
+                    .join("<br/>") || ""
+                }</td>
+              </tr>`
+              )
+              .join("")
+          : `<tr><td colspan="4" style="padding:10px; border:1px solid #eee; color:#666;">No tasks logged today.</td></tr>`;
+
+        const html = `
+          <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; line-height:1.5;">
+            <h2 style="margin:0 0 12px;">Daily Status Report</h2>
+            <p style="margin:0 0 4px;"><strong>Employee:</strong> ${safe(emp.name)} &lt;${safe(emp.email)}&gt;</p>
+            <p style="margin:0 0 12px;"><strong>Date:</strong> ${dateStr}</p>
+            <table style="border-collapse:collapse; width:100%;">
+              <thead>
+                <tr>
+                  <th align="left" style="padding:6px 8px; border:1px solid #eee; background:#f6f6f6;">Project</th>
+                  <th align="left" style="padding:6px 8px; border:1px solid #eee; background:#f6f6f6;">Task</th>
+                  <th align="left" style="padding:6px 8px; border:1px solid #eee; background:#f6f6f6;">Time</th>
+                  <th align="left" style="padding:6px 8px; border:1px solid #eee; background:#f6f6f6;">Notes</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+            <p style="margin-top:12px;"><strong>Total:</strong> ${Math.round((totalMinutes / 60) * 10) / 10} hours</p>
+            <p style="margin-top:16px; color:#666; font-size:12px;">This is an automated notification from HRMS.</p>
+          </div>
+        `;
+
+        const subject = `Daily Status: ${emp.name} — ${dateStr}`;
+        await sendMail({
+          to: rp.email,
+          subject,
+          html,
+          text: `Daily Status Report for ${emp.name} on ${dateStr}: Total ${Math.round((totalMinutes / 60) * 10) / 10} hours.`,
+        });
+      } catch (e) {
+        console.warn("[attendance] Failed to send daily status report:", e?.message || e);
+      }
+    })();
+  }
 });
 
 router.get("/today", auth, async (req, res) => {
