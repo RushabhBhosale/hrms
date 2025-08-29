@@ -698,12 +698,18 @@ router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
     if (!record) return res.status(404).json({ error: "Attendance record not found" });
     if (record.lastPunchOut)
       return res.status(400).json({ error: "Already punched out for this day" });
-    if (!record.lastPunchIn)
-      return res.status(400).json({ error: "No open punch-in to close" });
 
-    const lastIn = new Date(record.lastPunchIn);
+    // Determine the start of the open interval to close. Prefer lastPunchIn;
+    // if it's missing but the day has a firstPunchIn, fall back to that.
+    const openStart = record.lastPunchIn || record.firstPunchIn;
+    if (!openStart)
+      return res.status(400).json({ error: "No punch-in found for this day" });
+
+    const lastIn = new Date(openStart);
     if (!(out > lastIn))
-      return res.status(400).json({ error: "Punch-out must be after last punch-in" });
+      return res
+        .status(400)
+        .json({ error: "Punch-out must be after last punch-in" });
 
     record.workedMs = (record.workedMs || 0) + (out.getTime() - lastIn.getTime());
     record.lastPunchOut = out;

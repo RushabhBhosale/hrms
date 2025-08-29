@@ -45,7 +45,12 @@ export default function EmployeeDash() {
   }
 
   // My projects (assigned to me as member or team lead)
-  type MyProject = { _id: string; title: string; description?: string; isPersonal?: boolean };
+  type MyProject = {
+    _id: string;
+    title: string;
+    description?: string;
+    isPersonal?: boolean;
+  };
   const [myProjects, setMyProjects] = useState<MyProject[]>([]);
   const [projLoading, setProjLoading] = useState(false);
   const [projErr, setProjErr] = useState<string | null>(null);
@@ -74,13 +79,22 @@ export default function EmployeeDash() {
   const [assigned, setAssigned] = useState<Assigned[]>([]);
   const [assignedLoading, setAssignedLoading] = useState(false);
   const [assignedErr, setAssignedErr] = useState<string | null>(null);
-  const [workedToday, setWorkedToday] = useState<{ minutes: number; dateKey: string } | null>(null);
-  const [workedTasksToday, setWorkedTasksToday] = useState<{ taskId: string; minutes: number }[]>([]);
-  const [projects, setProjects] = useState<{ _id: string; title: string }[]>([]);
+  const [workedToday, setWorkedToday] = useState<{
+    minutes: number;
+    dateKey: string;
+  } | null>(null);
+  const [workedTasksToday, setWorkedTasksToday] = useState<
+    { taskId: string; minutes: number }[]
+  >([]);
+  const [projects, setProjects] = useState<{ _id: string; title: string }[]>(
+    []
+  );
   // Add new task form
   const [newTaskProjectId, setNewTaskProjectId] = useState<string>("");
   const [newTaskTitle, setNewTaskTitle] = useState<string>("");
-  const [newTaskStatus, setNewTaskStatus] = useState<"PENDING" | "DONE">("PENDING");
+  const [newTaskStatus, setNewTaskStatus] = useState<"PENDING" | "DONE">(
+    "PENDING"
+  );
   const [addingTask, setAddingTask] = useState(false);
   const [submittingPunchOut, setSubmittingPunchOut] = useState(false);
   const [punchOutErr, setPunchOutErr] = useState<string | null>(null);
@@ -94,7 +108,9 @@ export default function EmployeeDash() {
   const [backfillErr, setBackfillErr] = useState<string | null>(null);
   const [backfillLoading, setBackfillLoading] = useState(false);
   const [backfillSubmitting, setBackfillSubmitting] = useState(false);
-  const [workedTasksForDay, setWorkedTasksForDay] = useState<{ taskId: string; minutes: number }[]>([]);
+  const [workedTasksForDay, setWorkedTasksForDay] = useState<
+    { taskId: string; minutes: number }[]
+  >([]);
 
   // Set punch-out for a past day
   const [showSetOut, setShowSetOut] = useState(false);
@@ -106,7 +122,10 @@ export default function EmployeeDash() {
   const remainingMinutes = useMemo(() => {
     // Use elapsed as up-to-now worked time in ms
     const total = Math.round(elapsed / 60000); // minutes
-    const alreadyLogged = workedTasksToday.reduce((acc, t) => acc + (t.minutes || 0), 0);
+    const alreadyLogged = workedTasksToday.reduce(
+      (acc, t) => acc + (t.minutes || 0),
+      0
+    );
     // Enforce 60 min break: only allow total - 60
     const cap = Math.max(0, total - 60);
     const remain = cap - alreadyLogged;
@@ -146,10 +165,14 @@ export default function EmployeeDash() {
       setMissingErr(null);
       setMissingLoading(true);
       const ym = new Date().toISOString().slice(0, 7);
-      const res = await api.get("/attendance/missing-out", { params: { month: ym } });
+      const res = await api.get("/attendance/missing-out", {
+        params: { month: ym },
+      });
       setMissingDays(res.data?.days || []);
     } catch (e: any) {
-      setMissingErr(e?.response?.data?.error || "Failed to load missing punch-outs");
+      setMissingErr(
+        e?.response?.data?.error || "Failed to load missing punch-outs"
+      );
     } finally {
       setMissingLoading(false);
     }
@@ -171,18 +194,35 @@ export default function EmployeeDash() {
       const list: Task[] = assignedRes.data.tasks || [];
       const normalized: Assigned[] = list.map((t) => ({
         ...t,
-        projectId: typeof t.project === "string" ? (t.project as string) : (t.project?._id as string),
-        projectTitle: typeof t.project === "string" ? "" : (t.project?.title || ""),
+        projectId:
+          typeof t.project === "string"
+            ? (t.project as string)
+            : (t.project?._id as string),
+        projectTitle:
+          typeof t.project === "string" ? "" : t.project?.title || "",
         checked: false,
         hours: "",
       }));
       setAssigned(normalized);
-      const tasksToday: { tasks: { _id: string; minutes: number; project?: { _id: string } }[] } = workedRes.data || { tasks: [] };
+      const tasksToday: {
+        tasks: { _id: string; minutes: number; project?: { _id: string } }[];
+      } = workedRes.data || { tasks: [] };
       setWorkedTasksToday(
-        (tasksToday.tasks || []).map((t) => ({ taskId: t._id, minutes: t.minutes || 0 }))
+        (tasksToday.tasks || []).map((t) => ({
+          taskId: t._id,
+          minutes: t.minutes || 0,
+        }))
       );
-      setWorkedToday({ minutes: Math.round(elapsed / 60000), dateKey: new Date().toISOString().slice(0, 10) });
-      setProjects((projectsRes.data.projects || []).map((p: any) => ({ _id: p._id, title: p.title })));
+      setWorkedToday({
+        minutes: Math.round(elapsed / 60000),
+        dateKey: new Date().toISOString().slice(0, 10),
+      });
+      setProjects(
+        (projectsRes.data.projects || []).map((p: any) => ({
+          _id: p._id,
+          title: p.title,
+        }))
+      );
       if (!newTaskProjectId && (projectsRes.data.projects || []).length > 0) {
         setNewTaskProjectId(projectsRes.data.projects[0]._id);
       }
@@ -208,15 +248,30 @@ export default function EmployeeDash() {
       const list: Task[] = assignedRes.data.tasks || [];
       const normalized: Assigned[] = list.map((t) => ({
         ...t,
-        projectId: typeof t.project === "string" ? (t.project as string) : (t.project?._id as string),
-        projectTitle: typeof t.project === "string" ? "" : (t.project?.title || ""),
+        projectId:
+          typeof t.project === "string"
+            ? (t.project as string)
+            : (t.project?._id as string),
+        projectTitle:
+          typeof t.project === "string" ? "" : t.project?.title || "",
         checked: false,
         hours: "",
       }));
       setAssigned(normalized);
-      const tasksDay: { tasks: { _id: string; minutes: number }[] } = workedRes.data || { tasks: [] };
-      setWorkedTasksForDay((tasksDay.tasks || []).map((t) => ({ taskId: t._id, minutes: t.minutes || 0 })));
-      setProjects((projectsRes.data.projects || []).map((p: any) => ({ _id: p._id, title: p.title })));
+      const tasksDay: { tasks: { _id: string; minutes: number }[] } =
+        workedRes.data || { tasks: [] };
+      setWorkedTasksForDay(
+        (tasksDay.tasks || []).map((t) => ({
+          taskId: t._id,
+          minutes: t.minutes || 0,
+        }))
+      );
+      setProjects(
+        (projectsRes.data.projects || []).map((p: any) => ({
+          _id: p._id,
+          title: p.title,
+        }))
+      );
       if (!newTaskProjectId && (projectsRes.data.projects || []).length > 0) {
         setNewTaskProjectId(projectsRes.data.projects[0]._id);
       }
@@ -241,7 +296,9 @@ export default function EmployeeDash() {
       // If user selected DONE, immediately set status to DONE (assignee-only action)
       if (newTaskStatus === "DONE") {
         try {
-          await api.put(`/projects/${targetProjectId}/tasks/${t._id}`, { status: "DONE" });
+          await api.put(`/projects/${targetProjectId}/tasks/${t._id}`, {
+            status: "DONE",
+          });
           t.status = "DONE";
         } catch (e) {
           // Ignore status update failure; keep default PENDING
@@ -250,7 +307,9 @@ export default function EmployeeDash() {
       const a: Assigned = {
         ...t,
         projectId: targetProjectId,
-        projectTitle: usePersonal ? "Personal" : (projects.find((p) => p._id === targetProjectId)?.title || ""),
+        projectTitle: usePersonal
+          ? "Personal"
+          : projects.find((p) => p._id === targetProjectId)?.title || "",
         checked: true,
         hours: remainingMinutes > 0 ? (remainingMinutes / 60).toFixed(2) : "1",
       };
@@ -271,10 +330,16 @@ export default function EmployeeDash() {
       setSubmittingPunchOut(true);
       // Pre-validate total requested minutes against remaining cap
       const selected = assigned.filter((t) => t.checked);
-      const requested = selected.reduce((acc, t) => acc + Math.max(0, Math.round(parseFloat(t.hours || "0") * 60)), 0);
+      const requested = selected.reduce(
+        (acc, t) =>
+          acc + Math.max(0, Math.round(parseFloat(t.hours || "0") * 60)),
+        0
+      );
       if (requested > remainingMinutes) {
         const over = requested - remainingMinutes;
-        setPunchOutErr(`Selected time exceeds allowed by ${over} minutes. Reduce to at most ${remainingMinutes} minutes.`);
+        setPunchOutErr(
+          `Selected time exceeds allowed by ${over} minutes. Reduce to at most ${remainingMinutes} minutes.`
+        );
         setSubmittingPunchOut(false);
         return;
       }
@@ -283,13 +348,17 @@ export default function EmployeeDash() {
         const h = parseFloat(t.hours || "0");
         const minutes = Math.round(h * 60);
         if (!minutes || minutes <= 0) continue; // skip empty entries
-        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time`, { minutes });
+        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time`, {
+          minutes,
+        });
       }
       // Finally punch out
       await punch("out");
       setShowPunchOut(false);
     } catch (e: any) {
-      setPunchOutErr(e?.response?.data?.error || "Failed to punch out with tasks");
+      setPunchOutErr(
+        e?.response?.data?.error || "Failed to punch out with tasks"
+      );
     } finally {
       setSubmittingPunchOut(false);
     }
@@ -305,13 +374,18 @@ export default function EmployeeDash() {
         const h = parseFloat(t.hours || "0");
         const minutes = Math.round(h * 60);
         if (!minutes || minutes <= 0) continue;
-        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time-at`, { minutes, date: backfillDate });
+        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time-at`, {
+          minutes,
+          date: backfillDate,
+        });
       }
       setShowBackfill(false);
       // Refresh worked summary for that bucket and missing list
       await loadMissingOut();
     } catch (e: any) {
-      setBackfillErr(e?.response?.data?.error || "Failed to log tasks for the day");
+      setBackfillErr(
+        e?.response?.data?.error || "Failed to log tasks for the day"
+      );
     } finally {
       setBackfillSubmitting(false);
     }
@@ -370,7 +444,9 @@ export default function EmployeeDash() {
         setProjErr(null);
         setProjLoading(true);
         const res = await api.get("/projects");
-        const list: MyProject[] = (res.data.projects || []).filter((p: MyProject) => !p.isPersonal);
+        const list: MyProject[] = (res.data.projects || []).filter(
+          (p: MyProject) => !p.isPersonal
+        );
         setMyProjects(list);
       } catch (e: any) {
         setProjErr(e?.response?.data?.error || "Failed to load projects");
@@ -454,36 +530,46 @@ export default function EmployeeDash() {
               </span>
             </div>
             <div className="mt-3 text-sm">
-              <div className="text-muted mb-1">Missing punch-outs (this month)</div>
               {missingLoading ? (
                 <div className="text-muted">Loading…</div>
               ) : missingErr ? (
                 <div className="text-error">{missingErr}</div>
               ) : missingDays.length === 0 ? (
-                <div className="text-muted">None 🎉</div>
+                ""
               ) : (
                 <div className="flex flex-col gap-1">
+                  <div className="text-muted mb-1">
+                    Missing punch-outs (this month)
+                  </div>
                   <div className="flex flex-wrap gap-2 items-center">
                     {missingDays.slice(0, 7).map((d) => (
                       <div key={d} className="flex items-center gap-2">
                         <span className="px-2 py-0.5 rounded-full border border-border text-xs">
                           {fmtDateKey(d)}
                         </span>
-                      <button className="text-xs underline" onClick={() => openBackfillModal(d)}>
-                        Log tasks
-                      </button>
-                      <button className="text-xs underline" onClick={() => {
-                        setSetOutDate(d);
-                        setSetOutTime("");
-                        setSetOutErr(null);
-                        setShowSetOut(true);
-                      }}>
-                        Set punch-out
-                      </button>
-                    </div>
-                  ))}
+                        <button
+                          className="text-xs underline"
+                          onClick={() => openBackfillModal(d)}
+                        >
+                          Log tasks
+                        </button>
+                        <button
+                          className="text-xs underline"
+                          onClick={() => {
+                            setSetOutDate(d);
+                            setSetOutTime("");
+                            setSetOutErr(null);
+                            setShowSetOut(true);
+                          }}
+                        >
+                          Set punch-out
+                        </button>
+                      </div>
+                    ))}
                     {missingDays.length > 7 && (
-                      <span className="text-xs text-muted">+{missingDays.length - 7} more</span>
+                      <span className="text-xs text-muted">
+                        +{missingDays.length - 7} more
+                      </span>
                     )}
                     <Link to="/app/attendance" className="text-xs underline">
                       Review
@@ -536,8 +622,10 @@ export default function EmployeeDash() {
               onClick={async () => {
                 try {
                   setProjLoading(true);
-                  const res = await api.get('/projects');
-                  const list: MyProject[] = (res.data.projects || []).filter((p: MyProject) => !p.isPersonal);
+                  const res = await api.get("/projects");
+                  const list: MyProject[] = (res.data.projects || []).filter(
+                    (p: MyProject) => !p.isPersonal
+                  );
                   setMyProjects(list);
                 } finally {
                   setProjLoading(false);
@@ -545,7 +633,7 @@ export default function EmployeeDash() {
               }}
               disabled={projLoading}
             >
-              {projLoading ? 'Refreshing…' : 'Refresh'}
+              {projLoading ? "Refreshing…" : "Refresh"}
             </button>
             <Link
               to="/app/projects"
@@ -557,7 +645,9 @@ export default function EmployeeDash() {
         </div>
 
         {projErr && (
-          <div className="mt-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{projErr}</div>
+          <div className="mt-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+            {projErr}
+          </div>
         )}
 
         <div className="mt-4">
@@ -573,7 +663,9 @@ export default function EmployeeDash() {
                     <div>
                       <div className="font-medium leading-5">{p.title}</div>
                       {p.description && (
-                        <div className="text-xs text-muted mt-0.5 line-clamp-2">{p.description}</div>
+                        <div className="text-xs text-muted mt-0.5 line-clamp-2">
+                          {p.description}
+                        </div>
                       )}
                     </div>
                     <Link
@@ -610,9 +702,14 @@ export default function EmployeeDash() {
           ) : (
             <ul className="space-y-2">
               {tasks.map((t) => (
-                <li key={t._id} className="border border-border rounded px-3 py-2">
+                <li
+                  key={t._id}
+                  className="border border-border rounded px-3 py-2"
+                >
                   <div className="text-xs text-muted">
-                    {typeof t.project === "string" ? t.project : t.project?.title}
+                    {typeof t.project === "string"
+                      ? t.project
+                      : t.project?.title}
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-sm font-medium">{t.title}</div>
@@ -642,19 +739,31 @@ export default function EmployeeDash() {
       {/* Punch-out modal */}
       {showPunchOut && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowPunchOut(false)} />
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setShowPunchOut(false)}
+          />
           <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-lg font-semibold">Log today’s tasks</h4>
-              <button className="text-sm underline" onClick={() => setShowPunchOut(false)}>Close</button>
+              <button
+                className="text-sm underline"
+                onClick={() => setShowPunchOut(false)}
+              >
+                Close
+              </button>
             </div>
             {punchOutErr && (
-              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{punchOutErr}</div>
+              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+                {punchOutErr}
+              </div>
             )}
             <div className="text-xs text-muted mb-3">
               {workedToday ? (
                 <>
-                  Total today: {Math.round((elapsed/60000))} mins • Logged: {workedTasksToday.reduce((a,b)=>a+b.minutes,0)} mins • Remaining: {remainingMinutes} mins
+                  Total today: {Math.round(elapsed / 60000)} mins • Logged:{" "}
+                  {workedTasksToday.reduce((a, b) => a + b.minutes, 0)} mins •
+                  Remaining: {remainingMinutes} mins
                 </>
               ) : (
                 <>Today: {new Date().toLocaleDateString()}</>
@@ -674,7 +783,7 @@ export default function EmployeeDash() {
                       setUsePersonal(v);
                       if (v && !personalProjectId) {
                         try {
-                          const resp = await api.get('/projects/personal');
+                          const resp = await api.get("/projects/personal");
                           setPersonalProjectId(resp.data.project?._id || "");
                         } catch {}
                       }
@@ -689,7 +798,9 @@ export default function EmployeeDash() {
                   disabled={usePersonal}
                 >
                   {projects.map((p) => (
-                    <option key={p._id} value={p._id}>{p.title}</option>
+                    <option key={p._id} value={p._id}>
+                      {p.title}
+                    </option>
                   ))}
                 </select>
                 <input
@@ -724,7 +835,9 @@ export default function EmployeeDash() {
 
             {/* Assigned tasks list */}
             {assignedErr && (
-              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{assignedErr}</div>
+              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+                {assignedErr}
+              </div>
             )}
             {assignedLoading ? (
               <div className="text-sm text-muted">Loading tasks…</div>
@@ -737,16 +850,25 @@ export default function EmployeeDash() {
                     {Array.from(
                       assigned.reduce((map, t) => {
                         const key = t.projectId || "misc";
-                        if (!map.has(key)) map.set(key, { title: t.projectTitle || "(No project)", items: [] as Assigned[] });
+                        if (!map.has(key))
+                          map.set(key, {
+                            title: t.projectTitle || "(No project)",
+                            items: [] as Assigned[],
+                          });
                         map.get(key)!.items.push(t);
                         return map;
                       }, new Map<string, { title: string; items: Assigned[] }>())
                     ).map(([pid, group]) => (
                       <div key={pid} className="">
-                        <div className="text-sm font-medium mb-1">{group.title}</div>
+                        <div className="text-sm font-medium mb-1">
+                          {group.title}
+                        </div>
                         <ul className="space-y-2">
                           {group.items.map((t) => (
-                            <li key={t._id} className="flex items-center gap-3 border border-border rounded px-3 py-2">
+                            <li
+                              key={t._id}
+                              className="flex items-center gap-3 border border-border rounded px-3 py-2"
+                            >
                               <label className="inline-flex items-center gap-2 flex-1">
                                 <input
                                   type="checkbox"
@@ -754,7 +876,9 @@ export default function EmployeeDash() {
                                   onChange={(e) =>
                                     setAssigned((prev) =>
                                       prev.map((x) =>
-                                        x._id === t._id ? { ...x, checked: e.target.checked } : x
+                                        x._id === t._id
+                                          ? { ...x, checked: e.target.checked }
+                                          : x
                                       )
                                     )
                                   }
@@ -762,7 +886,9 @@ export default function EmployeeDash() {
                                 <span className="text-sm">{t.title}</span>
                               </label>
                               <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted">Hours</span>
+                                <span className="text-xs text-muted">
+                                  Hours
+                                </span>
                                 <input
                                   type="number"
                                   step="0.25"
@@ -771,7 +897,11 @@ export default function EmployeeDash() {
                                   value={t.hours || ""}
                                   onChange={(e) =>
                                     setAssigned((prev) =>
-                                      prev.map((x) => (x._id === t._id ? { ...x, hours: e.target.value } : x))
+                                      prev.map((x) =>
+                                        x._id === t._id
+                                          ? { ...x, hours: e.target.value }
+                                          : x
+                                      )
                                     )
                                   }
                                   placeholder="0"
@@ -824,17 +954,30 @@ export default function EmployeeDash() {
       {/* Backfill tasks modal */}
       {showBackfill && backfillDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowBackfill(false)} />
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setShowBackfill(false)}
+          />
           <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-lg font-semibold">Log tasks for {fmtDateKey(backfillDate)}</h4>
-              <button className="text-sm underline" onClick={() => setShowBackfill(false)}>Close</button>
+              <h4 className="text-lg font-semibold">
+                Log tasks for {fmtDateKey(backfillDate)}
+              </h4>
+              <button
+                className="text-sm underline"
+                onClick={() => setShowBackfill(false)}
+              >
+                Close
+              </button>
             </div>
             {backfillErr && (
-              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{backfillErr}</div>
+              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+                {backfillErr}
+              </div>
             )}
             <div className="text-xs text-muted mb-3">
-              Already logged: {workedTasksForDay.reduce((a,b)=>a+b.minutes,0)} mins
+              Already logged:{" "}
+              {workedTasksForDay.reduce((a, b) => a + b.minutes, 0)} mins
             </div>
             {backfillLoading ? (
               <div className="text-sm text-muted">Loading…</div>
@@ -843,7 +986,10 @@ export default function EmployeeDash() {
                 <div className="text-sm font-medium">Assigned tasks</div>
                 <ul className="space-y-2 max-h-72 overflow-auto pr-1">
                   {assigned.map((t) => (
-                    <li key={t._id} className="border border-border rounded px-3 py-2">
+                    <li
+                      key={t._id}
+                      className="border border-border rounded px-3 py-2"
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <div className="mr-2">
                           <input
@@ -851,11 +997,19 @@ export default function EmployeeDash() {
                             className="mr-2"
                             checked={!!t.checked}
                             onChange={(e) =>
-                              setAssigned((prev) => prev.map((x) => (x._id === t._id ? { ...x, checked: e.target.checked } : x)))
+                              setAssigned((prev) =>
+                                prev.map((x) =>
+                                  x._id === t._id
+                                    ? { ...x, checked: e.target.checked }
+                                    : x
+                                )
+                              )
                             }
                           />
                           <span className="font-medium text-sm">{t.title}</span>
-                          <span className="ml-2 text-xs text-muted">{t.projectTitle}</span>
+                          <span className="ml-2 text-xs text-muted">
+                            {t.projectTitle}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-muted">Hours</span>
@@ -866,7 +1020,13 @@ export default function EmployeeDash() {
                             className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm"
                             value={t.hours || ""}
                             onChange={(e) =>
-                              setAssigned((prev) => prev.map((x) => (x._id === t._id ? { ...x, hours: e.target.value } : x)))
+                              setAssigned((prev) =>
+                                prev.map((x) =>
+                                  x._id === t._id
+                                    ? { ...x, hours: e.target.value }
+                                    : x
+                                )
+                              )
                             }
                             placeholder="0"
                             disabled={!t.checked}
@@ -879,10 +1039,18 @@ export default function EmployeeDash() {
               </div>
             )}
             <div className="mt-4 flex items-center justify-between">
-              <button className="rounded-md border border-border px-4 py-2 text-sm" onClick={() => setShowBackfill(false)} disabled={backfillSubmitting}>
+              <button
+                className="rounded-md border border-border px-4 py-2 text-sm"
+                onClick={() => setShowBackfill(false)}
+                disabled={backfillSubmitting}
+              >
                 Cancel
               </button>
-              <button className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60" onClick={submitBackfillTasks} disabled={backfillSubmitting}>
+              <button
+                className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
+                onClick={submitBackfillTasks}
+                disabled={backfillSubmitting}
+              >
                 {backfillSubmitting ? "Submitting…" : "Submit"}
               </button>
             </div>
@@ -893,14 +1061,26 @@ export default function EmployeeDash() {
       {/* Set punch-out time modal */}
       {showSetOut && setOutDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowSetOut(false)} />
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setShowSetOut(false)}
+          />
           <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-lg font-semibold">Set punch-out for {fmtDateKey(setOutDate)}</h4>
-              <button className="text-sm underline" onClick={() => setShowSetOut(false)}>Close</button>
+              <h4 className="text-lg font-semibold">
+                Set punch-out for {fmtDateKey(setOutDate)}
+              </h4>
+              <button
+                className="text-sm underline"
+                onClick={() => setShowSetOut(false)}
+              >
+                Close
+              </button>
             </div>
             {setOutErr && (
-              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">{setOutErr}</div>
+              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+                {setOutErr}
+              </div>
             )}
             <div className="space-y-3">
               <label className="text-sm flex items-center gap-2">
@@ -915,7 +1095,11 @@ export default function EmployeeDash() {
               <div className="text-xs text-muted">Example: 18:00</div>
             </div>
             <div className="mt-4 flex items-center justify-end gap-2">
-              <button className="rounded-md border border-border px-4 py-2 text-sm" onClick={() => setShowSetOut(false)} disabled={setOutSubmitting}>
+              <button
+                className="rounded-md border border-border px-4 py-2 text-sm"
+                onClick={() => setShowSetOut(false)}
+                disabled={setOutSubmitting}
+              >
                 Cancel
               </button>
               <button
@@ -925,17 +1109,22 @@ export default function EmployeeDash() {
                   try {
                     setSetOutErr(null);
                     setSetOutSubmitting(true);
-                    await api.post('/attendance/punchout-at', { date: setOutDate, time: setOutTime });
+                    await api.post("/attendance/punchout-at", {
+                      date: setOutDate,
+                      time: setOutTime,
+                    });
                     setShowSetOut(false);
                     await loadMissingOut();
                   } catch (e: any) {
-                    setSetOutErr(e?.response?.data?.error || 'Failed to set punch-out time');
+                    setSetOutErr(
+                      e?.response?.data?.error || "Failed to set punch-out time"
+                    );
                   } finally {
                     setSetOutSubmitting(false);
                   }
                 }}
               >
-                {setOutSubmitting ? 'Saving…' : 'Save'}
+                {setOutSubmitting ? "Saving…" : "Save"}
               </button>
             </div>
           </div>
