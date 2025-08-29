@@ -17,6 +17,8 @@ import LeaveRequests from './pages/admin/LeaveRequests';
 import LeaveSettings from './pages/admin/LeaveSettings';
 import RoleSettings from './pages/admin/RoleSettings';
 import ProjectsAdmin from './pages/admin/Projects';
+import SalaryTemplate from './pages/admin/SalaryTemplate';
+import SalarySlipsAdmin from './pages/admin/SalarySlips';
 import MyProjects from './pages/projects/MyProjects';
 import ProjectDetails from './pages/projects/ProjectDetails';
 import MyTasks from './pages/tasks/MyTasks';
@@ -26,6 +28,8 @@ import AttendanceRecords from './pages/employee/AttendanceRecords';
 import LeaveRequest from './pages/employee/LeaveRequest';
 import Documents from './pages/employee/Documents';
 import LeaveApprovals from './pages/employee/LeaveApprovals';
+import MySalarySlip from './pages/employee/SalarySlip';
+import SalariesManage from './pages/employee/SalariesManage';
 import EmployeeDetails from './pages/admin/EmployeeDetails';
 import MonthlyReport from './pages/report/MonthlyReport';
 
@@ -71,6 +75,8 @@ export default function App() {
         <Route path="leave-settings" element={<LeaveSettings />} />
         <Route path="roles" element={<RoleSettings />} />
         <Route path="leaves" element={<LeaveRequests />} />
+        <Route path="salary/template" element={<SalaryTemplate />} />
+        <Route path="salary/slips" element={<SalarySlipsAdmin />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -104,6 +110,15 @@ export default function App() {
         />
         <Route path="leave" element={<LeaveRequest />} />
         <Route path="approvals" element={<LeaveApprovals />} />
+        <Route path="salary-slip" element={<MySalarySlip />} />
+        <Route
+          path="salaries"
+          element={
+            <RoleGuard sub={["hr", "manager"]}>
+              <SalariesManage />
+            </RoleGuard>
+          }
+        />
         <Route path="documents" element={<Documents />} />
         <Route path="tasks" element={<MyTasks />} />
         <Route path="projects" element={<MyProjects />} />

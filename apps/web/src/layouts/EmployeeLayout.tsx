@@ -34,6 +34,7 @@ export default function EmployeeLayout() {
     { to: "/app/projects", label: "Projects", icon: Users },
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
     { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
+    { to: "/app/salary-slip", label: "Salary Slip", icon: FileText },
     { to: "/app/documents", label: "Documents", icon: FileText },
     { to: "/app/profile", label: "Profile", icon: User },
   ];
@@ -50,6 +51,11 @@ export default function EmployeeLayout() {
       label: "Report",
       icon: FileText,
     });
+    links.splice(3, 0, {
+      to: "/app/salaries",
+      label: "Salaries",
+      icon: Users,
+    });
   }
 
   const title = useMemo(() => {
@@ -61,6 +67,8 @@ export default function EmployeeLayout() {
     if (pathname.startsWith("/app/projects")) return "Projects";
     if (pathname.startsWith("/app/leave")) return "Leave";
     if (pathname.startsWith("/app/approvals")) return "Leave Approvals";
+    if (pathname.startsWith("/app/salary-slip")) return "Salary Slip";
+    if (pathname.startsWith("/app/salaries")) return "Salaries";
     if (pathname.startsWith("/app/documents")) return "Documents";
     if (pathname.startsWith("/app/profile")) return "Profile";
     return "Employee";
