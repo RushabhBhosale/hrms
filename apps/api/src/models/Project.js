@@ -7,7 +7,9 @@ const ProjectSchema = new mongoose.Schema(
     techStack: { type: [String], default: [] },
     teamLead: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
     members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }],
-    company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' }
+    company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
+    // Personal projects are owned by a single employee and used for non-project tasks
+    isPersonal: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

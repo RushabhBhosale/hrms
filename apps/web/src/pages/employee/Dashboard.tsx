@@ -68,12 +68,17 @@ export default function EmployeeDash() {
   const [addingTask, setAddingTask] = useState(false);
   const [submittingPunchOut, setSubmittingPunchOut] = useState(false);
   const [punchOutErr, setPunchOutErr] = useState<string | null>(null);
+  // Personal task support
+  const [usePersonal, setUsePersonal] = useState(false);
+  const [personalProjectId, setPersonalProjectId] = useState<string>("");
 
   const remainingMinutes = useMemo(() => {
     // Use elapsed as up-to-now worked time in ms
     const total = Math.round(elapsed / 60000); // minutes
     const alreadyLogged = workedTasksToday.reduce((acc, t) => acc + (t.minutes || 0), 0);
-    const remain = total - alreadyLogged;
+    // Enforce 60 min break: only allow total - 60
+    const cap = Math.max(0, total - 60);
+    const remain = cap - alreadyLogged;
     return remain > 0 ? remain : 0;
   }, [elapsed, workedTasksToday]);
 
@@ -142,10 +147,11 @@ export default function EmployeeDash() {
   }
 
   async function addNewTask() {
-    if (!newTaskTitle.trim() || !newTaskProjectId || !me?.id) return;
+    const targetProjectId = usePersonal ? personalProjectId : newTaskProjectId;
+    if (!newTaskTitle.trim() || !targetProjectId || !me?.id) return;
     try {
       setAddingTask(true);
-      const res = await api.post(`/projects/${newTaskProjectId}/tasks`, {
+      const res = await api.post(`/projects/${targetProjectId}/tasks`, {
         title: newTaskTitle.trim(),
         description: "",
         assignedTo: me.id,
@@ -154,7 +160,7 @@ export default function EmployeeDash() {
       // If user selected DONE, immediately set status to DONE (assignee-only action)
       if (newTaskStatus === "DONE") {
         try {
-          await api.put(`/projects/${newTaskProjectId}/tasks/${t._id}`, { status: "DONE" });
+          await api.put(`/projects/${targetProjectId}/tasks/${t._id}`, { status: "DONE" });
           t.status = "DONE";
         } catch (e) {
           // Ignore status update failure; keep default PENDING
@@ -162,8 +168,8 @@ export default function EmployeeDash() {
       }
       const a: Assigned = {
         ...t,
-        projectId: newTaskProjectId,
-        projectTitle: projects.find((p) => p._id === newTaskProjectId)?.title || "",
+        projectId: targetProjectId,
+        projectTitle: usePersonal ? "Personal" : (projects.find((p) => p._id === targetProjectId)?.title || ""),
         checked: true,
         hours: remainingMinutes > 0 ? (remainingMinutes / 60).toFixed(2) : "1",
       };
@@ -182,8 +188,16 @@ export default function EmployeeDash() {
     setPunchOutErr(null);
     try {
       setSubmittingPunchOut(true);
-      // For each selected task, log time if hours > 0
+      // Pre-validate total requested minutes against remaining cap
       const selected = assigned.filter((t) => t.checked);
+      const requested = selected.reduce((acc, t) => acc + Math.max(0, Math.round(parseFloat(t.hours || "0") * 60)), 0);
+      if (requested > remainingMinutes) {
+        const over = requested - remainingMinutes;
+        setPunchOutErr(`Selected time exceeds allowed by ${over} minutes. Reduce to at most ${remainingMinutes} minutes.`);
+        setSubmittingPunchOut(false);
+        return;
+      }
+      // For each selected task, log time if hours > 0
       for (const t of selected) {
         const h = parseFloat(t.hours || "0");
         const minutes = Math.round(h * 60);
@@ -425,10 +439,28 @@ export default function EmployeeDash() {
             <div className="mb-4 rounded border border-border p-3 bg-white">
               <div className="mb-2 text-sm font-medium">Add a task</div>
               <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={usePersonal}
+                    onChange={async (e) => {
+                      const v = e.target.checked;
+                      setUsePersonal(v);
+                      if (v && !personalProjectId) {
+                        try {
+                          const resp = await api.get('/projects/personal');
+                          setPersonalProjectId(resp.data.project?._id || "");
+                        } catch {}
+                      }
+                    }}
+                  />
+                  <span>Personal task</span>
+                </label>
                 <select
-                  className="h-9 rounded-md border border-border bg-surface px-2"
+                  className="h-9 rounded-md border border-border bg-surface px-2 disabled:opacity-50"
                   value={newTaskProjectId}
                   onChange={(e) => setNewTaskProjectId(e.target.value)}
+                  disabled={usePersonal}
                 >
                   {projects.map((p) => (
                     <option key={p._id} value={p._id}>{p.title}</option>
@@ -452,7 +484,12 @@ export default function EmployeeDash() {
                 <button
                   className="h-9 rounded-md bg-secondary px-3 text-white disabled:opacity-60"
                   onClick={addNewTask}
-                  disabled={addingTask || !newTaskTitle.trim() || !newTaskProjectId}
+                  disabled={
+                    addingTask ||
+                    !newTaskTitle.trim() ||
+                    (!usePersonal && !newTaskProjectId) ||
+                    (usePersonal && !personalProjectId)
+                  }
                 >
                   {addingTask ? "Adding…" : "Add"}
                 </button>

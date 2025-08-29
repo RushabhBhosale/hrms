@@ -4,6 +4,13 @@ const { requirePrimary } = require('../middleware/roles');
 const Project = require('../models/Project');
 const Task = require('../models/Task');
 const Employee = require('../models/Employee');
+const Attendance = require('../models/Attendance');
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
 
 function isAdmin(emp) {
   return ['ADMIN', 'SUPERADMIN'].includes(emp.primaryRole);
@@ -23,6 +30,31 @@ function isProjectMember(emp, project) {
     (project.members || []).map((m) => String(m)).includes(String(emp.id))
   );
 }
+
+// Get or create a personal project for the current user within their company
+router.get('/personal', auth, async (req, res) => {
+  try {
+    let project = await Project.findOne({
+      company: req.employee.company,
+      teamLead: req.employee.id,
+      isPersonal: true,
+    });
+    if (!project) {
+      project = await Project.create({
+        title: 'Personal Tasks',
+        description: 'Personal tasks not linked to any project',
+        techStack: [],
+        teamLead: req.employee.id,
+        members: [],
+        company: req.employee.company,
+        isPersonal: true,
+      });
+    }
+    res.json({ project });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load personal project' });
+  }
+});
 
 // Create project - admin only
 router.post('/', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (req, res) => {
@@ -321,6 +353,61 @@ router.post('/:id/tasks/:taskId/time', auth, async (req, res) => {
     if (!minutes || minutes <= 0) return res.status(400).json({ error: 'Invalid minutes' });
   }
   const note = req.body.note;
+
+  // Enforce daily cap: total logged minutes today must not exceed (worked minutes - 60)
+  try {
+    const now = new Date();
+    const start = startOfDay(now);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    // Current effective worked minutes for today
+    const attendance = await Attendance.findOne({ employee: req.employee.id, date: start });
+    let workedMs = 0;
+    if (attendance) {
+      workedMs = attendance.workedMs || 0;
+      if (attendance.lastPunchIn && !attendance.lastPunchOut) {
+        // Add in-progress time
+        workedMs += now.getTime() - new Date(attendance.lastPunchIn).getTime();
+      }
+    }
+    const workedMinutes = Math.max(0, Math.floor(workedMs / 60000));
+    const maxAllowedToday = Math.max(0, workedMinutes - 60);
+
+    // Sum already-logged minutes today across all company projects by this employee
+    const companyProjects = await Project.find({ company: req.employee.company })
+      .select('_id')
+      .lean();
+    const projectIds = companyProjects.map((p) => p._id);
+    const rawTasks = await Task.find({
+      project: { $in: projectIds },
+      timeLogs: {
+        $elemMatch: {
+          addedBy: req.employee.id,
+          createdAt: { $gte: start, $lt: end },
+        },
+      },
+    })
+      .select('timeLogs')
+      .lean();
+    const alreadyLogged = rawTasks.reduce((acc, t) => {
+      const mins = (t.timeLogs || [])
+        .filter((l) => String(l.addedBy) === String(req.employee.id) && l.createdAt >= start && l.createdAt < end)
+        .reduce((s, l) => s + (l.minutes || 0), 0);
+      return acc + mins;
+    }, 0);
+
+    const remaining = Math.max(0, maxAllowedToday - alreadyLogged);
+    if (minutes > remaining) {
+      return res.status(400).json({
+        error: `Exceeds allowed time for today. Remaining: ${remaining} minutes (worked ${workedMinutes}m minus 60m break).` ,
+      });
+    }
+  } catch (e) {
+    // If the cap check fails unexpectedly, do not allow bypass silently
+    return res.status(500).json({ error: 'Failed to validate daily time cap' });
+  }
+
   task.timeLogs.push({ minutes, note, addedBy: req.employee.id });
   task.timeSpentMinutes = (task.timeSpentMinutes || 0) + minutes;
   await task.save();
