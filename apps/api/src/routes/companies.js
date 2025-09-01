@@ -233,6 +233,7 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     dob,
     reportingPerson,
     employeeId,
+    ctc,
   } = req.body;
   if (!name || !email || !password || !role || !employeeId)
     return res.status(400).json({ error: "Missing fields" });
@@ -268,6 +269,7 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     phone,
     dob: dob ? new Date(dob) : undefined,
     employeeId,
+    ctc: Number.isFinite(Number(ctc)) ? Number(ctc) : 0,
     documents,
     reportingPerson: reporting ? reporting._id : undefined,
     leaveBalances,

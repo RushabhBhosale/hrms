@@ -14,14 +14,46 @@ function monthValid(m) {
   return typeof m === 'string' && /^\d{4}-\d{2}$/.test(m);
 }
 
+// Default locked keys and helpers
+const BASIC_KEY = 'basic_earned';
+const HRA_KEY = 'hra';
+const MEDICAL_KEY = 'medical';
+
+function defaultLockedFields() {
+  return [
+    { key: BASIC_KEY, label: 'Basic Earned', type: 'number', required: true, locked: true, category: 'earning', order: 0 },
+    { key: HRA_KEY, label: 'HRA', type: 'number', required: true, locked: true, category: 'earning', order: 1 },
+    { key: MEDICAL_KEY, label: 'Medical', type: 'number', required: false, locked: true, category: 'earning', order: 2 },
+  ];
+}
+
+function withDefaultSettings(settings) {
+  const s = settings || {};
+  return {
+    basicPercent: Number.isFinite(Number(s.basicPercent)) ? Number(s.basicPercent) : 30,
+    hraPercent: Number.isFinite(Number(s.hraPercent)) ? Number(s.hraPercent) : 45,
+    medicalAmount: Number.isFinite(Number(s.medicalAmount)) ? Number(s.medicalAmount) : 1500,
+  };
+}
+
+function ensureTemplateDefaults(tplIn) {
+  const tpl = tplIn ? { ...tplIn } : { fields: [] };
+  const fields = Array.isArray(tpl.fields) ? [...tpl.fields] : [];
+  const existingKeys = new Set(fields.map((f) => f.key));
+  const locked = defaultLockedFields();
+  const toAdd = locked.filter((f) => !existingKeys.has(f.key));
+  const merged = [...locked.map((lf) => ({ ...lf })), ...fields.filter((f) => !locked.some((lf) => lf.key === f.key))];
+  return { ...tpl, fields: merged, settings: withDefaultSettings(tpl.settings) };
+}
+
 // Get salary template for current company
 router.get('/templates', auth, async (req, res) => {
   try {
     const companyId = req.employee.company;
     if (!companyId) return res.status(400).json({ error: 'Company not found' });
     let tpl = await SalaryTemplate.findOne({ company: companyId }).lean();
-    if (!tpl) tpl = { company: companyId, fields: [] };
-    res.json({ template: tpl });
+    if (!tpl) tpl = { company: companyId, fields: [], settings: withDefaultSettings() };
+    res.json({ template: ensureTemplateDefaults(tpl) });
   } catch (e) {
     res.status(500).json({ error: 'Failed to load template' });
   }
@@ -30,7 +62,7 @@ router.get('/templates', auth, async (req, res) => {
 // Create/update salary template (Admin only)
 router.post('/templates', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (req, res) => {
   try {
-    const { fields } = req.body || {};
+    const { fields, settings } = req.body || {};
     if (!Array.isArray(fields)) return res.status(400).json({ error: 'Invalid fields' });
     const company = await Company.findOne({ admin: req.employee.id });
     const companyId = company ? company._id : req.employee.company;
@@ -41,6 +73,7 @@ router.post('/templates', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (
       label: String(f.label || '').trim(),
       type: ['text', 'number', 'date'].includes(f.type) ? f.type : 'text',
       required: !!f.required,
+      locked: !!f.locked, // client-provided locked ignored for default keys; kept for any future server-defined fields
       category: ['earning', 'deduction', 'info'].includes(f.category) ? f.category : 'info',
       defaultValue: f.defaultValue,
       order: typeof f.order === 'number' ? f.order : idx,
@@ -53,13 +86,18 @@ router.post('/templates', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (
       seen.add(f.key);
     }
 
+    // Enforce locked defaults and merge
+    const locked = defaultLockedFields();
+    const custom = sanitized.filter((f) => !locked.some((lf) => lf.key === f.key));
+    const mergedFields = [...locked, ...custom].map((f, i) => ({ ...f, order: i }));
+
     const tpl = await SalaryTemplate.findOneAndUpdate(
       { company: companyId },
-      { company: companyId, fields: sanitized, updatedBy: req.employee.id },
+      { company: companyId, fields: mergedFields, settings: withDefaultSettings(settings), updatedBy: req.employee.id },
       { upsert: true, new: true }
     );
 
-    res.json({ template: tpl });
+    res.json({ template: ensureTemplateDefaults(tpl.toObject()) });
   } catch (e) {
     res.status(500).json({ error: 'Failed to save template' });
   }
@@ -74,8 +112,28 @@ async function canManageFor(req, employeeId) {
   if (String(me.id) === String(employeeId)) return true;
   if (['ADMIN', 'SUPERADMIN'].includes(me.primaryRole)) return true;
   const subs = me.subRoles || [];
-  if (subs.includes('hr') || subs.includes('manager')) return true;
+  if (subs.includes('hr')) return true; // managers should not manage salary slips
   return false;
+}
+
+function round2(n) {
+  const x = Number(n);
+  return Math.round((Number.isFinite(x) ? x : 0) * 100) / 100;
+}
+
+function computeLockedValues({ template, employee }) {
+  const s = withDefaultSettings(template?.settings);
+  const ctc = Number(employee?.ctc) || 0; // monthly CTC
+  const basic = round2((ctc * s.basicPercent) / 100);
+  const hra = round2((basic * s.hraPercent) / 100);
+  const medical = round2(s.medicalAmount);
+  return { [BASIC_KEY]: basic, [HRA_KEY]: hra, [MEDICAL_KEY]: medical };
+}
+
+function overlayLocked(values, lockedVals) {
+  const out = { ...(values || {}) };
+  for (const k of [BASIC_KEY, HRA_KEY, MEDICAL_KEY]) out[k] = lockedVals[k];
+  return out;
 }
 
 // Get salary slip for an employee + month (self or hr/manager/admin)
@@ -87,7 +145,7 @@ router.get('/slips', auth, async (req, res) => {
     if (!(await canManageFor(req, employeeId))) return res.status(403).json({ error: 'Forbidden' });
 
     // ensure employee is in same company
-    const employee = await Employee.findById(employeeId).select('company');
+    const employee = await Employee.findById(employeeId).select('company ctc');
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
     const companyId = req.employee.company || employee.company;
     if (!companyId || !employee.company.equals(companyId)) return res.status(403).json({ error: 'Forbidden' });
@@ -97,7 +155,12 @@ router.get('/slips', auth, async (req, res) => {
       SalarySlip.findOne({ employee: employeeId, company: companyId, month }).lean(),
     ]);
 
-    res.json({ template: tpl || { company: companyId, fields: [] }, slip: slip || null });
+    const template = ensureTemplateDefaults(tpl || { company: companyId, fields: [] });
+    const rawVals = slip?.values || {};
+    const lockedVals = computeLockedValues({ template, employee });
+    const values = overlayLocked(rawVals instanceof Map ? Object.fromEntries(rawVals) : rawVals, lockedVals);
+
+    res.json({ template, slip: slip ? { ...slip, values } : { employee: employeeId, company: companyId, month, values } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to load slip' });
   }
@@ -111,11 +174,16 @@ router.get('/slips/mine', auth, async (req, res) => {
     const employeeId = req.employee.id;
     const companyId = req.employee.company;
     if (!companyId) return res.status(400).json({ error: 'Company not found' });
-    const [tpl, slip] = await Promise.all([
+    const [employee, tpl, slip] = await Promise.all([
+      Employee.findById(employeeId).select('ctc'),
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({ employee: employeeId, company: companyId, month }).lean(),
     ]);
-    res.json({ template: tpl || { company: companyId, fields: [] }, slip: slip || null });
+    const template = ensureTemplateDefaults(tpl || { company: companyId, fields: [] });
+    const rawVals = slip?.values || {};
+    const lockedVals = computeLockedValues({ template, employee });
+    const values = overlayLocked(rawVals instanceof Map ? Object.fromEntries(rawVals) : rawVals, lockedVals);
+    res.json({ template, slip: slip ? { ...slip, values } : { employee: employeeId, company: companyId, month, values } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to load slip' });
   }
@@ -134,7 +202,7 @@ router.post(
       const me = req.employee;
       const allowed =
         ['ADMIN', 'SUPERADMIN'].includes(me.primaryRole) ||
-        (me.subRoles || []).some((r) => ['hr', 'manager'].includes(r));
+        (me.subRoles || []).some((r) => ['hr'].includes(r));
       if (!allowed) return res.status(403).json({ error: 'Forbidden' });
 
       const employee = await Employee.findById(employeeId).select('company');
@@ -143,7 +211,9 @@ router.post(
       if (!companyId || !employee.company.equals(companyId)) return res.status(403).json({ error: 'Forbidden' });
 
       const tpl = await SalaryTemplate.findOne({ company: companyId }).lean();
-      const allowedKeys = new Set((tpl?.fields || []).map((f) => f.key));
+      const template = ensureTemplateDefaults(tpl || {});
+      // Only allow non-locked fields to be set by user
+      const allowedKeys = new Set((template?.fields || []).filter((f) => !f.locked).map((f) => f.key));
 
       // sanitize values to template keys only
       const sanitized = {};
@@ -164,7 +234,11 @@ router.post(
         { upsert: true, new: true }
       );
 
-      res.json({ slip });
+      // Return with computed fields overlaid
+      const employeeFull = await Employee.findById(employeeId).select('ctc');
+      const lockedVals = computeLockedValues({ template, employee: employeeFull });
+      const valuesOut = overlayLocked(slip.values instanceof Map ? Object.fromEntries(slip.values) : (slip.values || {}), lockedVals);
+      res.json({ slip: { ...slip.toObject(), values: valuesOut } });
     } catch (e) {
       if (e && e.code === 11000) {
         return res.status(409).json({ error: 'Duplicate slip' });
@@ -410,18 +484,20 @@ router.get('/slips/pdf', auth, async (req, res) => {
     const companyId = req.employee.company || employee.company;
     if (!companyId || !employee.company.equals(companyId)) return res.status(403).json({ error: 'Forbidden' });
 
-    const [company, template, slip] = await Promise.all([
+    const [company, templateRaw, slip] = await Promise.all([
       Company.findById(companyId).lean(),
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({ employee: employeeId, company: companyId, month }).lean(),
     ]);
-
+    const template = ensureTemplateDefaults(templateRaw || {});
     const valuesObj = {};
     const raw = slip?.values || {};
     const entries = raw instanceof Map ? Array.from(raw.entries()) : Object.entries(raw);
     for (const [k, v] of entries) valuesObj[k] = v;
+    const lockedVals = computeLockedValues({ template, employee });
+    const finalVals = overlayLocked(valuesObj, lockedVals);
 
-    await renderSlipPDF({ res, company, employee, month, template, slipValues: valuesObj });
+    await renderSlipPDF({ res, company, employee, month, template, slipValues: finalVals });
   } catch (e) {
     console.error('payslip pdf error', e);
     res.status(500).json({ error: 'Failed to generate PDF' });
@@ -437,19 +513,21 @@ router.get('/slips/mine/pdf', auth, async (req, res) => {
     const companyId = req.employee.company;
     if (!companyId) return res.status(400).json({ error: 'Company not found' });
 
-    const [employee, company, template, slip] = await Promise.all([
+    const [employee, company, templateRaw, slip] = await Promise.all([
       Employee.findById(employeeId).select('name email employeeId company'),
       Company.findById(companyId).lean(),
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({ employee: employeeId, company: companyId, month }).lean(),
     ]);
-
+    const template = ensureTemplateDefaults(templateRaw || {});
     const valuesObj = {};
     const raw = slip?.values || {};
     const entries = raw instanceof Map ? Array.from(raw.entries()) : Object.entries(raw);
     for (const [k, v] of entries) valuesObj[k] = v;
+    const lockedVals = computeLockedValues({ template, employee: await Employee.findById(employeeId).select('ctc') });
+    const finalVals = overlayLocked(valuesObj, lockedVals);
 
-    await renderSlipPDF({ res, company, employee, month, template, slipValues: valuesObj });
+    await renderSlipPDF({ res, company, employee, month, template, slipValues: finalVals });
   } catch (e) {
     console.error('my payslip pdf error', e);
     res.status(500).json({ error: 'Failed to generate PDF' });

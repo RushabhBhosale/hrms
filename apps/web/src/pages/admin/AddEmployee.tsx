@@ -11,6 +11,7 @@ type FormState = {
   dob: string;
   reportingPerson: string;
   employeeId: string;
+  ctc: string; // monthly CTC
 };
 
 export default function AddEmployee() {
@@ -24,6 +25,7 @@ export default function AddEmployee() {
     dob: "",
     reportingPerson: "",
     employeeId: "",
+    ctc: "",
   });
   const [docs, setDocs] = useState<FileList | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -42,7 +44,8 @@ export default function AddEmployee() {
       form.role &&
       form.address.trim() &&
       form.phone.trim() &&
-      form.employeeId.trim()
+      form.employeeId.trim() &&
+      form.ctc.trim() && !isNaN(Number(form.ctc)) && Number(form.ctc) >= 0
     );
   }, [form]);
 
@@ -92,6 +95,7 @@ export default function AddEmployee() {
         dob: "",
         reportingPerson: "",
         employeeId: "",
+        ctc: "",
       });
       setDocs(null);
       setOk("Employee added");
@@ -199,6 +203,17 @@ export default function AddEmployee() {
                 placeholder="EMP001"
                 value={form.employeeId}
                 onChange={(e) => onChange("employeeId", e.target.value)}
+              />
+            </Field>
+            <Field label="CTC (Monthly)">
+              <input
+                type="number"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="e.g. 50000"
+                value={form.ctc}
+                onChange={(e) => onChange("ctc", e.target.value)}
+                min={0}
+                step="0.01"
               />
             </Field>
           </div>

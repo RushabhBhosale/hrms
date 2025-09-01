@@ -127,7 +127,7 @@ export default function App() {
         <Route
           path="salaries"
           element={
-            <RoleGuard sub={["hr", "manager"]}>
+            <RoleGuard sub={["hr"]}>
               <SalariesManage />
             </RoleGuard>
           }

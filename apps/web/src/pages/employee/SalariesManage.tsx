@@ -3,7 +3,7 @@ import { api } from "../../lib/api";
 
 type EmployeeLite = { id: string; name: string; email: string };
 type FieldType = "text" | "number" | "date";
-type Field = { key: string; label: string; type: FieldType; required: boolean; defaultValue?: any; order?: number };
+type Field = { key: string; label: string; type: FieldType; required: boolean; defaultValue?: any; order?: number; locked?: boolean };
 
 export default function SalariesManage() {
   const today = new Date();
@@ -151,6 +151,7 @@ function InputByType({ field, value, onChange }: { field: Field; value: any; onC
         value={value === undefined || value === null ? '' : value}
         onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
         className={common}
+        disabled={!!field.locked}
       />
     );
   }
@@ -161,6 +162,7 @@ function InputByType({ field, value, onChange }: { field: Field; value: any; onC
         value={value || ''}
         onChange={(e) => onChange(e.target.value)}
         className={common}
+        disabled={!!field.locked}
       />
     );
   }
@@ -170,7 +172,7 @@ function InputByType({ field, value, onChange }: { field: Field; value: any; onC
       value={value || ''}
       onChange={(e) => onChange(e.target.value)}
       className={common}
+      disabled={!!field.locked}
     />
   );
 }
-

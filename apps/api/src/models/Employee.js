@@ -19,6 +19,8 @@ const EmployeeSchema = new mongoose.Schema(
       bankName: { type: String },
       ifsc: { type: String }
     },
+    // Monthly CTC used for salary computations
+    ctc: { type: Number, default: 0 },
     documents: { type: [String], default: [] },
     reportingPerson: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
     leaveBalances: {

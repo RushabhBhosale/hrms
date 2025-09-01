@@ -54,11 +54,13 @@ export default function EmployeeLayout() {
       label: "Report",
       icon: FileText,
     });
-    links.splice(3, 0, {
-      to: "/app/salaries",
-      label: "Salaries",
-      icon: Users,
-    });
+    if (u?.subRoles?.includes('hr')) {
+      links.splice(3, 0, {
+        to: "/app/salaries",
+        label: "Salaries",
+        icon: Users,
+      });
+    }
   }
 
   const title = useMemo(() => {
