@@ -220,7 +220,9 @@ export default function EmployeeDash() {
         api.get("/projects"),
       ]);
       const list: Task[] = assignedRes.data.tasks || [];
-      const normalized: Assigned[] = list.map((t) => ({
+      // Hide tasks already marked as DONE in punch-out modal
+      const visible = list.filter((t) => t.status !== "DONE");
+      const normalized: Assigned[] = visible.map((t) => ({
         ...t,
         projectId:
           typeof t.project === "string"
@@ -365,7 +367,10 @@ export default function EmployeeDash() {
             ? (remainingMinutes / 60).toFixed(2)
             : "1",
       };
-      setAssigned((prev) => [a, ...prev]);
+      // In punch-out modal, do not show tasks immediately if marked DONE
+      setAssigned((prev) =>
+        t.status === "DONE" && showPunchOut && !showBackfill ? prev : [a, ...prev]
+      );
       setNewTaskTitle("");
       setNewTaskStatus("PENDING");
     } catch (e: any) {
