@@ -9,6 +9,8 @@ type MonthlyDay = {
   timeSpentMs: number;
   dayType: "FULL_DAY" | "HALF_DAY";
   status?: "" | "WORKED" | "HOLIDAY" | "LEAVE" | "WEEKEND";
+  lateMinutes?: number;
+  overtimeMinutes?: number;
 };
 
 function fmtTime(t?: string | null) {
@@ -195,6 +197,8 @@ export default function MonthlyReport() {
                   <th className="px-3 py-2 font-medium">Punch In</th>
                   <th className="px-3 py-2 font-medium">Punch Out</th>
                   <th className="px-3 py-2 font-medium">Time Spent</th>
+                  <th className="px-3 py-2 font-medium">Late</th>
+                  <th className="px-3 py-2 font-medium">Overtime</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                 </tr>
               </thead>
@@ -223,6 +227,8 @@ export default function MonthlyReport() {
                       <td className="px-3 py-2">
                         {statusLabel ? fmtDur(d.timeSpentMs) : ""}
                       </td>
+                      <td className="px-3 py-2">{typeof d.lateMinutes === 'number' ? `${d.lateMinutes}m` : ''}</td>
+                      <td className="px-3 py-2">{typeof d.overtimeMinutes === 'number' ? `${d.overtimeMinutes}m` : ''}</td>
                       <td className="px-3 py-2">{statusLabel}</td>
                     </tr>
                   );

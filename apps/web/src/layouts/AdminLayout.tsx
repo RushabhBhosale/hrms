@@ -14,6 +14,7 @@ import {
   Settings,
   UserCog,
   FileText,
+  Clock,
 } from "lucide-react";
 
 export default function AdminLayout() {
@@ -34,6 +35,7 @@ export default function AdminLayout() {
     { to: "/admin/attendances", label: "Attendances", icon: CalendarCheck2 },
     { to: "/admin/report", label: "Report", icon: FileText },
     { to: "/admin/leave-settings", label: "Leave Settings", icon: Settings },
+    { to: "/admin/company-timing", label: "Company Timing", icon: Clock },
     { to: "/admin/leaves", label: "Leave Requests", icon: ClipboardList },
     { to: "/admin/salary/template", label: "Salary Template", icon: FileText },
     { to: "/admin/salary/slips", label: "Salary Slips", icon: ClipboardList },
@@ -49,6 +51,7 @@ export default function AdminLayout() {
     if (pathname.startsWith("/admin/projects")) return "Projects";
     if (pathname.startsWith("/admin/attendances")) return "Attendances";
     if (pathname.startsWith("/admin/leave-settings")) return "Leave Settings";
+    if (pathname.startsWith("/admin/company-timing")) return "Company Timing";
     if (pathname.startsWith("/admin/report")) return "Report";
     if (pathname.startsWith("/admin/leaves")) return "Leave Requests";
     if (pathname.startsWith("/admin/salary/template")) return "Salary Template";

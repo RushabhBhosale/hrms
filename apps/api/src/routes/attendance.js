@@ -321,7 +321,7 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
     // Load company holidays and approved leaves that overlap this month
     const emp = await Employee.findById(targetId).select("company");
     const company = emp
-      ? await Company.findById(emp.company).select("bankHolidays")
+      ? await Company.findById(emp.company).select("bankHolidays workHours")
       : null;
     const bankHolidaySet = new Set(
       (company?.bankHolidays || [])
@@ -412,6 +412,32 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
       }
       totalLeaveUnits += leaveUnit;
 
+      // Compute late and overtime using company work hours (if configured)
+      let lateMinutes = 0;
+      let overtimeMinutes = 0;
+      const wh = company?.workHours || {};
+      if (!inFuture && rec && rec.firstPunchIn && (!isWeekend && !isHoliday)) {
+        if (typeof wh.start === 'string' && /^\d{2}:\d{2}$/.test(wh.start)) {
+          const [sh, sm] = wh.start.split(":").map((x) => parseInt(x, 10));
+          const grace = Number.isFinite(wh.graceMinutes) ? wh.graceMinutes : 0;
+          const schedStart = new Date(d);
+          schedStart.setHours(sh, sm + (grace || 0), 0, 0);
+          const fp = new Date(rec.firstPunchIn);
+          const diffMs = fp.getTime() - schedStart.getTime();
+          if (diffMs > 0) lateMinutes = Math.floor(diffMs / 60000);
+        }
+      }
+      if (!inFuture && rec && rec.lastPunchOut && (!isWeekend && !isHoliday)) {
+        if (typeof wh.end === 'string' && /^\d{2}:\d{2}$/.test(wh.end)) {
+          const [eh, em] = wh.end.split(":").map((x) => parseInt(x, 10));
+          const schedEnd = new Date(d);
+          schedEnd.setHours(eh, em, 0, 0);
+          const lp = new Date(rec.lastPunchOut);
+          const diffMs = lp.getTime() - schedEnd.getTime();
+          if (diffMs > 0) overtimeMinutes = Math.floor(diffMs / 60000);
+        }
+      }
+
       days.push({
         date: key,
         firstPunchIn: firstPunchIn ? firstPunchIn.toISOString() : null,
@@ -423,6 +449,8 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
         isHoliday,
         isApprovedLeave,
         leaveUnit,
+        lateMinutes,
+        overtimeMinutes,
       });
     }
 
@@ -468,7 +496,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
     // Pull company holidays and approved leaves
     const emp = await Employee.findById(targetId).select("company name");
     const company = emp
-      ? await Company.findById(emp.company).select("bankHolidays")
+      ? await Company.findById(emp.company).select("bankHolidays workHours")
       : null;
     const bankHolidaySet = new Set(
       (company?.bankHolidays || [])
@@ -550,6 +578,32 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       }
       totalLeaveUnits += leaveUnit;
 
+      // Compute late and overtime using company work hours (if configured)
+      let lateMinutes = 0;
+      let overtimeMinutes = 0;
+      const wh = company?.workHours || {};
+      if (!inFuture && rec && rec.firstPunchIn && (!isWeekend && !isHoliday)) {
+        if (typeof wh.start === 'string' && /^\d{2}:\d{2}$/.test(wh.start)) {
+          const [sh, sm] = wh.start.split(":").map((x) => parseInt(x, 10));
+          const grace = Number.isFinite(wh.graceMinutes) ? wh.graceMinutes : 0;
+          const schedStart = new Date(d);
+          schedStart.setHours(sh, sm + (grace || 0), 0, 0);
+          const fp = new Date(rec.firstPunchIn);
+          const diffMs = fp.getTime() - schedStart.getTime();
+          if (diffMs > 0) lateMinutes = Math.floor(diffMs / 60000);
+        }
+      }
+      if (!inFuture && rec && rec.lastPunchOut && (!isWeekend && !isHoliday)) {
+        if (typeof wh.end === 'string' && /^\d{2}:\d{2}$/.test(wh.end)) {
+          const [eh, em] = wh.end.split(":").map((x) => parseInt(x, 10));
+          const schedEnd = new Date(d);
+          schedEnd.setHours(eh, em, 0, 0);
+          const lp = new Date(rec.lastPunchOut);
+          const diffMs = lp.getTime() - schedEnd.getTime();
+          if (diffMs > 0) overtimeMinutes = Math.floor(diffMs / 60000);
+        }
+      }
+
       rows.push({
         Date: key,
         "Punch In": rec?.firstPunchIn ? new Date(rec.firstPunchIn) : null,
@@ -562,6 +616,8 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
               : "Half Day"
             : status,
         "Leave Unit": leaveUnit,
+        "Late (mins)": lateMinutes,
+        "Overtime (mins)": overtimeMinutes,
       });
     }
 
@@ -577,6 +633,8 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       { header: "Time Spent (hrs)", key: "Time Spent (hrs)", width: 18 },
       { header: "Status", key: "Status", width: 16 },
       { header: "Leave Unit", key: "Leave Unit", width: 12 },
+      { header: "Late (mins)", key: "Late (mins)", width: 12 },
+      { header: "Overtime (mins)", key: "Overtime (mins)", width: 14 },
     ];
 
     // Add metadata header

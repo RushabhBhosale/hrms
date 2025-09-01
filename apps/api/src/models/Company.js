@@ -22,6 +22,12 @@ const CompanySchema = new mongoose.Schema(
       paid: { type: Number, default: 0 },
       sick: { type: Number, default: 0 }
     },
+    // Optional company-wide working hours configuration
+    workHours: {
+      start: { type: String, default: '' }, // "HH:mm" (server-local time)
+      end: { type: String, default: '' },   // "HH:mm"
+      graceMinutes: { type: Number, default: 0 }, // minutes allowed before counting late
+    },
     bankHolidays: [
       {
         date: { type: Date, required: true },

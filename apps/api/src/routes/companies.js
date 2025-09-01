@@ -299,6 +299,44 @@ router.get("/leave-policy", auth, async (req, res) => {
   });
 });
 
+// Admin: get work hours (company timing)
+router.get("/work-hours", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "workHours"
+  );
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  const wh = company.workHours || { start: "", end: "", graceMinutes: 0 };
+  res.json({ workHours: { start: wh.start || "", end: wh.end || "", graceMinutes: wh.graceMinutes || 0 } });
+});
+
+// Admin: update work hours (company timing)
+router.put("/work-hours", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { start, end, graceMinutes } = req.body || {};
+  // Basic validation: HH:mm format for times, non-negative grace
+  function isHHmm(s) {
+    return typeof s === 'string' && /^\d{2}:\d{2}$/.test(s);
+  }
+  if (!isHHmm(start) || !isHHmm(end))
+    return res.status(400).json({ error: "Invalid time format. Use HH:mm" });
+  const [sh, sm] = start.split(":").map((x) => parseInt(x, 10));
+  const [eh, em] = end.split(":").map((x) => parseInt(x, 10));
+  if (sh < 0 || sh > 23 || sm < 0 || sm > 59 || eh < 0 || eh > 23 || em < 0 || em > 59)
+    return res.status(400).json({ error: "Invalid time values" });
+  const gm = parseInt(graceMinutes, 10);
+  if (!Number.isFinite(gm) || gm < 0)
+    return res.status(400).json({ error: "Invalid grace minutes" });
+
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  company.workHours = { start, end, graceMinutes: gm };
+  await company.save();
+  res.json({ workHours: company.workHours });
+});
+
 // Admin: update leave policy for their company
 router.put("/leave-policy", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
