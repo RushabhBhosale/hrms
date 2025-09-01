@@ -6,6 +6,7 @@ const Leave = require("../models/Leave");
 const Company = require("../models/Company");
 const Project = require("../models/Project");
 const Task = require("../models/Task");
+const AttendanceOverride = require("../models/AttendanceOverride");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
 const { runAutoPunchOut } = require("../jobs/autoPunchout");
 
@@ -244,9 +245,23 @@ router.get("/report/:employeeId?", auth, async (req, res) => {
     ? await Company.findById(emp.company).select("bankHolidays")
     : null;
 
+  // Load overrides for this month for the target employee
+  const overrides = await AttendanceOverride.find({
+    employee: targetId,
+    date: { $gte: start, $lt: end },
+  })
+    .select("date ignoreHoliday")
+    .lean();
+  const overrideHolidayKeys = new Set(
+    overrides
+      .filter((o) => o.ignoreHoliday)
+      .map((o) => dateKeyLocal(o.date))
+  );
+
   const bankHolidays = (company?.bankHolidays || [])
     .filter((h) => h.date >= start && h.date < end)
-    .map((h) => dateKeyLocal(h.date));
+    .map((h) => dateKeyLocal(h.date))
+    .filter((key) => !overrideHolidayKeys.has(key));
 
     const leaves = await Leave.find({
       employee: targetId,
@@ -255,7 +270,8 @@ router.get("/report/:employeeId?", auth, async (req, res) => {
       endDate: { $gte: start },
     });
   const holidaySet = new Set(
-    (company?.bankHolidays || []).map((h) => startOfDay(h.date).getTime())
+    (company?.bankHolidays || [])
+      .map((h) => startOfDay(h.date).getTime())
   );
   const leaveDates = [];
     // Pull attendance records for the window to exclude worked days from leaveDates
@@ -280,7 +296,10 @@ router.get("/report/:employeeId?", auth, async (req, res) => {
         // Skip company holidays and weekends; and exclude if attendance exists
         const dow = dd.getDay();
         const isWeekend = dow === 0 || dow === 6;
-        if (holidaySet.has(day) || isWeekend) continue;
+        // Apply ignoreHoliday override
+        if (overrideHolidayKeys.has(key)) {
+          // treat as not a holiday
+        } else if (holidaySet.has(day) || isWeekend) continue;
         if (attendanceKeySet.has(key)) continue;
         leaveDates.push(key);
       }
@@ -324,10 +343,23 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
     const company = emp
       ? await Company.findById(emp.company).select("bankHolidays workHours")
       : null;
+
+    // Load overrides and prepare maps
+    const overrides = await AttendanceOverride.find({
+      employee: targetId,
+      date: { $gte: start, $lt: end },
+    })
+      .select("date ignoreHoliday ignoreHalfDay ignoreLate")
+      .lean();
+    const overrideByKey = new Map(
+      overrides.map((o) => [dateKeyLocal(o.date), o])
+    );
+
     const bankHolidaySet = new Set(
       (company?.bankHolidays || [])
         .filter((h) => h.date >= start && h.date < end)
         .map((h) => dateKeyLocal(h.date))
+        .filter((key) => !(overrideByKey.get(key)?.ignoreHoliday))
     );
 
     const leaves = await Leave.find({
@@ -369,7 +401,8 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
       const rec = byKey.get(key);
       const dow = d.getDay();
       const isWeekend = dow === 0 || dow === 6;
-      const isHoliday = bankHolidaySet.has(key);
+      // Base flags
+      let isHoliday = bankHolidaySet.has(key);
       const isApprovedLeave = approvedLeaveSet.has(key);
       const inFuture = d > new Date();
 
@@ -391,7 +424,7 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
         }
       }
 
-      const dayType = timeSpentMs > 6 * 3600000 ? "FULL_DAY" : "HALF_DAY";
+      let dayType = timeSpentMs > 6 * 3600000 ? "FULL_DAY" : "HALF_DAY";
 
       let status = "";
       if (inFuture) status = "";
@@ -439,6 +472,29 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
         }
       }
 
+      // Apply per-day overrides
+      const ov = overrideByKey.get(key);
+      const ignored = { ignoredLate: false, ignoredHalfDay: false, ignoredHoliday: false };
+      if (ov?.ignoreHoliday) {
+        // Already removed from bankHolidaySet above, but keep marker
+        ignored.ignoredHoliday = true;
+        isHoliday = false;
+        if (status === "HOLIDAY") status = rec && timeSpentMs > 0 ? "WORKED" : ""; // recompute minimal sensible status
+      }
+      if (ov?.ignoreHalfDay && status === "WORKED" && dayType === "HALF_DAY") {
+        dayType = "FULL_DAY";
+        // If we flipped to full day, remove the 0.5 leave unit
+        if (!inFuture && !isWeekend) {
+          totalLeaveUnits -= leaveUnit;
+          leaveUnit = 0;
+        }
+        ignored.ignoredHalfDay = true;
+      }
+      if (ov?.ignoreLate && lateMinutes > 0) {
+        lateMinutes = 0;
+        ignored.ignoredLate = true;
+      }
+
       days.push({
         date: key,
         firstPunchIn: firstPunchIn ? firstPunchIn.toISOString() : null,
@@ -452,6 +508,7 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
         leaveUnit,
         lateMinutes,
         overtimeMinutes,
+        ...ignored,
       });
     }
 
@@ -499,10 +556,23 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
     const company = emp
       ? await Company.findById(emp.company).select("bankHolidays workHours")
       : null;
+
+    // Load overrides
+    const overrides = await AttendanceOverride.find({
+      employee: targetId,
+      date: { $gte: start, $lt: end },
+    })
+      .select("date ignoreHoliday ignoreHalfDay ignoreLate")
+      .lean();
+    const overrideByKey = new Map(
+      overrides.map((o) => [dateKeyLocal(o.date), o])
+    );
+
     const bankHolidaySet = new Set(
       (company?.bankHolidays || [])
         .filter((h) => h.date >= start && h.date < end)
         .map((h) => dateKeyLocal(h.date))
+        .filter((key) => !(overrideByKey.get(key)?.ignoreHoliday))
     );
     const leaves = await Leave.find({
       employee: targetId,
@@ -539,7 +609,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       const rec = byKey.get(key);
       const dow = d.getDay();
       const isWeekend = dow === 0 || dow === 6;
-      const isHoliday = bankHolidaySet.has(key);
+      let isHoliday = bankHolidaySet.has(key);
       const isApprovedLeave = approvedLeaveSet.has(key);
 
       let timeSpentMs = 0;
@@ -557,7 +627,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
             new Date(rec.firstPunchIn).getTime();
         }
       }
-      const dayType = timeSpentMs > 6 * 3600000 ? "FULL_DAY" : "HALF_DAY";
+      let dayType = timeSpentMs > 6 * 3600000 ? "FULL_DAY" : "HALF_DAY";
       const inFuture = d > new Date();
       let status = "";
       if (inFuture) status = "";
@@ -603,6 +673,23 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
           const diffMs = lp.getTime() - schedEnd.getTime();
           if (diffMs > 0) overtimeMinutes = Math.floor(diffMs / 60000);
         }
+      }
+
+      // Apply overrides
+      const ov = overrideByKey.get(key);
+      if (ov?.ignoreHoliday) {
+        isHoliday = false;
+        if (status === "HOLIDAY") status = rec && timeSpentMs > 0 ? "WORKED" : "";
+      }
+      if (ov?.ignoreHalfDay && status === "WORKED" && dayType === "HALF_DAY") {
+        dayType = "FULL_DAY";
+        if (!inFuture && !isWeekend) {
+          totalLeaveUnits -= leaveUnit;
+          leaveUnit = 0;
+        }
+      }
+      if (ov?.ignoreLate && lateMinutes > 0) {
+        lateMinutes = 0;
       }
 
       rows.push({
@@ -969,6 +1056,40 @@ router.post("/admin/auto-punchout/run", auth, async (req, res) => {
   } catch (e) {
     console.error("auto-punchout run error", e);
     res.status(500).json({ error: "Failed to run auto-punchout" });
+  }
+});
+
+// Admin/HR/Manager: Upsert per-day overrides (ignore half-day/late/holiday)
+// Body: { date: 'yyyy-mm-dd', ignoreHalfDay?: boolean, ignoreLate?: boolean, ignoreHoliday?: boolean, reason?: string }
+router.post("/overrides/:employeeId", auth, async (req, res) => {
+  try {
+    const canEdit =
+      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+      (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+    if (!canEdit) return res.status(403).json({ error: "Forbidden" });
+
+    const targetId = req.params.employeeId;
+    const { date, ignoreHalfDay, ignoreLate, ignoreHoliday, reason } = req.body || {};
+    if (!targetId) return res.status(400).json({ error: "Missing employeeId" });
+    if (!date) return res.status(400).json({ error: "Missing date" });
+    const day = startOfDay(new Date(date));
+    if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
+
+    const update = { updatedBy: req.employee.id };
+    if (typeof ignoreHalfDay === 'boolean') update.ignoreHalfDay = !!ignoreHalfDay;
+    if (typeof ignoreLate === 'boolean') update.ignoreLate = !!ignoreLate;
+    if (typeof ignoreHoliday === 'boolean') update.ignoreHoliday = !!ignoreHoliday;
+    if (typeof reason === 'string') update.reason = reason;
+
+    const override = await AttendanceOverride.findOneAndUpdate(
+      { employee: targetId, date: day },
+      { $setOnInsert: { employee: targetId, date: day }, $set: update },
+      { upsert: true, new: true }
+    );
+    res.json({ override });
+  } catch (e) {
+    console.error("override upsert error", e);
+    res.status(500).json({ error: "Failed to save override" });
   }
 });
 

@@ -11,6 +11,9 @@ type MonthlyDay = {
   status?: "" | "WORKED" | "HOLIDAY" | "LEAVE" | "WEEKEND";
   lateMinutes?: number;
   overtimeMinutes?: number;
+  ignoredLate?: boolean;
+  ignoredHalfDay?: boolean;
+  ignoredHoliday?: boolean;
 };
 
 function fmtTime(t?: string | null) {
@@ -33,6 +36,7 @@ export default function MonthlyReport() {
   const canViewOthers =
     ["ADMIN", "SUPERADMIN"].includes(u?.primaryRole || "") ||
     (u?.subRoles || []).some((r) => r === "hr" || r === "manager");
+  const canEditOverrides = canViewOthers; // same roles allowed to edit
 
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
     []
@@ -42,6 +46,7 @@ export default function MonthlyReport() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // yyyy-mm
 
   const [rows, setRows] = useState<MonthlyDay[]>([]);
+  const [saving, setSaving] = useState<string | null>(null); // date of row being saved
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -190,7 +195,7 @@ export default function MonthlyReport() {
           <div className="p-4 text-sm text-error">{err}</div>
         ) : (
           <div className="overflow-auto">
-            <table className="min-w-[720px] w-full text-sm">
+            <table className="min-w-[980px] w-full text-sm">
               <thead>
                 <tr className="bg-white text-left">
                   <th className="px-3 py-2 font-medium">Date</th>
@@ -200,6 +205,9 @@ export default function MonthlyReport() {
                   <th className="px-3 py-2 font-medium">Late</th>
                   <th className="px-3 py-2 font-medium">Overtime</th>
                   <th className="px-3 py-2 font-medium">Status</th>
+                  {canEditOverrides && (
+                    <th className="px-3 py-2 font-medium">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -219,6 +227,9 @@ export default function MonthlyReport() {
                       : d.status === "LEAVE"
                       ? "Leave"
                       : "";
+                  const canToggleHalf = (d.status === 'WORKED' && d.dayType === 'HALF_DAY') || d.ignoredHalfDay;
+                  const canToggleLate = (typeof d.lateMinutes === 'number' && d.lateMinutes > 0) || d.ignoredLate;
+                  const canToggleHoliday = d.status === 'HOLIDAY' || d.ignoredHoliday;
                   return (
                     <tr key={d.date} className="border-t border-border/60">
                       <td className="px-3 py-2 whitespace-nowrap">{d.date}</td>
@@ -230,6 +241,84 @@ export default function MonthlyReport() {
                       <td className="px-3 py-2">{typeof d.lateMinutes === 'number' ? `${d.lateMinutes}m` : ''}</td>
                       <td className="px-3 py-2">{typeof d.overtimeMinutes === 'number' ? `${d.overtimeMinutes}m` : ''}</td>
                       <td className="px-3 py-2">{statusLabel}</td>
+                      {canEditOverrides && (
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-3">
+                            {canToggleHalf && (
+                              <label className="inline-flex items-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  checked={!!d.ignoredHalfDay}
+                                  disabled={!!saving}
+                                  onChange={async (e) => {
+                                    try {
+                                      setSaving(d.date);
+                                      await api.post(`/attendance/overrides/${employeeId}` as string, {
+                                        date: d.date,
+                                        ignoreHalfDay: e.target.checked,
+                                      });
+                                      await load();
+                                    } catch {
+                                      alert('Failed to save override');
+                                    } finally {
+                                      setSaving(null);
+                                    }
+                                  }}
+                                />
+                                <span className="text-xs">Ignore Half</span>
+                              </label>
+                            )}
+                            {canToggleLate && (
+                              <label className="inline-flex items-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  checked={!!d.ignoredLate}
+                                  disabled={!!saving}
+                                  onChange={async (e) => {
+                                    try {
+                                      setSaving(d.date);
+                                      await api.post(`/attendance/overrides/${employeeId}` as string, {
+                                        date: d.date,
+                                        ignoreLate: e.target.checked,
+                                      });
+                                      await load();
+                                    } catch {
+                                      alert('Failed to save override');
+                                    } finally {
+                                      setSaving(null);
+                                    }
+                                  }}
+                                />
+                                <span className="text-xs">Ignore Late</span>
+                              </label>
+                            )}
+                            {canToggleHoliday && (
+                              <label className="inline-flex items-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  checked={!!d.ignoredHoliday}
+                                  disabled={!!saving}
+                                  onChange={async (e) => {
+                                    try {
+                                      setSaving(d.date);
+                                      await api.post(`/attendance/overrides/${employeeId}` as string, {
+                                        date: d.date,
+                                        ignoreHoliday: e.target.checked,
+                                      });
+                                      await load();
+                                    } catch {
+                                      alert('Failed to save override');
+                                    } finally {
+                                      setSaving(null);
+                                    }
+                                  }}
+                                />
+                                <span className="text-xs">Ignore Holiday</span>
+                              </label>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

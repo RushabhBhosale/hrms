@@ -72,10 +72,6 @@ function scheduleAutoPunchOut() {
       timezone: "Asia/Kolkata", // ✅ IST timezone
     }
   );
-
-  setTimeout(() => {
-    runAutoPunchOut();
-  }, 10_000);
 }
 
 module.exports = { scheduleAutoPunchOut, runAutoPunchOut };
