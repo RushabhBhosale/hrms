@@ -4,6 +4,9 @@ const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
 const Company = require("../models/Company");
 const Employee = require("../models/Employee");
+const Project = require("../models/Project");
+const Task = require("../models/Task");
+const SalarySlip = require("../models/SalarySlip");
 const multer = require("multer");
 const path = require("path");
 const upload = multer({ dest: path.join(__dirname, "../../uploads") });
@@ -432,6 +435,115 @@ router.put("/employees/:id/role", auth, async (req, res) => {
   res.json({
     employee: { id: employee._id, subRoles: employee.subRoles },
   });
+});
+
+// Admin: update general details for an employee (CTC, contact, IDs, bank)
+router.put("/employees/:id", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const {
+    address,
+    phone,
+    dob,
+    ctc,
+    aadharNumber,
+    panNumber,
+    bankDetails,
+  } = req.body || {};
+
+  // Only admins of the company can update within that company
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const employee = await Employee.findById(req.params.id);
+  if (!employee || !employee.company.equals(company._id))
+    return res.status(404).json({ error: "Employee not found" });
+
+  // Validate and assign fields
+  if (typeof address === 'string') employee.address = address.trim();
+  if (typeof phone === 'string') employee.phone = phone.trim();
+  if (dob) {
+    const d = new Date(dob);
+    if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid DOB' });
+    employee.dob = d;
+  }
+  if (ctc !== undefined) {
+    const n = Number(ctc);
+    if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'Invalid CTC' });
+    employee.ctc = n;
+  }
+  if (typeof aadharNumber === 'string') employee.aadharNumber = aadharNumber.trim();
+  if (typeof panNumber === 'string') employee.panNumber = panNumber.trim();
+  if (bankDetails && typeof bankDetails === 'object') {
+    employee.bankDetails = employee.bankDetails || {};
+    if (typeof bankDetails.accountNumber === 'string') employee.bankDetails.accountNumber = bankDetails.accountNumber.trim();
+    if (typeof bankDetails.bankName === 'string') employee.bankDetails.bankName = bankDetails.bankName.trim();
+    if (typeof bankDetails.ifsc === 'string') employee.bankDetails.ifsc = bankDetails.ifsc.trim();
+  }
+
+  await employee.save();
+  res.json({
+    employee: {
+      id: employee._id,
+      address: employee.address || '',
+      phone: employee.phone || '',
+      dob: employee.dob,
+      ctc: employee.ctc || 0,
+      aadharNumber: employee.aadharNumber || '',
+      panNumber: employee.panNumber || '',
+      bankDetails: {
+        accountNumber: employee.bankDetails?.accountNumber || '',
+        bankName: employee.bankDetails?.bankName || '',
+        ifsc: employee.bankDetails?.ifsc || '',
+      },
+    },
+  });
+});
+
+// Admin: delete an employee (with safety checks)
+router.delete("/employees/:id", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const employee = await Employee.findById(req.params.id);
+  if (!employee || !employee.company.equals(company._id))
+    return res.status(404).json({ error: "Employee not found" });
+
+  // Prevent deleting admins or yourself
+  if (["ADMIN", "SUPERADMIN"].includes(employee.primaryRole))
+    return res.status(400).json({ error: "Cannot delete an admin account" });
+  if (String(employee._id) === String(req.employee.id))
+    return res.status(400).json({ error: "You cannot delete your own account" });
+
+  // Safety checks for project/team lead
+  const leads = await Project.countDocuments({ teamLead: employee._id });
+  if (leads > 0)
+    return res.status(400).json({ error: "Employee is a team lead on projects. Reassign before deleting." });
+
+  // Safety checks for dependent records that can't be safely reassigned here
+  const hasTasks = await Task.exists({ $or: [{ assignedTo: employee._id }, { createdBy: employee._id }] });
+  if (hasTasks)
+    return res.status(400).json({ error: "Employee has tasks. Reassign or remove tasks before deleting." });
+
+  const hasSlips = await SalarySlip.exists({ employee: employee._id });
+  if (hasSlips)
+    return res.status(400).json({ error: "Employee has salary slips. Delete slips before deleting employee." });
+
+  // Remove from project memberships
+  await Project.updateMany({ members: employee._id }, { $pull: { members: employee._id } });
+
+  // Clear as reportingPerson for others within company
+  await Employee.updateMany(
+    { company: company._id, reportingPerson: employee._id },
+    { $unset: { reportingPerson: "" } }
+  );
+
+  await Employee.deleteOne({ _id: employee._id });
+  res.json({ ok: true });
 });
 
 // Admin: list employees in their company

@@ -31,7 +31,9 @@ router.get(
   requirePrimary(["ADMIN", "SUPERADMIN"]),
   async (req, res) => {
     const emp = await Employee.findById(req.params.id)
-      .select("name email dob documents reportingPerson subRoles")
+      .select(
+        "name email dob documents reportingPerson subRoles address phone employeeId ctc aadharNumber panNumber bankDetails"
+      )
       .populate("reportingPerson", "name")
       .lean();
     if (!emp) return res.status(404).json({ error: "Not found" });
@@ -46,6 +48,17 @@ router.get(
           ? { id: emp.reportingPerson._id, name: emp.reportingPerson.name }
           : null,
         subRoles: emp.subRoles || [],
+        address: emp.address || "",
+        phone: emp.phone || "",
+        employeeId: emp.employeeId || "",
+        ctc: emp.ctc || 0,
+        aadharNumber: emp.aadharNumber || "",
+        panNumber: emp.panNumber || "",
+        bankDetails: {
+          accountNumber: emp.bankDetails?.accountNumber || "",
+          bankName: emp.bankDetails?.bankName || "",
+          ifsc: emp.bankDetails?.ifsc || "",
+        },
       },
     });
   }
