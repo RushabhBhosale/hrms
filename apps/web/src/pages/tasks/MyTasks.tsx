@@ -92,7 +92,7 @@ export default function MyTasks() {
       </div>
 
       {err && (
-        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
       )}
@@ -168,7 +168,7 @@ export default function MyTasks() {
               <div className="mt-2 text-xs text-error">{msg[t._id]?.err}</div>
             )}
             {msg[t._id]?.ok && (
-              <div className="mt-2 text-xs text-green-600">{msg[t._id]?.ok}</div>
+              <div className="mt-2 text-xs text-success">{msg[t._id]?.ok}</div>
             )}
           </div>
         ))}

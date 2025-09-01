@@ -101,7 +101,7 @@ export default function Announcements() {
             >
               {saving ? "Posting…" : "Post Announcement"}
             </button>
-            {error && <div className="text-red-500 text-sm">{error}</div>}
+            {error && <div className="text-error text-sm">{error}</div>}
           </div>
         </form>
       )}
@@ -109,7 +109,7 @@ export default function Announcements() {
       {loading ? (
         <div className="text-muted">Loading…</div>
       ) : error ? (
-        <div className="text-red-500">{error}</div>
+        <div className="text-error">{error}</div>
       ) : list.length === 0 ? (
         <div className="text-muted">No announcements</div>
       ) : (

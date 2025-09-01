@@ -57,43 +57,43 @@ export default function ResetPassword() {
   }
 
   return (
-    <div className="min-h-screen grid place-items-center bg-gray-50">
+    <div className="min-h-screen grid place-items-center bg-bg">
       {step === 'otp' ? (
-        <form onSubmit={verifyOtp} className="bg-white p-6 rounded-lg shadow w-full max-w-sm space-y-4">
+        <form onSubmit={verifyOtp} className="bg-surface p-6 rounded-lg border border-border shadow w-full max-w-sm space-y-4">
           <h1 className="text-xl font-semibold">Verify OTP</h1>
-          {ok && <div className="text-green-600 text-sm">{ok}</div>}
-          {err && <div className="text-red-600 text-sm">{err}</div>}
+          {ok && <div className="text-success text-sm">{ok}</div>}
+          {err && <div className="text-error text-sm">{err}</div>}
           <div className="space-y-1">
             <label className="text-sm">Work email</label>
-            <input value={email} onChange={e=>setEmail(e.target.value)} className="w-full border rounded px-3 h-10" type="email" required />
+            <input value={email} onChange={e=>setEmail(e.target.value)} className="w-full border border-border bg-bg rounded px-3 h-10 outline-none focus:ring-2 focus:ring-primary" type="email" required />
           </div>
           <div className="space-y-1">
             <label className="text-sm">OTP</label>
-            <input value={otp} onChange={e=>setOtp(e.target.value)} className="w-full border rounded px-3 h-10" type="text" inputMode="numeric" pattern="[0-9]{6}" placeholder="6-digit code" required />
+            <input value={otp} onChange={e=>setOtp(e.target.value)} className="w-full border border-border bg-bg rounded px-3 h-10 outline-none focus:ring-2 focus:ring-primary" type="text" inputMode="numeric" pattern="[0-9]{6}" placeholder="6-digit code" required />
           </div>
-          <button disabled={loading} className="w-full h-10 rounded bg-black text-white">{loading ? '...' : 'Verify'}</button>
+          <button disabled={loading} className="w-full h-10 rounded bg-primary text-white">{loading ? '...' : 'Verify'}</button>
           <div className="text-sm text-center">
-            <Link className="text-blue-600 hover:underline" to={`/forgot-password`}>Resend OTP</Link>
+            <Link className="text-primary hover:underline" to={`/forgot-password`}>Resend OTP</Link>
           </div>
-          <div className="text-xs text-center text-gray-500">
+          <div className="text-xs text-center text-muted">
             <Link to="/login" className="hover:underline">Back to login</Link>
           </div>
         </form>
       ) : (
-        <form onSubmit={setNewPassword} className="bg-white p-6 rounded-lg shadow w-full max-w-sm space-y-4">
+        <form onSubmit={setNewPassword} className="bg-surface p-6 rounded-lg border border-border shadow w-full max-w-sm space-y-4">
           <h1 className="text-xl font-semibold">Set new password</h1>
-          {ok && <div className="text-green-600 text-sm">{ok}</div>}
-          {err && <div className="text-red-600 text-sm">{err}</div>}
+          {ok && <div className="text-success text-sm">{ok}</div>}
+          {err && <div className="text-error text-sm">{err}</div>}
           <div className="space-y-1">
             <label className="text-sm">New password</label>
-            <input value={password} onChange={e=>setPassword(e.target.value)} className="w-full border rounded px-3 h-10" type="password" minLength={8} required />
+            <input value={password} onChange={e=>setPassword(e.target.value)} className="w-full border border-border bg-bg rounded px-3 h-10 outline-none focus:ring-2 focus:ring-primary" type="password" minLength={8} required />
           </div>
           <div className="space-y-1">
             <label className="text-sm">Confirm password</label>
-            <input value={confirm} onChange={e=>setConfirm(e.target.value)} className="w-full border rounded px-3 h-10" type="password" minLength={8} required />
+            <input value={confirm} onChange={e=>setConfirm(e.target.value)} className="w-full border border-border bg-bg rounded px-3 h-10 outline-none focus:ring-2 focus:ring-primary" type="password" minLength={8} required />
           </div>
-          <button disabled={loading} className="w-full h-10 rounded bg-black text-white">{loading ? '...' : 'Reset password'}</button>
-          <div className="text-xs text-center text-gray-500">
+          <button disabled={loading} className="w-full h-10 rounded bg-primary text-white">{loading ? '...' : 'Reset password'}</button>
+          <div className="text-xs text-center text-muted">
             <button type="button" onClick={() => setStep('otp')} className="hover:underline">Back to OTP</button>
           </div>
         </form>

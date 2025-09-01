@@ -34,7 +34,7 @@ export default function CompanyList() {
       <h2 className="text-2xl font-semibold">Company List</h2>
 
       {err && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
           {err}
         </div>
       )}
@@ -113,7 +113,7 @@ function Row({ company, onChange }: { company: Company; onChange: (v: Company[])
             <button
               onClick={approve}
               disabled={working}
-              className="inline-flex items-center h-8 px-3 rounded-md bg-green-600 text-white disabled:opacity-60"
+              className="inline-flex items-center h-8 px-3 rounded-md bg-success text-white disabled:opacity-60"
             >
               Approve
             </button>
@@ -135,9 +135,9 @@ function Row({ company, onChange }: { company: Company; onChange: (v: Company[])
 
 function StatusPill({ status }: { status: NonNullable<Company['status']> }) {
   const styles = {
-    approved: 'bg-green-100 text-green-700 border-green-200',
-    pending: 'bg-amber-100 text-amber-800 border-amber-200',
-    rejected: 'bg-red-100 text-red-700 border-red-200',
+    approved: 'bg-success/10 text-success border-success/20',
+    pending: 'bg-warning/10 text-warning border-warning/20',
+    rejected: 'bg-error/10 text-error border-error/20',
   } as const;
   return (
     <span className={`inline-flex items-center h-6 px-2 rounded-full text-xs border ${styles[status]}`}>

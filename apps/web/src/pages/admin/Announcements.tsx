@@ -107,7 +107,7 @@ export default function AnnouncementsAdmin() {
             >
               {saving ? "Posting…" : "Post Announcement"}
             </button>
-            {error && <div className="text-red-500 text-sm">{error}</div>}
+            {error && <div className="text-error text-sm">{error}</div>}
           </div>
         </form>
 
@@ -131,7 +131,7 @@ export default function AnnouncementsAdmin() {
                     </div>
                     <button
                       onClick={() => remove(a._id)}
-                      className="text-red-600 hover:underline text-sm"
+                      className="text-error hover:underline text-sm"
                     >
                       Delete
                     </button>

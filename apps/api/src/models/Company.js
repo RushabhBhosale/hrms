@@ -33,7 +33,16 @@ const CompanySchema = new mongoose.Schema(
         date: { type: Date, required: true },
         name: { type: String }
       }
-    ]
+    ],
+    // Optional company-wide color theme (hex codes)
+    theme: {
+      primary: { type: String },
+      secondary: { type: String },
+      accent: { type: String },
+      success: { type: String },
+      warning: { type: String },
+      error: { type: String },
+    }
   },
   { timestamps: true }
 );

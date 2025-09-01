@@ -234,24 +234,24 @@ export default function AttendanceRecords() {
   );
 
   function colorFor(ms?: number) {
-    if (!ms || ms <= 0) return "bg-gray-200";
+    if (!ms || ms <= 0) return "bg-border/60";
     const h = ms / 3600000;
-    if (h < 2) return "bg-red-300";
-    if (h < 4) return "bg-orange-400";
-    if (h < 6) return "bg-yellow-400";
-    if (h < 8) return "bg-lime-400";
-    return "bg-green-500";
+    if (h < 2) return "bg-error/50";
+    if (h < 4) return "bg-warning/60";
+    if (h < 6) return "bg-warning/40";
+    if (h < 8) return "bg-secondary/60";
+    return "bg-success/80";
   }
 
   const legend = [
-    { label: "0h", cls: "bg-gray-200" },
-    { label: "≤2h", cls: "bg-red-300" },
-    { label: "≤4h", cls: "bg-orange-400" },
-    { label: "≤6h", cls: "bg-yellow-400" },
-    { label: "≤8h", cls: "bg-lime-400" },
-    { label: "8h+", cls: "bg-green-500" },
-    { label: "Leave", cls: "bg-blue-300" },
-    { label: "Holiday", cls: "bg-purple-300" },
+    { label: "0h", cls: "bg-border/60" },
+    { label: "≤2h", cls: "bg-error/50" },
+    { label: "≤4h", cls: "bg-warning/60" },
+    { label: "≤6h", cls: "bg-warning/40" },
+    { label: "≤8h", cls: "bg-secondary/60" },
+    { label: "8h+", cls: "bg-success/80" },
+    { label: "Leave", cls: "bg-primary/30" },
+    { label: "Holiday", cls: "bg-accent/30" },
   ];
 
   // Month navigation
@@ -463,7 +463,7 @@ export default function AttendanceRecords() {
       {/* Heatmap */}
       <section className="rounded-lg border border-border bg-surface shadow-sm p-4">
         {err && (
-          <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+          <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
             {err}
           </div>
         )}
@@ -492,9 +492,9 @@ export default function AttendanceRecords() {
                     const isHoliday = holidaySet.has(key);
                     const color = inMonth
                       ? isHoliday
-                        ? "bg-purple-300"
+                        ? "bg-accent/30"
                         : isLeave
-                        ? "bg-blue-300"
+                        ? "bg-primary/30"
                         : colorFor(worked)
                       : "bg-bg";
                     const isToday = isSameDay(date, today);
@@ -563,12 +563,12 @@ export default function AttendanceRecords() {
                           </div>
                         )}
                         {!rec && isLeave && showLeaves && (
-                          <div className="mt-5 text-[11px] font-medium text-blue-700">
+                          <div className="mt-5 text-[11px] font-medium text-primary">
                             Leave
                           </div>
                         )}
                         {!rec && isHoliday && (
-                          <div className="mt-5 text-[11px] font-medium text-purple-700">
+                          <div className="mt-5 text-[11px] font-medium text-accent">
                             Holiday
                           </div>
                         )}
@@ -634,7 +634,7 @@ export default function AttendanceRecords() {
                 <div className="text-sm text-muted">Loading tasks…</div>
               )}
               {tasksErr && (
-                <div className="rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+                <div className="rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                   {tasksErr}
                 </div>
               )}

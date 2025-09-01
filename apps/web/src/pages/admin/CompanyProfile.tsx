@@ -1,5 +1,6 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
+import { applyTheme } from "../../lib/theme";
 
 export default function CompanyProfile() {
   const [name, setName] = useState("");
@@ -7,12 +8,24 @@ export default function CompanyProfile() {
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [theme, setTheme] = useState<{ [k: string]: string }>({
+    primary: "#2563eb",
+    secondary: "#10b981",
+    accent: "#f59e0b",
+    success: "#16a34a",
+    warning: "#f59e0b",
+    error: "#dc2626",
+  });
+  const [savingTheme, setSavingTheme] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get("/companies/profile");
         setName(res.data?.company?.name || "");
+        // Try to load theme
+        const t = await api.get("/companies/theme");
+        if (t?.data?.theme) setTheme((prev) => ({ ...prev, ...t.data.theme }));
       } catch (e: any) {
         // eslint-disable-next-line no-console
         console.warn(e?.response?.data?.error || e?.message || e);
@@ -49,12 +62,12 @@ export default function CompanyProfile() {
       </div>
 
       {err && (
-        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
       )}
       {ok && (
-        <div className="rounded-md border border-success/20 bg-green-50 px-4 py-2 text-sm text-success">
+        <div className="rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
           {ok}
         </div>
       )}
@@ -89,6 +102,63 @@ export default function CompanyProfile() {
           </div>
         </form>
       </section>
+
+      {/* Theme customization */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm">
+        <div className="border-b border-border px-6 py-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Theme Colors</h3>
+          <span className="text-xs text-muted">Company-specific</span>
+        </div>
+        <div className="px-6 py-5 space-y-5">
+          <div className="grid gap-6 md:grid-cols-3">
+            {(["primary", "secondary", "accent", "success", "warning", "error"] as const).map((key) => (
+              <div key={key} className="space-y-2">
+                <label className="text-sm font-medium capitalize">{key}</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={theme[key]}
+                    onChange={(e) => setTheme((t) => ({ ...t, [key]: e.target.value }))}
+                    className="h-10 w-16 rounded-md border border-border bg-surface cursor-pointer"
+                    aria-label={`${key} color`}
+                  />
+                  <input
+                    type="text"
+                    value={theme[key]}
+                    onChange={(e) => setTheme((t) => ({ ...t, [key]: e.target.value }))}
+                    className="flex-1 rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm"
+                    placeholder="#000000"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="pt-2 flex items-center gap-3">
+            <button
+              onClick={async () => {
+                setSavingTheme(true);
+                setOk(null); setErr(null);
+                try {
+                  const payload = Object.fromEntries(Object.entries(theme).filter(([_, v]) => typeof v === 'string' && v));
+                  await api.put('/companies/theme', payload);
+                  setOk('Theme updated');
+                  applyTheme(theme);
+                } catch (e: any) {
+                  setErr(e?.response?.data?.error || 'Failed to update theme');
+                } finally {
+                  setSavingTheme(false);
+                }
+              }}
+              disabled={savingTheme}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+            >
+              {savingTheme ? 'Saving…' : 'Save Theme'}
+            </button>
+            <span className="text-xs text-muted">Changes apply immediately in this session.</span>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -101,4 +171,3 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </div>
   );
 }
-

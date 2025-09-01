@@ -9,16 +9,16 @@ export default function LandingPage() {
             HRMS
           </Link>
           <nav className="hidden md:flex items-center gap-6 text-sm">
-            <a href="#features" className="hover:text-foreground">
+            <a href="#features" className="hover:text-text">
               Features
             </a>
-            <a href="#how-it-works" className="hover:text-foreground">
+            <a href="#how-it-works" className="hover:text-text">
               How it works
             </a>
-            <a href="#pricing" className="hover:text-foreground">
+            <a href="#pricing" className="hover:text-text">
               Pricing
             </a>
-            <a href="#faq" className="hover:text-foreground">
+            <a href="#faq" className="hover:text-text">
               FAQ
             </a>
           </nav>

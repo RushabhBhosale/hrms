@@ -65,12 +65,12 @@ export default function RegisterCompany() {
             </p>
 
             {error && (
-              <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <div className="mt-4 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                 {error}
               </div>
             )}
             {success && (
-              <div className="mt-4 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+              <div className="mt-4 rounded-md border border-success/20 bg-success/10 px-3 py-2 text-sm text-success">
                 {success}
               </div>
             )}

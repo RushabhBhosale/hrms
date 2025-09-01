@@ -3,21 +3,24 @@
 @tailwind utilities;
 
 :root {
-  /* Light theme */
-  --color-primary: #2563eb;
-  --color-secondary: #10b981;
-  --color-accent: #f59e0b;
+  /* Light theme - RGB tuples for opacity support */
+  --color-primary: 37 99 235;    /* #2563eb */
+  --color-secondary: 16 185 129; /* #10b981 */
+  --color-accent: 245 158 11;    /* #f59e0b */
+  --color-success: 22 163 74;    /* #16a34a */
+  --color-warning: 245 158 11;   /* #f59e0b */
+  --color-error: 220 38 38;      /* #dc2626 */
 
-  --color-bg: #f7f7fb; /* app background */
-  --color-surface: #ffffff; /* cards/sidebars */
-  --color-border: #e5e7eb;
-  --color-text: #111827;
-  --color-text-muted: #6b7280;
+  --color-bg: 247 247 251;       /* #f7f7fb app background */
+  --color-surface: 255 255 255;  /* #ffffff cards/sidebars */
+  --color-border: 229 231 235;   /* #e5e7eb */
+  --color-text: 17 24 39;        /* #111827 */
+  --color-text-muted: 107 114 128; /* #6b7280 */
 
   --sidebar-bg: var(--color-surface);
-  --sidebar-text: #374151;
-  --sidebar-text-active: #111827;
-  --sidebar-hover: #f3f4f6;
+  --sidebar-text: 55 65 81;          /* #374151 */
+  --sidebar-text-active: 17 24 39;   /* #111827 */
+  --sidebar-hover: 243 244 246;      /* #f3f4f6 */
 
   --radius-lg: 12px;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);

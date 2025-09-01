@@ -231,7 +231,7 @@ export default function EmployeeDetails() {
         </div>
         <button
           onClick={deleteEmployee}
-          className="h-9 px-3 rounded-md border border-error text-error hover:bg-red-50"
+          className="h-9 px-3 rounded-md border border-error text-error hover:bg-error/10"
         >
           Delete Employee
         </button>

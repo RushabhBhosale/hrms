@@ -100,12 +100,12 @@ export default function Profile() {
       </div>
 
       {err && (
-        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
       )}
       {ok && (
-        <div className="rounded-md border border-success/20 bg-green-50 px-4 py-2 text-sm text-success">
+        <div className="rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
           {ok}
         </div>
       )}
@@ -216,12 +216,12 @@ export default function Profile() {
           <h3 className="text-lg font-semibold">Change Password</h3>
         </div>
         {pwErr && (
-          <div className="mx-6 mt-4 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+          <div className="mx-6 mt-4 rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
             {pwErr}
           </div>
         )}
         {pwOk && (
-          <div className="mx-6 mt-4 rounded-md border border-success/20 bg-green-50 px-4 py-2 text-sm text-success">
+          <div className="mx-6 mt-4 rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
             {pwOk}
           </div>
         )}

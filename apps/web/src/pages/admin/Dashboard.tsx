@@ -164,7 +164,7 @@ export default function AdminDash() {
       </div>
 
       {err && (
-        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
       )}
@@ -243,7 +243,7 @@ export default function AdminDash() {
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
         <div className="mb-2 font-semibold">Utilities</div>
         {runErr && (
-          <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+          <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
             {runErr}
           </div>
         )}

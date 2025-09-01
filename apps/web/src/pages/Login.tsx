@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { api } from '../lib/api';
 import { setAuth } from '../lib/auth';
+import { applyTheme } from '../lib/theme';
 import { Link, useNavigate } from 'react-router-dom';
 
 export default function Login() {
@@ -17,6 +18,7 @@ export default function Login() {
     try {
       const res = await api.post('/auth/login', { email, password });
       setAuth(res.data.token, res.data.employee);
+      try { const t = await api.get('/companies/theme'); if (t?.data?.theme) applyTheme(t.data.theme); } catch {}
       const role = res.data.employee.primaryRole;
       if (role === 'SUPERADMIN') nav('/superadmin');
       else if (role === 'ADMIN') nav('/admin');
@@ -29,21 +31,21 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen grid place-items-center bg-gray-50">
-      <form onSubmit={onSubmit} className="bg-white p-6 rounded-lg shadow w-full max-w-sm space-y-4">
+    <div className="min-h-screen grid place-items-center bg-bg">
+      <form onSubmit={onSubmit} className="bg-surface p-6 rounded-lg border border-border shadow w-full max-w-sm space-y-4">
         <h1 className="text-xl font-semibold">Sign in</h1>
-        {err && <div className="text-red-600 text-sm">{err}</div>}
+        {err && <div className="text-error text-sm">{err}</div>}
         <div className="space-y-1">
           <label className="text-sm">Email</label>
-          <input value={email} onChange={e=>setEmail(e.target.value)} className="w-full border rounded px-3 h-10" type="email" />
+          <input value={email} onChange={e=>setEmail(e.target.value)} className="w-full border border-border bg-bg rounded px-3 h-10 outline-none focus:ring-2 focus:ring-primary" type="email" />
         </div>
         <div className="space-y-1">
           <label className="text-sm">Password</label>
-          <input value={password} onChange={e=>setPassword(e.target.value)} className="w-full border rounded px-3 h-10" type="password" />
+          <input value={password} onChange={e=>setPassword(e.target.value)} className="w-full border border-border bg-bg rounded px-3 h-10 outline-none focus:ring-2 focus:ring-primary" type="password" />
         </div>
-        <button disabled={loading} className="w-full h-10 rounded bg-black text-white">{loading ? '...' : 'Login'}</button>
+        <button disabled={loading} className="w-full h-10 rounded bg-primary text-white">{loading ? '...' : 'Login'}</button>
         <div className="text-right text-sm">
-          <Link className="text-blue-600 hover:underline" to="/forgot-password">Forgot password?</Link>
+          <Link className="text-primary hover:underline" to="/forgot-password">Forgot password?</Link>
         </div>
       </form>
     </div>

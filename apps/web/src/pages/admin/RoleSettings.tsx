@@ -64,7 +64,7 @@ export default function RoleSettings() {
         <p className="text-sm text-muted">Manage employee roles.</p>
       </div>
       {err && (
-        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
       )}

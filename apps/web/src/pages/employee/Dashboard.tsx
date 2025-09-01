@@ -633,7 +633,7 @@ export default function EmployeeDash() {
       </div>
 
       {err && (
-        <div className="rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
       )}
@@ -745,7 +745,7 @@ export default function EmployeeDash() {
         </div>
 
         {projErr && (
-          <div className="mt-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+          <div className="mt-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
             {projErr}
           </div>
         )}
@@ -791,7 +791,7 @@ export default function EmployeeDash() {
             </Link>
           </div>
           {tasksErr && (
-            <div className="mb-2 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-xs text-error">
+            <div className="mb-2 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">
               {tasksErr}
             </div>
           )}
@@ -854,7 +854,7 @@ export default function EmployeeDash() {
               </button>
             </div>
             {punchOutErr && (
-              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+              <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                 {punchOutErr}
               </div>
             )}
@@ -936,7 +936,7 @@ export default function EmployeeDash() {
 
             {/* Assigned tasks list */}
             {assignedErr && (
-              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+              <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                 {assignedErr}
               </div>
             )}
@@ -1061,7 +1061,7 @@ export default function EmployeeDash() {
               </button>
             </div>
             {backfillErr && (
-              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+              <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                 {backfillErr}
               </div>
             )}
@@ -1340,7 +1340,7 @@ export default function EmployeeDash() {
               </button>
             </div>
             {setOutErr && (
-              <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+              <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                 {setOutErr}
               </div>
             )}
@@ -1508,12 +1508,12 @@ function HRPanel() {
     <div className="p-4 rounded-lg border border-border bg-surface shadow-sm">
       <div className="mb-4 font-semibold">HR Panel</div>
       {err && (
-        <div className="mb-4 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+        <div className="mb-4 rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
       )}
       {runErr && (
-        <div className="mb-4 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+        <div className="mb-4 rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {runErr}
         </div>
       )}

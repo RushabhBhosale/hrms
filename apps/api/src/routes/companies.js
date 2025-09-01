@@ -11,6 +11,45 @@ const multer = require("multer");
 const path = require("path");
 const upload = multer({ dest: path.join(__dirname, "../../uploads") });
 
+// Utility: simple hex validation
+function isHexColor(v) {
+  return typeof v === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim());
+}
+
+// Admin/Employee: get company theme
+router.get("/theme", auth, async (req, res) => {
+  let company = null;
+  if (["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole)) {
+    company = await Company.findOne({ admin: req.employee.id }).select("theme");
+  } else if (req.employee.primaryRole === "EMPLOYEE") {
+    company = await Company.findById(req.employee.company).select("theme");
+  }
+  if (!company) return res.status(200).json({ theme: null });
+  return res.json({ theme: company.theme || null });
+});
+
+// Admin: update company theme
+router.put("/theme", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const allowed = ["primary", "secondary", "accent", "success", "warning", "error"];
+  const patch = {};
+  for (const k of allowed) {
+    const v = req.body?.[k];
+    if (v === undefined) continue;
+    if (v === null || v === "") continue; // ignore empty
+    if (!isHexColor(v)) return res.status(400).json({ error: `Invalid color for ${k}` });
+    patch[k] = v.trim();
+  }
+  company.theme = { ...(company.theme || {}), ...patch };
+  await company.save();
+  return res.json({ theme: company.theme });
+});
+
 // Admin: get basic company profile (name)
 router.get("/profile", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))

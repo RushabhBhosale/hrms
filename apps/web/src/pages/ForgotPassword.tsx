@@ -30,8 +30,8 @@ export default function ForgotPassword() {
     <div className="min-h-screen grid place-items-center bg-gray-50">
       <form onSubmit={onSubmit} className="bg-white p-6 rounded-lg shadow w-full max-w-sm space-y-4">
         <h1 className="text-xl font-semibold">Forgot password</h1>
-        {ok && <div className="text-green-600 text-sm">{ok}</div>}
-        {err && <div className="text-red-600 text-sm">{err}</div>}
+        {ok && <div className="text-success text-sm">{ok}</div>}
+        {err && <div className="text-error text-sm">{err}</div>}
         <div className="space-y-1">
           <label className="text-sm">Work email</label>
           <input
@@ -47,7 +47,7 @@ export default function ForgotPassword() {
           {loading ? '...' : 'Send OTP'}
         </button>
         <div className="text-sm text-center">
-          <Link className="text-blue-600 hover:underline" to="/reset-password">Have an OTP? Reset here</Link>
+          <Link className="text-primary hover:underline" to="/reset-password">Have an OTP? Reset here</Link>
         </div>
         <div className="text-xs text-center text-gray-500">
           <Link to="/login" className="hover:underline">Back to login</Link>
