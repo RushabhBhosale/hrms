@@ -39,8 +39,10 @@ function inferWorkedMs(r: AttRecord) {
 }
 function toISODateOnly(d: Date) {
   const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x.toISOString().slice(0, 10);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, "0");
+  const day = String(x.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -154,10 +156,12 @@ export default function AttendanceRecords() {
 
   // Monthly list removed from this page; see Report page
 
-  const filtered = useMemo(
-    () => rows.filter((r) => r.date.slice(0, 7) === month),
-    [rows, month]
-  );
+  const filtered = useMemo(() => {
+    return rows.filter((r) => {
+      const keyMonth = toISODateOnly(new Date(r.date)).slice(0, 7);
+      return keyMonth === month;
+    });
+  }, [rows, month]);
 
   const byDate = useMemo(() => {
     const m = new Map<string, AttRecord>();
@@ -217,6 +221,10 @@ export default function AttendanceRecords() {
       if ((summary?.bankHolidays || []).includes(key)) continue;
       if (!byDate.get(key)) s.add(key);
     }
+    // If there is any attendance record for a day, do not mark it as leave
+    for (const [key, rec] of byDate.entries()) {
+      if (rec) s.delete(key);
+    }
     return s;
   }, [summary, byDate, month]);
 
@@ -264,6 +272,18 @@ export default function AttendanceRecords() {
     )}`;
     setMonth(newMonth);
   }
+  async function refreshAll() {
+    if (!employeeId) return;
+    await load(employeeId);
+    try {
+      const res = await api.get(`/attendance/report/${employeeId}`, {
+        params: { month },
+      });
+      setSummary(res.data.report);
+    } catch {
+      /* ignore */
+    }
+  }
 
   function fmtMinutes(mins?: number) {
     if (!mins || mins <= 0) return "-";
@@ -274,6 +294,16 @@ export default function AttendanceRecords() {
 
   const weekHeaders = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const today = new Date();
+
+  // Auto-refresh when viewing the current month so recent punches reflect quickly
+  useEffect(() => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    if (!employeeId || month !== currentMonth) return;
+    const id = setInterval(() => {
+      refreshAll();
+    }, 60000); // every 60s
+    return () => clearInterval(id);
+  }, [employeeId, month]);
 
   // Admin: employee search & filtered list
   const filteredEmployees = useMemo(() => {
@@ -407,6 +437,12 @@ export default function AttendanceRecords() {
             className="rounded-md border border-border px-3 py-2"
           >
             Today
+          </button>
+          <button
+            onClick={refreshAll}
+            className="rounded-md border border-border px-3 py-2"
+          >
+            Refresh
           </button>
 
           {summary && (

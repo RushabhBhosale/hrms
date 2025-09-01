@@ -173,7 +173,8 @@ export default function EmployeeDash() {
     try {
       setMissingErr(null);
       setMissingLoading(true);
-      const ym = new Date().toISOString().slice(0, 7);
+      const now = new Date();
+      const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
       const res = await api.get("/attendance/missing-out", {
         params: { month: ym },
       });
@@ -187,7 +188,10 @@ export default function EmployeeDash() {
     }
   }
 
-  const todayKey = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayKey = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  }, []);
   const blockingMissingDays = useMemo(
     () => missingDays.filter((d) => d !== todayKey),
     [missingDays, todayKey]
@@ -229,9 +233,10 @@ export default function EmployeeDash() {
           minutes: t.minutes || 0,
         }))
       );
+      const now = new Date();
       setWorkedToday({
         minutes: Math.round(elapsed / 60000),
-        dateKey: new Date().toISOString().slice(0, 10),
+        dateKey: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
       });
       setProjects(
         (projectsRes.data.projects || []).map((p: any) => ({

@@ -14,6 +14,15 @@ function startOfDay(d) {
   return x;
 }
 
+// Build yyyy-mm-dd for server-local date
+function dateKeyLocal(d) {
+  const x = startOfDay(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, "0");
+  const day = String(x.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 router.post("/punch", auth, async (req, res) => {
   const { action } = req.body;
   if (!["in", "out"].includes(action))
@@ -236,31 +245,45 @@ router.get("/report/:employeeId?", auth, async (req, res) => {
 
   const bankHolidays = (company?.bankHolidays || [])
     .filter((h) => h.date >= start && h.date < end)
-    .map((h) => startOfDay(h.date).toISOString().slice(0, 10));
+    .map((h) => dateKeyLocal(h.date));
 
-  const leaves = await Leave.find({
-    employee: targetId,
-    status: "APPROVED",
-    startDate: { $lte: end },
-    endDate: { $gte: start },
-  });
+    const leaves = await Leave.find({
+      employee: targetId,
+      status: "APPROVED",
+      startDate: { $lte: end },
+      endDate: { $gte: start },
+    });
   const holidaySet = new Set(
     (company?.bankHolidays || []).map((h) => startOfDay(h.date).getTime())
   );
   const leaveDates = [];
-  for (const l of leaves) {
-    let s = l.startDate < start ? startOfDay(start) : startOfDay(l.startDate);
-    let e =
-      l.endDate > end
-        ? startOfDay(new Date(end.getTime() - 1))
-        : startOfDay(l.endDate);
-    for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-      const day = startOfDay(d).getTime();
-      if (!holidaySet.has(day)) {
-        leaveDates.push(new Date(day).toISOString().slice(0, 10));
+    // Pull attendance records for the window to exclude worked days from leaveDates
+    const attRecords = await Attendance.find({
+      employee: targetId,
+      date: { $gte: start, $lt: end },
+    })
+      .select("date firstPunchIn lastPunchOut workedMs")
+      .lean();
+    const attendanceKeySet = new Set(attRecords.map((r) => dateKeyLocal(r.date)));
+
+    for (const l of leaves) {
+      let s = l.startDate < start ? startOfDay(start) : startOfDay(l.startDate);
+      let e =
+        l.endDate > end
+          ? startOfDay(new Date(end.getTime() - 1))
+          : startOfDay(l.endDate);
+      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+        const dd = new Date(d);
+        const day = startOfDay(dd).getTime();
+        const key = dateKeyLocal(day);
+        // Skip company holidays and weekends; and exclude if attendance exists
+        const dow = dd.getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        if (holidaySet.has(day) || isWeekend) continue;
+        if (attendanceKeySet.has(key)) continue;
+        leaveDates.push(key);
       }
     }
-  }
 
   res.json({
     report: {
@@ -303,7 +326,7 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
     const bankHolidaySet = new Set(
       (company?.bankHolidays || [])
         .filter((h) => h.date >= start && h.date < end)
-        .map((h) => startOfDay(h.date).toISOString().slice(0, 10))
+        .map((h) => dateKeyLocal(h.date))
     );
 
     const leaves = await Leave.find({
@@ -318,8 +341,10 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
       const e =
         l.endDate > end ? new Date(end.getTime() - 1) : startOfDay(l.endDate);
       for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-        const key = startOfDay(d).toISOString().slice(0, 10);
-        if (!bankHolidaySet.has(key)) approvedLeaveSet.add(key);
+        const key = dateKeyLocal(d);
+        const dow = d.getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        if (!bankHolidaySet.has(key) && !isWeekend) approvedLeaveSet.add(key);
       }
     }
 
@@ -331,7 +356,7 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
 
     const byKey = new Map();
     for (const r of records) {
-      const key = new Date(r.date).toISOString().slice(0, 10);
+      const key = dateKeyLocal(r.date);
       byKey.set(key, r);
     }
 
@@ -339,7 +364,7 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
     let totalLeaveUnits = 0;
     const now = new Date();
     for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
-      const key = new Date(d).toISOString().slice(0, 10);
+      const key = dateKeyLocal(d);
       const rec = byKey.get(key);
       const dow = d.getDay();
       const isWeekend = dow === 0 || dow === 6;
@@ -371,15 +396,17 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
       if (inFuture) status = "";
       else if (isWeekend) status = "WEEKEND";
       else if (isHoliday) status = "HOLIDAY";
-      else if (!rec || timeSpentMs <= 0 || isApprovedLeave) status = "LEAVE";
+      else if (rec && timeSpentMs > 0) status = "WORKED";
+      else if (isApprovedLeave) status = "LEAVE";
+      else if (!rec || timeSpentMs <= 0) status = "LEAVE";
       else status = "WORKED";
 
-      // Leave units: exclude weekends/holidays; count 1 for no punches, 0.5 for half-day work
+      // Leave units: exclude weekends/holidays; count 1 for leave days, 0.5 for half-day work
       let leaveUnit = 0;
       if (!inFuture && !isWeekend && !isHoliday) {
-        if (!rec || timeSpentMs <= 0 || isApprovedLeave) {
+        if (status === "LEAVE") {
           leaveUnit = 1;
-        } else if (dayType === "HALF_DAY") {
+        } else if (status === "WORKED" && dayType === "HALF_DAY") {
           leaveUnit = 0.5;
         }
       }
@@ -446,7 +473,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
     const bankHolidaySet = new Set(
       (company?.bankHolidays || [])
         .filter((h) => h.date >= start && h.date < end)
-        .map((h) => startOfDay(h.date).toISOString().slice(0, 10))
+        .map((h) => dateKeyLocal(h.date))
     );
     const leaves = await Leave.find({
       employee: targetId,
@@ -460,7 +487,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       const e =
         l.endDate > end ? new Date(end.getTime() - 1) : startOfDay(l.endDate);
       for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-        const key = startOfDay(d).toISOString().slice(0, 10);
+        const key = dateKeyLocal(d);
         if (!bankHolidaySet.has(key)) approvedLeaveSet.add(key);
       }
     }
@@ -471,7 +498,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
     }).lean();
     const byKey = new Map();
     for (const r of records) {
-      const key = new Date(r.date).toISOString().slice(0, 10);
+      const key = dateKeyLocal(r.date);
       byKey.set(key, r);
     }
 
@@ -479,7 +506,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
     let totalLeaveUnits = 0;
     const now = new Date();
     for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
-      const key = new Date(d).toISOString().slice(0, 10);
+      const key = dateKeyLocal(d);
       const rec = byKey.get(key);
       const dow = d.getDay();
       const isWeekend = dow === 0 || dow === 6;
@@ -507,14 +534,17 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       if (inFuture) status = "";
       else if (isWeekend) status = "WEEKEND";
       else if (isHoliday) status = "HOLIDAY";
-      else if (!rec || timeSpentMs <= 0 || isApprovedLeave) status = "LEAVE";
+      // Consider actual worked time first; approved leave should not override presence of work
+      else if (rec && timeSpentMs > 0) status = "WORKED";
+      else if (isApprovedLeave) status = "LEAVE";
+      else if (!rec || timeSpentMs <= 0) status = "LEAVE";
       else status = "WORKED";
 
       let leaveUnit = 0;
       if (!inFuture && !isWeekend && !isHoliday) {
-        if (!rec || timeSpentMs <= 0 || isApprovedLeave) {
+        if (status === "LEAVE") {
           leaveUnit = 1;
-        } else if (dayType === "HALF_DAY") {
+        } else if (status === "WORKED" && dayType === "HALF_DAY") {
           leaveUnit = 0.5;
         }
       }
@@ -723,15 +753,30 @@ router.get("/company/report", auth, async (req, res) => {
       endDate: { $gte: start },
     });
 
+    // Attendance keys for this employee (exclude days with attendance from leave count)
+    const att = await Attendance.find({
+      employee: emp._id,
+      date: { $gte: start, $lt: end },
+    })
+      .select("date")
+      .lean();
+    const attSet = new Set(att.map((r) => dateKeyLocal(r.date)));
+
     let leaveDays = 0;
     for (const l of leaves) {
       const s = l.startDate < start ? start : new Date(l.startDate);
       const e = l.endDate > end ? end : new Date(l.endDate);
-      const total = Math.round((e - s) / 86400000) + 1;
-      const holidays = (company?.bankHolidays || []).filter(
-        (h) => h.date >= s && h.date <= e
-      ).length;
-      leaveDays += Math.max(total - holidays, 0);
+      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+        const key = dateKeyLocal(d);
+        const dow = d.getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        const isHoliday = (company?.bankHolidays || []).some(
+          (h) => dateKeyLocal(h.date) === key
+        );
+        if (isWeekend || isHoliday) continue;
+        if (attSet.has(key)) continue;
+        leaveDays += 1;
+      }
     }
 
     report.push({
