@@ -24,6 +24,7 @@ import SalaryTemplate from "./pages/admin/SalaryTemplate";
 import SalarySlipsAdmin from "./pages/admin/SalarySlips";
 import CompanyTiming from "./pages/admin/CompanyTiming";
 import AnnouncementsAdmin from "./pages/admin/Announcements";
+import CompanyProfile from "./pages/admin/CompanyProfile";
 import MyProjects from "./pages/projects/MyProjects";
 import ProjectDetails from "./pages/projects/ProjectDetails";
 import MyTasks from "./pages/tasks/MyTasks";
@@ -84,6 +85,7 @@ export default function App() {
         <Route path="attendances" element={<AttendanceRecords />} />
         <Route path="report" element={<MonthlyReport />} />
         <Route path="leave-settings" element={<LeaveSettings />} />
+        <Route path="company" element={<CompanyProfile />} />
         <Route path="company-timing" element={<CompanyTiming />} />
         <Route path="roles" element={<RoleSettings />} />
         <Route path="leaves" element={<LeaveRequests />} />

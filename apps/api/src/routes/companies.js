@@ -11,6 +11,35 @@ const multer = require("multer");
 const path = require("path");
 const upload = multer({ dest: path.join(__dirname, "../../uploads") });
 
+// Admin: get basic company profile (name)
+router.get("/profile", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const company = await Company.findOne({ admin: req.employee.id }).select("name");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  res.json({ company: { id: company._id, name: company.name } });
+});
+
+// Admin: update company name
+router.put("/profile", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const { name } = req.body || {};
+  if (typeof name !== "string" || !name.trim())
+    return res.status(400).json({ error: "Invalid company name" });
+
+  const trimmed = name.trim();
+  if (trimmed.length < 2 || trimmed.length > 120)
+    return res.status(400).json({ error: "Company name must be 2-120 characters" });
+
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  company.name = trimmed;
+  await company.save();
+  res.json({ company: { id: company._id, name: company.name } });
+});
+
 // Public: company self-registration (landing page submission)
 router.post("/register", async (req, res) => {
   try {

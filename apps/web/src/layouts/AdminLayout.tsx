@@ -34,6 +34,7 @@ export default function AdminLayout() {
     { to: "/admin/employees", label: "Employee List", icon: Users },
     { to: "/admin/projects", label: "Projects", icon: ClipboardList },
     { to: "/admin/announcements", label: "Announcements", icon: Megaphone },
+    { to: "/admin/company", label: "Company", icon: Settings },
     { to: "/admin/roles", label: "Roles", icon: UserCog },
     { to: "/admin/attendances", label: "Attendances", icon: CalendarCheck2 },
     { to: "/admin/report", label: "Report", icon: FileText },
@@ -53,6 +54,7 @@ export default function AdminLayout() {
     if (pathname.startsWith("/admin/roles")) return "Roles";
     if (pathname.startsWith("/admin/projects")) return "Projects";
     if (pathname.startsWith("/admin/announcements")) return "Announcements";
+    if (pathname.startsWith("/admin/company")) return "Company";
     if (pathname.startsWith("/admin/attendances")) return "Attendances";
     if (pathname.startsWith("/admin/leave-settings")) return "Leave Settings";
     if (pathname.startsWith("/admin/company-timing")) return "Company Timing";
