@@ -6,6 +6,7 @@ const Company = require("../models/Company");
 const Employee = require("../models/Employee");
 const Project = require("../models/Project");
 const Task = require("../models/Task");
+const CompanyDayOverride = require("../models/CompanyDayOverride");
 const SalarySlip = require("../models/SalarySlip");
 const multer = require("multer");
 const path = require("path");
@@ -14,6 +15,12 @@ const upload = multer({ dest: path.join(__dirname, "../../uploads") });
 // Utility: simple hex validation
 function isHexColor(v) {
   return typeof v === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim());
+}
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
 }
 
 // Admin/Employee: get company theme
@@ -453,6 +460,73 @@ router.post("/bank-holidays", auth, async (req, res) => {
     await company.save();
   }
   res.json({ bankHolidays: company.bankHolidays });
+});
+
+// Admin: list company day overrides for a month (or all upcoming)
+// GET /companies/day-overrides?month=yyyy-mm
+router.get("/day-overrides", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const { month } = req.query || {};
+  let filter = { company: company._id };
+  if (month) {
+    const start = startOfDay(new Date(month + "-01"));
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+    filter = { ...filter, date: { $gte: start, $lt: end } };
+  }
+
+  const overrides = await CompanyDayOverride.find(filter).sort({ date: 1 }).lean();
+  res.json({ overrides: overrides.map(o => ({
+    date: new Date(o.date).toISOString().slice(0,10),
+    type: o.type,
+    note: o.note || "",
+  })) });
+});
+
+// Admin: upsert a company day override
+// Body: { date: 'yyyy-mm-dd', type: 'WORKING'|'HOLIDAY'|'HALF_DAY', note? }
+router.post("/day-overrides", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { date, type, note } = req.body || {};
+  if (!date || !type) return res.status(400).json({ error: "Missing date or type" });
+  if (!['WORKING','HOLIDAY','HALF_DAY'].includes(type))
+    return res.status(400).json({ error: "Invalid type" });
+
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const day = startOfDay(new Date(date));
+  if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
+
+  await CompanyDayOverride.findOneAndUpdate(
+    { company: company._id, date: day },
+    { $setOnInsert: { company: company._id, date: day }, $set: { type, note: note || "", updatedBy: req.employee.id } },
+    { upsert: true }
+  );
+
+  const month = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}`;
+  const start = startOfDay(new Date(month + "-01"));
+  const end = new Date(start); end.setMonth(end.getMonth()+1);
+  const overrides = await CompanyDayOverride.find({ company: company._id, date: { $gte: start, $lt: end } }).sort({ date: 1 }).lean();
+  res.json({ overrides: overrides.map(o => ({ date: new Date(o.date).toISOString().slice(0,10), type: o.type, note: o.note || "" })) });
+});
+
+// Admin: delete a company day override by date
+router.delete("/day-overrides/:date", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { date } = req.params;
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  const day = startOfDay(new Date(date));
+  if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
+  await CompanyDayOverride.deleteOne({ company: company._id, date: day });
+  res.json({ ok: true });
 });
 
 // Admin: update reporting person of an employee

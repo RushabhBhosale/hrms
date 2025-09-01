@@ -3,6 +3,7 @@ const Leave = require("../models/Leave");
 const Employee = require("../models/Employee");
 const Company = require("../models/Company");
 const { auth } = require("../middleware/auth");
+const CompanyDayOverride = require("../models/CompanyDayOverride");
 const { requirePrimary } = require("../middleware/roles");
 const { syncLeaveBalances } = require("../utils/leaveBalances");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
@@ -149,9 +150,21 @@ router.post("/:id/approve", auth, async (req, res) => {
   const start = new Date(leave.startDate);
   const end = new Date(leave.endDate);
   const total = Math.round((end - start) / 86400000) + 1;
-  const holidays = (company?.bankHolidays || []).filter(
-    (h) => h.date >= start && h.date <= end
-  ).length;
+  // Build effective holiday set: bank holidays +/- company overrides
+  const bankHolidayKeys = new Set(
+    (company?.bankHolidays || [])
+      .filter((h) => h.date >= start && h.date <= end)
+      .map((h) => new Date(h.date).toISOString().slice(0,10))
+  );
+  const overrides = await CompanyDayOverride.find({ company: leave.company, date: { $gte: start, $lte: end } })
+    .select('date type')
+    .lean();
+  for (const o of overrides) {
+    const key = new Date(o.date).toISOString().slice(0,10);
+    if (o.type === 'WORKING') bankHolidayKeys.delete(key);
+    if (o.type === 'HOLIDAY') bankHolidayKeys.add(key);
+  }
+  const holidays = bankHolidayKeys.size;
   const days = Math.max(total - holidays, 0);
   const key = leave.type.toLowerCase();
   const remaining = employee.leaveBalances?.[key] || 0;
