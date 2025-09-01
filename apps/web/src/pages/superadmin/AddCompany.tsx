@@ -128,7 +128,7 @@ export default function AddCompany() {
               label="Company Name"
               value={companyName}
               onChange={setCompanyName}
-              placeholder="Acme Corp"
+              placeholder="Peracto Corp"
             />
             <div className="grid gap-4 md:grid-cols-2">
               <Field
@@ -142,7 +142,7 @@ export default function AddCompany() {
                 type="email"
                 value={adminEmail}
                 onChange={setAdminEmail}
-                placeholder="jane@acme.com"
+                placeholder="jane@Peracto.com"
               />
             </div>
             <Field
@@ -207,7 +207,7 @@ export default function AddCompany() {
                 type="email"
                 value={newAdminEmail}
                 onChange={setNewAdminEmail}
-                placeholder="john@acme.com"
+                placeholder="john@Peracto.com"
               />
             </div>
             <Field

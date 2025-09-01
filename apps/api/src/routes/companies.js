@@ -8,6 +8,44 @@ const multer = require("multer");
 const path = require("path");
 const upload = multer({ dest: path.join(__dirname, "../../uploads") });
 
+// Public: company self-registration (landing page submission)
+router.post("/register", async (req, res) => {
+  try {
+    const { companyName, adminName, adminEmail, adminPassword } = req.body || {};
+    if (!companyName || !adminName || !adminEmail || !adminPassword) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
+
+    const existingAdmin = await Employee.findOne({ email: adminEmail });
+    if (existingAdmin) {
+      return res
+        .status(400)
+        .json({ error: "An account with this email already exists" });
+    }
+
+    const passwordHash = await bcrypt.hash(adminPassword, 10);
+
+    const company = await Company.create({
+      name: companyName.trim(),
+      status: "pending",
+      requestedAdmin: {
+        name: adminName.trim(),
+        email: adminEmail.trim(),
+        passwordHash,
+        requestedAt: new Date(),
+      },
+    });
+
+    return res.json({
+      message: "Registration submitted. Awaiting superadmin approval.",
+      companyId: company._id,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Failed to submit registration" });
+  }
+});
+
 // Create company with an admin employee
 router.post("/", auth, async (req, res) => {
   if (req.employee.primaryRole !== "SUPERADMIN")
@@ -44,7 +82,13 @@ router.post("/", auth, async (req, res) => {
 router.get("/", auth, async (req, res) => {
   if (req.employee.primaryRole !== "SUPERADMIN")
     return res.status(403).json({ error: "Forbidden" });
-  const companies = await Company.find().populate("admin", "name email");
+  const docs = await Company.find().populate("admin", "name email");
+  // Hide sensitive requestedAdmin.passwordHash from API response
+  const companies = docs.map((c) => {
+    const obj = c.toObject({ virtuals: false });
+    if (obj.requestedAdmin) delete obj.requestedAdmin.passwordHash;
+    return obj;
+  });
   res.json({ companies });
 });
 
@@ -75,6 +119,54 @@ router.post("/:companyId/admin", auth, async (req, res) => {
   await company.save();
   const populated = await company.populate("admin", "name email");
   res.json({ company: populated });
+});
+
+// Superadmin: approve a pending company registration
+router.post("/:companyId/approve", auth, async (req, res) => {
+  if (req.employee.primaryRole !== "SUPERADMIN")
+    return res.status(403).json({ error: "Forbidden" });
+  const company = await Company.findById(req.params.companyId);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+  if (company.status !== "pending")
+    return res.status(400).json({ error: "Company is not pending" });
+  if (!company.requestedAdmin || !company.requestedAdmin.email)
+    return res.status(400).json({ error: "No requested admin details found" });
+
+  let existing = await Employee.findOne({ email: company.requestedAdmin.email });
+  if (existing)
+    return res
+      .status(400)
+      .json({ error: "Admin email already exists. Cannot approve." });
+
+  const admin = await Employee.create({
+    name: company.requestedAdmin.name,
+    email: company.requestedAdmin.email,
+    passwordHash: company.requestedAdmin.passwordHash,
+    primaryRole: "ADMIN",
+    subRoles: [],
+    company: company._id,
+  });
+
+  company.admin = admin._id;
+  company.status = "approved";
+  company.requestedAdmin = undefined;
+  await company.save();
+
+  const populated = await company.populate("admin", "name email");
+  res.json({ company: populated });
+});
+
+// Superadmin: reject a pending company registration
+router.post("/:companyId/reject", auth, async (req, res) => {
+  if (req.employee.primaryRole !== "SUPERADMIN")
+    return res.status(403).json({ error: "Forbidden" });
+  const company = await Company.findById(req.params.companyId);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+  if (company.status !== "pending")
+    return res.status(400).json({ error: "Company is not pending" });
+  company.status = "rejected";
+  await company.save();
+  res.json({ company });
 });
 
 // Admin: list roles in their company

@@ -29,7 +29,9 @@ export default function AddEmployee() {
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
+    []
+  );
   const [roles, setRoles] = useState<string[]>([]);
 
   const canSubmit = useMemo(() => {
@@ -143,7 +145,7 @@ export default function AddEmployee() {
               <input
                 type="email"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                placeholder="jane@acme.com"
+                placeholder="jane@Peracto.com"
                 value={form.email}
                 onChange={(e) => onChange("email", e.target.value)}
               />
@@ -219,7 +221,6 @@ export default function AddEmployee() {
               />
             </Field>
           </div>
-
 
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Date of Birth">

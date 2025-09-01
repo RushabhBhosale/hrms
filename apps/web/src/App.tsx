@@ -1,43 +1,47 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
-import Login from './pages/Login';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
-import Profile from './pages/Profile';
-import Protected from './components/Protected';
-import RoleGuard from './components/RoleGuard';
-import SuperAdminLayout from './layouts/SuperAdminLayout';
-import AdminLayout from './layouts/AdminLayout';
-import EmployeeLayout from './layouts/EmployeeLayout';
-import SADash from './pages/superadmin/Dashboard';
-import CompanyList from './pages/superadmin/CompanyList';
-import AddCompany from './pages/superadmin/AddCompany';
+import { Routes, Route, Navigate } from "react-router-dom";
+import Login from "./pages/Login";
+import RegisterCompany from "./pages/RegisterCompany";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
+import Profile from "./pages/Profile";
+import Protected from "./components/Protected";
+import RoleGuard from "./components/RoleGuard";
+import SuperAdminLayout from "./layouts/SuperAdminLayout";
+import AdminLayout from "./layouts/AdminLayout";
+import EmployeeLayout from "./layouts/EmployeeLayout";
+import SADash from "./pages/superadmin/Dashboard";
+import CompanyList from "./pages/superadmin/CompanyList";
+import AddCompany from "./pages/superadmin/AddCompany";
 
-import AdminDash from './pages/admin/Dashboard';
-import AddEmployee from './pages/admin/AddEmployee';
-import EmployeeList from './pages/admin/EmployeeList';
-import LeaveRequests from './pages/admin/LeaveRequests';
-import LeaveSettings from './pages/admin/LeaveSettings';
-import RoleSettings from './pages/admin/RoleSettings';
-import ProjectsAdmin from './pages/admin/Projects';
-import SalaryTemplate from './pages/admin/SalaryTemplate';
-import SalarySlipsAdmin from './pages/admin/SalarySlips';
-import MyProjects from './pages/projects/MyProjects';
-import ProjectDetails from './pages/projects/ProjectDetails';
-import MyTasks from './pages/tasks/MyTasks';
+import AdminDash from "./pages/admin/Dashboard";
+import AddEmployee from "./pages/admin/AddEmployee";
+import EmployeeList from "./pages/admin/EmployeeList";
+import LeaveRequests from "./pages/admin/LeaveRequests";
+import LeaveSettings from "./pages/admin/LeaveSettings";
+import RoleSettings from "./pages/admin/RoleSettings";
+import ProjectsAdmin from "./pages/admin/Projects";
+import SalaryTemplate from "./pages/admin/SalaryTemplate";
+import SalarySlipsAdmin from "./pages/admin/SalarySlips";
+import MyProjects from "./pages/projects/MyProjects";
+import ProjectDetails from "./pages/projects/ProjectDetails";
+import MyTasks from "./pages/tasks/MyTasks";
 
-import EmployeeDash from './pages/employee/Dashboard';
-import AttendanceRecords from './pages/employee/AttendanceRecords';
-import LeaveRequest from './pages/employee/LeaveRequest';
-import Documents from './pages/employee/Documents';
-import LeaveApprovals from './pages/employee/LeaveApprovals';
-import MySalarySlip from './pages/employee/SalarySlip';
-import SalariesManage from './pages/employee/SalariesManage';
-import EmployeeDetails from './pages/admin/EmployeeDetails';
-import MonthlyReport from './pages/report/MonthlyReport';
+import EmployeeDash from "./pages/employee/Dashboard";
+import AttendanceRecords from "./pages/employee/AttendanceRecords";
+import LeaveRequest from "./pages/employee/LeaveRequest";
+import Documents from "./pages/employee/Documents";
+import LeaveApprovals from "./pages/employee/LeaveApprovals";
+import MySalarySlip from "./pages/employee/SalarySlip";
+import SalariesManage from "./pages/employee/SalariesManage";
+import EmployeeDetails from "./pages/admin/EmployeeDetails";
+import MonthlyReport from "./pages/report/MonthlyReport";
+import LandingPage from "./pages/LandingPage";
 
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/register-company" element={<RegisterCompany />} />
       <Route path="/login" element={<Login />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
@@ -99,7 +103,7 @@ export default function App() {
         <Route
           path="attendances"
           element={
-          <RoleGuard sub={["hr", "manager"]}>
+            <RoleGuard sub={["hr", "manager"]}>
               <AttendanceRecords />
             </RoleGuard>
           }
