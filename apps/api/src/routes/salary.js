@@ -18,12 +18,14 @@ function monthValid(m) {
 const BASIC_KEY = 'basic_earned';
 const HRA_KEY = 'hra';
 const MEDICAL_KEY = 'medical';
+const OTHER_KEY = 'other_allowances';
 
 function defaultLockedFields() {
   return [
     { key: BASIC_KEY, label: 'Basic Earned', type: 'number', required: true, locked: true, category: 'earning', order: 0 },
     { key: HRA_KEY, label: 'HRA', type: 'number', required: true, locked: true, category: 'earning', order: 1 },
     { key: MEDICAL_KEY, label: 'Medical', type: 'number', required: false, locked: true, category: 'earning', order: 2 },
+    { key: OTHER_KEY, label: 'Other Allowances', type: 'number', required: false, locked: true, category: 'earning', order: 3 },
   ];
 }
 
@@ -127,12 +129,15 @@ function computeLockedValues({ template, employee }) {
   const basic = round2((ctc * s.basicPercent) / 100);
   const hra = round2((basic * s.hraPercent) / 100);
   const medical = round2(s.medicalAmount);
-  return { [BASIC_KEY]: basic, [HRA_KEY]: hra, [MEDICAL_KEY]: medical };
+  // Other allowances = remainder from CTC after the first three
+  const remainder = round2(ctc - (basic + hra + medical));
+  const other = remainder < 0 ? 0 : remainder;
+  return { [BASIC_KEY]: basic, [HRA_KEY]: hra, [MEDICAL_KEY]: medical, [OTHER_KEY]: other };
 }
 
 function overlayLocked(values, lockedVals) {
   const out = { ...(values || {}) };
-  for (const k of [BASIC_KEY, HRA_KEY, MEDICAL_KEY]) out[k] = lockedVals[k];
+  for (const k of [BASIC_KEY, HRA_KEY, MEDICAL_KEY, OTHER_KEY]) out[k] = lockedVals[k];
   return out;
 }
 
