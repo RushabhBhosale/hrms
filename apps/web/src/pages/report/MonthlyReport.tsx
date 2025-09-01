@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
+import { formatMinutesLabel } from "../../lib/time";
 import { getEmployee } from "../../lib/auth";
 
 type MonthlyDay = {
@@ -238,8 +239,16 @@ export default function MonthlyReport() {
                       <td className="px-3 py-2">
                         {statusLabel ? fmtDur(d.timeSpentMs) : ""}
                       </td>
-                      <td className="px-3 py-2">{typeof d.lateMinutes === 'number' ? `${d.lateMinutes}m` : ''}</td>
-                      <td className="px-3 py-2">{typeof d.overtimeMinutes === 'number' ? `${d.overtimeMinutes}m` : ''}</td>
+                      <td className="px-3 py-2">
+                        {typeof d.lateMinutes === 'number'
+                          ? formatMinutesLabel(d.lateMinutes, { minUnit: 'm', hourUnit: 'hrs' })
+                          : ''}
+                      </td>
+                      <td className="px-3 py-2">
+                        {typeof d.overtimeMinutes === 'number'
+                          ? formatMinutesLabel(d.overtimeMinutes, { minUnit: 'm', hourUnit: 'hrs' })
+                          : ''}
+                      </td>
                       <td className="px-3 py-2">{statusLabel}</td>
                       {canEditOverrides && (
                         <td className="px-3 py-2">

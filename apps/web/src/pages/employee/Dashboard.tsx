@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
+import { formatMinutesLabel } from "../../lib/time";
 import RoleGuard from "../../components/RoleGuard";
 import { getEmployee } from "../../lib/auth";
 
@@ -860,9 +861,10 @@ export default function EmployeeDash() {
             <div className="text-xs text-muted mb-3">
               {workedToday ? (
                 <>
-                  Total today: {Math.round(elapsed / 60000)} mins • Logged:{" "}
-                  {workedTasksToday.reduce((a, b) => a + b.minutes, 0)} mins •
-                  Remaining: {remainingMinutes} mins
+                  Total today: {formatMinutesLabel(Math.round(elapsed / 60000))} • Logged:{" "}
+                  {formatMinutesLabel(
+                    workedTasksToday.reduce((a, b) => a + b.minutes, 0)
+                  )} • Remaining: {formatMinutesLabel(remainingMinutes)}
                 </>
               ) : (
                 <>Today: {new Date().toLocaleDateString()}</>
@@ -1117,27 +1119,24 @@ export default function EmployeeDash() {
             <div className="text-xs text-muted mb-3">
               {backfillAttendance ? (
                 <>
-                  Total worked:{" "}
-                  {Math.max(
-                    0,
-                    Math.floor((backfillAttendance.workedMs || 0) / 60000)
-                  )}{" "}
-                  mins • Logged:{" "}
-                  {workedTasksForDay.reduce((a, b) => a + b.minutes, 0)} mins •
-                  Remaining:{" "}
                   {(() => {
                     const worked = Math.max(
                       0,
                       Math.floor((backfillAttendance.workedMs || 0) / 60000)
                     );
-                    const cap = Math.max(0, worked - 60);
                     const already = workedTasksForDay.reduce(
                       (acc, t) => acc + (t.minutes || 0),
                       0
                     );
-                    return Math.max(0, cap - already);
-                  })()}{" "}
-                  mins
+                    const cap = Math.max(0, worked - 60);
+                    const remaining = Math.max(0, cap - already);
+                    return (
+                      <>
+                        Total worked: {formatMinutesLabel(worked)} • Logged:{" "}
+                        {formatMinutesLabel(already)} • Remaining: {formatMinutesLabel(remaining)}
+                      </>
+                    );
+                  })()}
                 </>
               ) : (
                 <>Set punch-out time first to unlock task logging.</>
