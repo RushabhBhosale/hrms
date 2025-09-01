@@ -17,6 +17,7 @@ export default function SalarySlipsAdmin() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   // load employees and template
   useEffect(() => {
@@ -79,6 +80,22 @@ export default function SalarySlipsAdmin() {
     }
   }
 
+  async function downloadPdf() {
+    try {
+      setDownloading(true);
+      const res = await api.get(`/salary/slips/pdf`, { params: { employeeId, month }, responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const emp = employees.find((e) => e.id === employeeId);
+      const namePart = emp ? emp.name.replace(/[^a-z0-9\-_.]+/gi, '_') : employeeId;
+      await downloadFileBlob(blob, `SalarySlip-${namePart}-${month}.pdf`);
+    } catch (e) {
+      console.error(e);
+      alert('Failed to download PDF');
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   const requiredMissing = useMemo(() => {
     return (template || [])
       .filter((f) => f.required)
@@ -115,6 +132,16 @@ export default function SalarySlipsAdmin() {
             className="w-full rounded-md border border-border bg-surface px-3 py-2"
           />
         </div>
+      </div>
+
+      <div>
+        <button
+          onClick={downloadPdf}
+          disabled={!employeeId || !month || downloading}
+          className="rounded-md bg-primary px-4 py-2 text-white disabled:opacity-50"
+        >
+          {downloading ? 'Preparing…' : 'Download PDF'}
+        </button>
       </div>
 
       {err && <div className="text-error text-sm">{err}</div>}
@@ -176,3 +203,13 @@ function InputByType({ field, value, onChange }: { field: Field; value: any; onC
   );
 }
 
+async function downloadFileBlob(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => window.URL.revokeObjectURL(url), 0);
+}
