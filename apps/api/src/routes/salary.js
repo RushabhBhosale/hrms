@@ -141,6 +141,22 @@ function overlayLocked(values, lockedVals) {
   return out;
 }
 
+// Overlay template defaults for non-locked fields where value is missing
+function overlayDefaults(template, values) {
+  const out = { ...(values || {}) };
+  const fields = (template?.fields || []);
+  for (const f of fields) {
+    if (f && !f.locked) {
+      const hasVal = out[f.key] !== undefined && out[f.key] !== null && out[f.key] !== '';
+      const hasDefault = f.defaultValue !== undefined && f.defaultValue !== null && f.defaultValue !== '';
+      if (!hasVal && hasDefault) {
+        out[f.key] = f.type === 'number' ? numberOrZero(f.defaultValue) : f.defaultValue;
+      }
+    }
+  }
+  return out;
+}
+
 // Get salary slip for an employee + month (self or hr/manager/admin)
 router.get('/slips', auth, async (req, res) => {
   try {
@@ -163,7 +179,7 @@ router.get('/slips', auth, async (req, res) => {
     const template = ensureTemplateDefaults(tpl || { company: companyId, fields: [] });
     const rawVals = slip?.values || {};
     const lockedVals = computeLockedValues({ template, employee });
-    const values = overlayLocked(rawVals instanceof Map ? Object.fromEntries(rawVals) : rawVals, lockedVals);
+    const values = overlayDefaults(template, overlayLocked(rawVals instanceof Map ? Object.fromEntries(rawVals) : rawVals, lockedVals));
 
     res.json({ template, slip: slip ? { ...slip, values } : { employee: employeeId, company: companyId, month, values } });
   } catch (e) {
@@ -187,7 +203,7 @@ router.get('/slips/mine', auth, async (req, res) => {
     const template = ensureTemplateDefaults(tpl || { company: companyId, fields: [] });
     const rawVals = slip?.values || {};
     const lockedVals = computeLockedValues({ template, employee });
-    const values = overlayLocked(rawVals instanceof Map ? Object.fromEntries(rawVals) : rawVals, lockedVals);
+    const values = overlayDefaults(template, overlayLocked(rawVals instanceof Map ? Object.fromEntries(rawVals) : rawVals, lockedVals));
     res.json({ template, slip: slip ? { ...slip, values } : { employee: employeeId, company: companyId, month, values } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to load slip' });
@@ -218,16 +234,22 @@ router.post(
       const tpl = await SalaryTemplate.findOne({ company: companyId }).lean();
       const template = ensureTemplateDefaults(tpl || {});
       // Only allow non-locked fields to be set by user
-      const allowedKeys = new Set((template?.fields || []).filter((f) => !f.locked).map((f) => f.key));
+      const nonLockedFields = (template?.fields || []).filter((f) => !f.locked);
+      const allowedKeys = new Set(nonLockedFields.map((f) => f.key));
+      const typeByKey = new Map(nonLockedFields.map((f) => [f.key, f.type]));
 
-      // sanitize values to template keys only
+      // sanitize values to template keys only and coerce number types
       const sanitized = {};
       for (const k of Object.keys(values || {})) {
-        if (allowedKeys.has(k)) sanitized[k] = values[k];
+        if (allowedKeys.has(k)) {
+          const t = typeByKey.get(k);
+          const v = values[k];
+          sanitized[k] = t === 'number' ? (v === '' || v === null || v === undefined ? '' : Number(v)) : v;
+        }
       }
 
-      // Optionally enforce required fields
-      const missing = (tpl?.fields || [])
+      // Optionally enforce required fields (non-locked only)
+      const missing = nonLockedFields
         .filter((f) => f.required)
         .filter((f) => sanitized[f.key] === undefined || sanitized[f.key] === null || sanitized[f.key] === '')
         .map((f) => f.key);
@@ -242,7 +264,7 @@ router.post(
       // Return with computed fields overlaid
       const employeeFull = await Employee.findById(employeeId).select('ctc');
       const lockedVals = computeLockedValues({ template, employee: employeeFull });
-      const valuesOut = overlayLocked(slip.values instanceof Map ? Object.fromEntries(slip.values) : (slip.values || {}), lockedVals);
+      const valuesOut = overlayDefaults(template, overlayLocked(slip.values instanceof Map ? Object.fromEntries(slip.values) : (slip.values || {}), lockedVals));
       res.json({ slip: { ...slip.toObject(), values: valuesOut } });
     } catch (e) {
       if (e && e.code === 11000) {
@@ -500,7 +522,7 @@ router.get('/slips/pdf', auth, async (req, res) => {
     const entries = raw instanceof Map ? Array.from(raw.entries()) : Object.entries(raw);
     for (const [k, v] of entries) valuesObj[k] = v;
     const lockedVals = computeLockedValues({ template, employee });
-    const finalVals = overlayLocked(valuesObj, lockedVals);
+    const finalVals = overlayDefaults(template, overlayLocked(valuesObj, lockedVals));
 
     await renderSlipPDF({ res, company, employee, month, template, slipValues: finalVals });
   } catch (e) {
@@ -530,7 +552,7 @@ router.get('/slips/mine/pdf', auth, async (req, res) => {
     const entries = raw instanceof Map ? Array.from(raw.entries()) : Object.entries(raw);
     for (const [k, v] of entries) valuesObj[k] = v;
     const lockedVals = computeLockedValues({ template, employee: await Employee.findById(employeeId).select('ctc') });
-    const finalVals = overlayLocked(valuesObj, lockedVals);
+    const finalVals = overlayDefaults(template, overlayLocked(valuesObj, lockedVals));
 
     await renderSlipPDF({ res, company, employee, month, template, slipValues: finalVals });
   } catch (e) {

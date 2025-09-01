@@ -75,12 +75,12 @@ export default function MySalarySlip() {
       (f) => f.category !== "earning" && f.category !== "deduction"
     );
 
+    const toNum = (v: any) => {
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
     const sum = (list: Field[]) =>
-      list.reduce(
-        (acc, f) =>
-          acc + (typeof values[f.key] === "number" ? Number(values[f.key]) : 0),
-        0
-      );
+      list.reduce((acc, f) => acc + toNum(values[f.key]), 0);
     const totalEarnings = sum(earnings);
     const totalDeductions = sum(deductions);
     const netPay = totalEarnings - totalDeductions;

@@ -69,6 +69,12 @@ export default function SalarySlipsAdmin() {
       setErr(null);
       setOk(null);
       await api.post("/salary/slips", { employeeId, month, values });
+      // Reload from server to reflect persisted values and computations
+      const res = await api.get(`/salary/slips`, { params: { employeeId, month } });
+      const tpl: Field[] = (res.data.template?.fields || []) as Field[];
+      setTemplate(tpl);
+      const v = res.data.slip?.values || {};
+      setValues({ ...Object.fromEntries(Object.entries(v)) });
       setOk("Saved");
     } catch (e: any) {
       const msg = e?.response?.data?.missing?.length
