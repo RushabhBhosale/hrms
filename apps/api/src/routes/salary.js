@@ -301,7 +301,8 @@ async function renderSlipPDF({ res, company, employee, month, template, slipValu
   const margin = doc.page.margins.left;
   const contentWidth = pageWidth - margin * 2;
 
-  const fmtAmount = (n) => `₹${numberOrZero(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Use plain numbers to avoid glyph issues with the Rupee symbol in built-in PDF fonts
+  const fmtAmount = (n) => `${numberOrZero(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const monthStr = (() => {
     const [y, m] = month.split('-').map((x) => parseInt(x, 10));
     const d = new Date(y, m - 1, 1);
