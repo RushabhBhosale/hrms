@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { api } from "../../lib/api";
+import ProjectTime from "../report/ProjectTime";
 import { Users, UserCheck } from "lucide-react";
 
 type EmployeeLite = { id: string; name: string; email: string; subRoles: string[] };
@@ -162,6 +163,11 @@ export default function AdminDash() {
           Overview of company workforce and attendance today.
         </p>
       </div>
+
+      {/* Project time analytics at top */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
+        <ProjectTime />
+      </section>
 
       {err && (
         <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
