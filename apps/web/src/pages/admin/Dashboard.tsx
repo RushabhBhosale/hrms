@@ -43,6 +43,10 @@ export default function AdminDash() {
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [runLoading, setRunLoading] = useState(false);
+  const [runErr, setRunErr] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<{ candidates: number; closed: number } | null>(null);
+  const [lastRunAt, setLastRunAt] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -234,6 +238,45 @@ export default function AdminDash() {
           tone="secondary"
         />
       </div>
+
+      {/* Utilities */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
+        <div className="mb-2 font-semibold">Utilities</div>
+        {runErr && (
+          <div className="mb-3 rounded-md border border-error/20 bg-red-50 px-3 py-2 text-sm text-error">
+            {runErr}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="rounded-md bg-secondary px-3 py-2 text-white disabled:opacity-60"
+            onClick={async () => {
+              if (runLoading) return;
+              setRunErr(null);
+              setRunResult(null);
+              try {
+                setRunLoading(true);
+                const res = await api.post("/attendance/admin/auto-punchout/run");
+                setRunResult(res.data?.result || null);
+                setLastRunAt(new Date().toLocaleString());
+              } catch (e: any) {
+                setRunErr(e?.response?.data?.error || "Failed to run auto punch-out");
+              } finally {
+                setRunLoading(false);
+              }
+            }}
+            disabled={runLoading}
+          >
+            {runLoading ? "Running…" : "Run Auto Punch-out"}
+          </button>
+          {runResult && (
+            <div className="text-sm text-muted">
+              Closed {runResult.closed} of {runResult.candidates} candidates
+              {lastRunAt ? ` • ${lastRunAt}` : ""}
+            </div>
+          )}
+        </div>
+      </section>
 
       {/* Project assignments */}
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">

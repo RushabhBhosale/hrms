@@ -37,6 +37,8 @@ export default function EmployeeDash() {
   const [missingErr, setMissingErr] = useState<string | null>(null);
   const [showMissing, setShowMissing] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const refreshRef = useRef<number | null>(null);
+  const midnightRef = useRef<number | null>(null);
   const me = getEmployee();
 
   function fmtDateKey(key: string) {
@@ -174,7 +176,10 @@ export default function EmployeeDash() {
       setMissingErr(null);
       setMissingLoading(true);
       const now = new Date();
-      const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+        2,
+        "0"
+      )}`;
       const res = await api.get("/attendance/missing-out", {
         params: { month: ym },
       });
@@ -190,7 +195,10 @@ export default function EmployeeDash() {
 
   const todayKey = useMemo(() => {
     const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(now.getDate()).padStart(2, "0")}`;
   }, []);
   const blockingMissingDays = useMemo(
     () => missingDays.filter((d) => d !== todayKey),
@@ -236,7 +244,10 @@ export default function EmployeeDash() {
       const now = new Date();
       setWorkedToday({
         minutes: Math.round(elapsed / 60000),
-        dateKey: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
+        dateKey: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+          2,
+          "0"
+        )}-${String(now.getDate()).padStart(2, "0")}`,
       });
       setProjects(
         (projectsRes.data.projects || []).map((p: any) => ({
@@ -508,6 +519,49 @@ export default function EmployeeDash() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  // While punched-in, periodically refresh attendance so UI stops the timer
+  // when backend auto punch-out (or manual punch-out elsewhere) occurs.
+  useEffect(() => {
+    // clear any previous interval
+    if (refreshRef.current) {
+      clearInterval(refreshRef.current);
+      refreshRef.current = null;
+    }
+    const isPunchedIn = Boolean(
+      attendance?.lastPunchIn && !attendance?.lastPunchOut
+    );
+    if (isPunchedIn) {
+      refreshRef.current = window.setInterval(() => {
+        // fire-and-forget; errors handled inside load()
+        load();
+      }, 30_000); // 30s
+    }
+    return () => {
+      if (refreshRef.current) clearInterval(refreshRef.current);
+    };
+  }, [attendance?.lastPunchIn, attendance?.lastPunchOut]);
+
+  // On day rollover, refresh once shortly after midnight to pick up new day.
+  useEffect(() => {
+    if (midnightRef.current) {
+      clearTimeout(midnightRef.current);
+      midnightRef.current = null;
+    }
+    const now = new Date();
+    const next = new Date(now);
+    next.setDate(now.getDate() + 1);
+    next.setHours(0, 0, 10, 0); // 00:00:10 local time
+    const delay = Math.max(1000, next.getTime() - now.getTime());
+    midnightRef.current = window.setTimeout(() => {
+      load();
+      // also refresh missing punch-outs list
+      loadMissingOut();
+    }, delay);
+    return () => {
+      if (midnightRef.current) clearTimeout(midnightRef.current);
+    };
   }, []);
 
   // Load my visible projects (exclude personal)
@@ -1413,6 +1467,13 @@ function HRPanel() {
   const [leaveMap, setLeaveMap] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [runLoading, setRunLoading] = useState(false);
+  const [runErr, setRunErr] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<{
+    candidates: number;
+    closed: number;
+  } | null>(null);
+  const [lastRunAt, setLastRunAt] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -1445,6 +1506,11 @@ function HRPanel() {
       {err && (
         <div className="mb-4 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
           {err}
+        </div>
+      )}
+      {runErr && (
+        <div className="mb-4 rounded-md border border-error/20 bg-red-50 px-4 py-2 text-sm text-error">
+          {runErr}
         </div>
       )}
       {loading ? (

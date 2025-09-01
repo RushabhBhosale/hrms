@@ -7,6 +7,7 @@ const Company = require("../models/Company");
 const Project = require("../models/Project");
 const Task = require("../models/Task");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
+const { runAutoPunchOut } = require("../jobs/autoPunchout");
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -952,6 +953,22 @@ router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
   } catch (e) {
     console.error("punchout-at error", e);
     res.status(500).json({ error: "Failed to set punch-out time" });
+  }
+});
+
+// Admin/HR/Manager: Trigger auto-punchout job immediately (for testing or recovery)
+router.post("/admin/auto-punchout/run", auth, async (req, res) => {
+  try {
+    const canRun =
+      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+      (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+    if (!canRun) return res.status(403).json({ error: "Forbidden" });
+
+    const result = await runAutoPunchOut();
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error("auto-punchout run error", e);
+    res.status(500).json({ error: "Failed to run auto-punchout" });
   }
 });
 
