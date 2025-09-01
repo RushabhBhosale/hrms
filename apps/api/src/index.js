@@ -20,6 +20,7 @@ app.use("/leaves", require("./routes/leaves"));
 app.use("/documents", require("./routes/documents"));
 app.use("/projects", require("./routes/projects"));
 app.use("/salary", require("./routes/salary"));
+app.use("/announcements", require("./routes/announcements"));
 
 connectDB().then(() => {
   const port = process.env.PORT || 4000;

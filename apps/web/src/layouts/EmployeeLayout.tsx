@@ -14,6 +14,8 @@ import {
   Users,
   ListChecks,
 } from "lucide-react";
+import { Megaphone } from "lucide-react";
+import AnnouncementsPopup from "../components/AnnouncementsPopup";
 
 export default function EmployeeLayout() {
   const nav = useNavigate();
@@ -31,6 +33,7 @@ export default function EmployeeLayout() {
       : [{ to: "/app/attendance", label: "Attendance", icon: Clock8 }]),
 
     { to: "/app/tasks", label: "My Tasks", icon: ListChecks },
+    { to: "/app/announcements", label: "Announcements", icon: Megaphone },
     { to: "/app/projects", label: "Projects", icon: Users },
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
     { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
@@ -65,6 +68,7 @@ export default function EmployeeLayout() {
     if (pathname.startsWith("/app/attendance")) return "Attendance";
     if (pathname.startsWith("/app/tasks")) return "My Tasks";
     if (pathname.startsWith("/app/projects")) return "Projects";
+    if (pathname.startsWith("/app/announcements")) return "Announcements";
     if (pathname.startsWith("/app/leave")) return "Leave";
     if (pathname.startsWith("/app/approvals")) return "Leave Approvals";
     if (pathname.startsWith("/app/salary-slip")) return "Salary Slip";
@@ -225,6 +229,7 @@ export default function EmployeeLayout() {
 
           {/* Main content */}
           <main id="main" className="p-4 md:p-8 bg-bg">
+            <AnnouncementsPopup />
             <Outlet />
           </main>
         </div>

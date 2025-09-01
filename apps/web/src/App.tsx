@@ -23,6 +23,7 @@ import ProjectsAdmin from "./pages/admin/Projects";
 import SalaryTemplate from "./pages/admin/SalaryTemplate";
 import SalarySlipsAdmin from "./pages/admin/SalarySlips";
 import CompanyTiming from "./pages/admin/CompanyTiming";
+import AnnouncementsAdmin from "./pages/admin/Announcements";
 import MyProjects from "./pages/projects/MyProjects";
 import ProjectDetails from "./pages/projects/ProjectDetails";
 import MyTasks from "./pages/tasks/MyTasks";
@@ -37,6 +38,7 @@ import SalariesManage from "./pages/employee/SalariesManage";
 import EmployeeDetails from "./pages/admin/EmployeeDetails";
 import MonthlyReport from "./pages/report/MonthlyReport";
 import LandingPage from "./pages/LandingPage";
+import Announcements from "./pages/employee/Announcements";
 
 export default function App() {
   return (
@@ -87,6 +89,7 @@ export default function App() {
         <Route path="leaves" element={<LeaveRequests />} />
         <Route path="salary/template" element={<SalaryTemplate />} />
         <Route path="salary/slips" element={<SalarySlipsAdmin />} />
+        <Route path="announcements" element={<AnnouncementsAdmin />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -133,6 +136,7 @@ export default function App() {
         <Route path="tasks" element={<MyTasks />} />
         <Route path="projects" element={<MyProjects />} />
         <Route path="projects/:id" element={<ProjectDetails />} />
+        <Route path="announcements" element={<Announcements />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
