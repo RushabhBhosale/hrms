@@ -82,13 +82,17 @@ export default function EmployeeLayout() {
     <div className={`flex h-full ${compact ? "w-16" : "w-60"} transition-all`}>
       <div className="flex flex-col w-full">
         {/* Brand */}
-        <div className="flex items-center justify-between px-4 h-14 border-b border-border">
-          <div
-            className={`font-bold text-sidebar-active tracking-wide ${
-              compact ? "text-sm" : "text-lg"
-            }`}
-          >
-            HRMS
+        <div
+          className={`flex items-center ${
+            compact ? "justify-center" : "justify-between"
+          } h-[66px] border-b border-border`}
+        >
+          <div className={`font-bold text-sidebar-active tracking-wide`}>
+            {compact ? (
+              <img src="/logo.png" alt="logo" className="max-w-none size-12" />
+            ) : (
+              <img src="/logo-horizontal.png" alt="logo" className="size-32" />
+            )}
           </div>
         </div>
 

@@ -68,13 +68,17 @@ export default function AdminLayout() {
     <div className={`flex h-full ${compact ? "w-16" : "w-60"} transition-all`}>
       <div className="flex flex-col w-full">
         {/* Brand */}
-        <div className="flex items-center justify-between px-4 h-14 border-b border-border">
-          <div
-            className={`font-bold text-sidebar-active tracking-wide ${
-              compact ? "text-sm" : "text-lg"
-            }`}
-          >
-            HRMS Admin
+        <div
+          className={`flex items-center ${
+            compact ? "justify-center" : "justify-between"
+          } h-[66px] border-b border-border`}
+        >
+          <div className={`font-bold text-sidebar-active tracking-wide`}>
+            {compact ? (
+              <img src="/logo.png" alt="logo" className="max-w-none size-12" />
+            ) : (
+              <img src="/logo-horizontal.png" alt="logo" className="size-32" />
+            )}
           </div>
         </div>
 
@@ -90,16 +94,13 @@ export default function AdminLayout() {
               to={to}
               className={() => {
                 const isActive = (() => {
-                  // Dashboard should only be active on exact path
                   if (to === "/admin") return pathname === "/admin";
-                  // Employee List: active on list and details, but not on add
                   if (to === "/admin/employees") {
                     return (
                       pathname.startsWith("/admin/employees") &&
                       !pathname.startsWith("/admin/employees/add")
                     );
                   }
-                  // Default: exact or nested under the link
                   return pathname === to || pathname.startsWith(to + "/");
                 })();
 
