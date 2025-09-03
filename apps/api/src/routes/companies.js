@@ -78,6 +78,20 @@ router.put("/theme", auth, async (req, res) => {
   return res.json({ theme: company.theme });
 });
 
+// Admin: reset company theme to defaults
+router.delete("/theme", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  // Remove custom theme so the app falls back to CSS defaults
+  company.theme = undefined;
+  await company.save();
+  return res.json({ theme: null });
+});
+
 // Admin: get basic company profile (name)
 router.get("/profile", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))

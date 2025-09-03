@@ -3,7 +3,12 @@ import { api } from "../../lib/api";
 import ProjectTime from "../report/ProjectTime";
 import { Users, UserCheck } from "lucide-react";
 
-type EmployeeLite = { id: string; name: string; email: string; subRoles: string[] };
+type EmployeeLite = {
+  id: string;
+  name: string;
+  email: string;
+  subRoles: string[];
+};
 type ProjectLite = {
   _id: string;
   title: string;
@@ -46,7 +51,10 @@ export default function AdminDash() {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
-  const [runResult, setRunResult] = useState<{ candidates: number; closed: number } | null>(null);
+  const [runResult, setRunResult] = useState<{
+    candidates: number;
+    closed: number;
+  } | null>(null);
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,7 +68,9 @@ export default function AdminDash() {
           api.get("/projects"),
         ]);
         const empList: EmployeeLite[] = empRes.data.employees || [];
-        const projList: ProjectLite[] = (projRes.data.projects || []).filter((p: ProjectLite) => !p.isPersonal);
+        const projList: ProjectLite[] = (projRes.data.projects || []).filter(
+          (p: ProjectLite) => !p.isPersonal
+        );
         setEmployees(empList);
         setProjects(projList);
         setStats({
@@ -143,7 +153,8 @@ export default function AdminDash() {
   );
 
   const assignments = useMemo(() => {
-    if (!employees.length || !projects.length) return [] as { emp: EmployeeLite; projs: ProjectLite[] }[];
+    if (!employees.length || !projects.length)
+      return [] as { emp: EmployeeLite; projs: ProjectLite[] }[];
     return employees
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -245,51 +256,14 @@ export default function AdminDash() {
         />
       </div>
 
-      {/* Utilities */}
-      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
-        <div className="mb-2 font-semibold">Utilities</div>
-        {runErr && (
-          <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
-            {runErr}
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            className="rounded-md bg-secondary px-3 py-2 text-white disabled:opacity-60"
-            onClick={async () => {
-              if (runLoading) return;
-              setRunErr(null);
-              setRunResult(null);
-              try {
-                setRunLoading(true);
-                const res = await api.post("/attendance/admin/auto-punchout/run");
-                setRunResult(res.data?.result || null);
-                setLastRunAt(new Date().toLocaleString());
-              } catch (e: any) {
-                setRunErr(e?.response?.data?.error || "Failed to run auto punch-out");
-              } finally {
-                setRunLoading(false);
-              }
-            }}
-            disabled={runLoading}
-          >
-            {runLoading ? "Running…" : "Run Auto Punch-out"}
-          </button>
-          {runResult && (
-            <div className="text-sm text-muted">
-              Closed {runResult.closed} of {runResult.candidates} candidates
-              {lastRunAt ? ` • ${lastRunAt}` : ""}
-            </div>
-          )}
-        </div>
-      </section>
-
       {/* Project assignments */}
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold">Project Assignments</h3>
-            <p className="text-sm text-muted">Employees and their assigned projects</p>
+            <p className="text-sm text-muted">
+              Employees and their assigned projects
+            </p>
           </div>
           <button
             onClick={() => {
@@ -302,7 +276,9 @@ export default function AdminDash() {
                     api.get("/projects"),
                   ]);
                   const empList: EmployeeLite[] = empRes.data.employees || [];
-                  const projList: ProjectLite[] = (projRes.data.projects || []).filter((p: ProjectLite) => !p.isPersonal);
+                  const projList: ProjectLite[] = (
+                    projRes.data.projects || []
+                  ).filter((p: ProjectLite) => !p.isPersonal);
                   setEmployees(empList);
                   setProjects(projList);
                   setStats((s) => ({ ...s, employees: empList.length }));
@@ -331,7 +307,9 @@ export default function AdminDash() {
               {assignments.map(({ emp, projs }) => (
                 <tr key={emp.id} className="border-t border-border/60">
                   <td className="py-2 pr-4 whitespace-nowrap">{emp.name}</td>
-                  <td className="py-2 pr-4 text-muted whitespace-nowrap">{emp.email}</td>
+                  <td className="py-2 pr-4 text-muted whitespace-nowrap">
+                    {emp.email}
+                  </td>
                   <td className="py-2">
                     {projs.length > 0 ? (
                       <div className="flex flex-wrap gap-1.5">
@@ -354,7 +332,9 @@ export default function AdminDash() {
               {assignments.length === 0 && (
                 <tr>
                   <td colSpan={3} className="py-4 text-center text-muted">
-                    {loadingProjects ? "Loading assignments…" : "No employees or projects found."}
+                    {loadingProjects
+                      ? "Loading assignments…"
+                      : "No employees or projects found."}
                   </td>
                 </tr>
               )}

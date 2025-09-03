@@ -35,3 +35,15 @@ export function applyTheme(theme: Theme) {
   });
 }
 
+export function resetTheme() {
+  const root = document.documentElement;
+  const vars = [
+    "--color-primary",
+    "--color-secondary",
+    "--color-accent",
+    "--color-success",
+    "--color-warning",
+    "--color-error",
+  ];
+  vars.forEach((v) => root.style.removeProperty(v));
+}

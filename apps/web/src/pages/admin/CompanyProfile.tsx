@@ -1,6 +1,6 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
-import { applyTheme } from "../../lib/theme";
+import { applyTheme, resetTheme } from "../../lib/theme";
 
 export default function CompanyProfile() {
   const [name, setName] = useState("");
@@ -326,6 +326,36 @@ export default function CompanyProfile() {
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
             >
               {savingTheme ? "Saving…" : "Save Theme"}
+            </button>
+            <button
+              onClick={async () => {
+                if (!window.confirm("Reset theme to default colors?")) return;
+                setSavingTheme(true);
+                setOk(null);
+                setErr(null);
+                try {
+                  await api.delete("/companies/theme");
+                  // Reset runtime CSS vars and local state to defaults
+                  resetTheme();
+                  setTheme({
+                    primary: "#2563eb",
+                    secondary: "#10b981",
+                    accent: "#f59e0b",
+                    success: "#16a34a",
+                    warning: "#f59e0b",
+                    error: "#dc2626",
+                  });
+                  setOk("Theme reset to defaults");
+                } catch (e: any) {
+                  setErr(e?.response?.data?.error || "Failed to reset theme");
+                } finally {
+                  setSavingTheme(false);
+                }
+              }}
+              disabled={savingTheme}
+              className="inline-flex items-center justify-center rounded-md border border-border bg-surface px-4 py-2 text-[color:rgb(var(--color-text))] disabled:opacity-60"
+            >
+              Reset to Default
             </button>
             <span className="text-xs text-muted">
               Changes apply immediately in this session.
