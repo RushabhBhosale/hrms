@@ -79,6 +79,14 @@ export default function ProjectTasks() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | Task["status"]>("ALL");
+  const [priorityFilter, setPriorityFilter] = useState<
+    "ALL" | NonNullable<Task["priority"]>
+  >("ALL");
+  const [sortKey, setSortKey] = useState<
+    "title" | "assignee" | "status" | "priority" | "time" | "created"
+  >("created");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   useEffect(() => {
     setSp(
@@ -151,6 +159,52 @@ export default function ProjectTasks() {
     });
   }, [q, tasks, employees]);
 
+  const filtered2 = useMemo(() => {
+    return filtered.filter((t) => {
+      const okStatus = statusFilter === "ALL" || t.status === statusFilter;
+      const okPrio = priorityFilter === "ALL" || t.priority === priorityFilter;
+      return okStatus && okPrio;
+    });
+  }, [filtered, statusFilter, priorityFilter]);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered2];
+    const dir = sortDir === "asc" ? 1 : -1;
+    const getAssignee = (t: Task) =>
+      employees.find((e) => e.id === String(t.assignedTo))?.name || "";
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case "title":
+          return dir * a.title.localeCompare(b.title);
+        case "assignee":
+          return dir * getAssignee(a).localeCompare(getAssignee(b));
+        case "status":
+          return dir * a.status.localeCompare(b.status);
+        case "priority":
+          return dir * String(a.priority || "").localeCompare(String(b.priority || ""));
+        case "time":
+          return dir * ((a.timeSpentMinutes || 0) - (b.timeSpentMinutes || 0));
+        case "created":
+        default:
+          return (
+            dir *
+            ((new Date(a.createdAt || 0)).getTime() -
+              (new Date(b.createdAt || 0)).getTime())
+          );
+      }
+    });
+    return arr;
+  }, [filtered2, sortKey, sortDir, employees]);
+
+  function toggleSort(k: typeof sortKey) {
+    if (sortKey === k) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(k);
+      setSortDir(k === "created" ? "desc" : "asc");
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -162,13 +216,34 @@ export default function ProjectTasks() {
             All project tasks with filters and pagination.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search title, assignee, status, priority…"
             className="h-10 w-80 rounded-md border border-border bg-surface px-3 outline-none ring-offset-2 focus:ring-2 focus:ring-primary"
           />
+          <select
+            className="h-10 rounded-md border border-border bg-surface px-3 text-sm"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as any)}
+          >
+            <option value="ALL">All Status</option>
+            <option value="PENDING">Pending</option>
+            <option value="INPROGRESS">In Progress</option>
+            <option value="DONE">Done</option>
+          </select>
+          <select
+            className="h-10 rounded-md border border-border bg-surface px-3 text-sm"
+            value={priorityFilter}
+            onChange={(e) => setPriorityFilter(e.target.value as any)}
+          >
+            <option value="ALL">All Priority</option>
+            <option value="URGENT">Urgent</option>
+            <option value="FIRST">First</option>
+            <option value="SECOND">Second</option>
+            <option value="LEAST">Least</option>
+          </select>
           <button
             onClick={load}
             className="h-10 rounded-md bg-primary px-4 text-white outline-none ring-offset-2 focus:ring-2 focus:ring-primary"
@@ -220,18 +295,18 @@ export default function ProjectTasks() {
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <Th>Title</Th>
-                <Th>Assignee</Th>
-                <Th>Status</Th>
-                <Th>Priority</Th>
-                <Th>Time Spent</Th>
-                <Th>Created</Th>
+                <SortTh label="Title" onClick={() => toggleSort("title")} dir={sortKey==='title'?sortDir:null} />
+                <SortTh label="Assignee" onClick={() => toggleSort("assignee")} dir={sortKey==='assignee'?sortDir:null} />
+                <SortTh label="Status" onClick={() => toggleSort("status")} dir={sortKey==='status'?sortDir:null} />
+                <SortTh label="Priority" onClick={() => toggleSort("priority")} dir={sortKey==='priority'?sortDir:null} />
+                <SortTh label="Time Spent" onClick={() => toggleSort("time")} dir={sortKey==='time'?sortDir:null} />
+                <SortTh label="Created" onClick={() => toggleSort("created")} dir={sortKey==='created'?sortDir:null} />
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <SkeletonRows rows={6} cols={6} />
-              ) : filtered.length === 0 ? (
+              ) : sorted.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-10 text-center">
                     <div className="mx-auto w-fit space-y-2">
@@ -243,7 +318,7 @@ export default function ProjectTasks() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((t) => {
+                sorted.map((t) => {
                   const assigneeName =
                     employees.find((e) => e.id === String(t.assignedTo))
                       ?.name || "Member";
@@ -337,14 +412,14 @@ export default function ProjectTasks() {
 
       <div className="flex items-center gap-2 justify-end">
         <button
-          className="h-9 px-3 rounded-md border border-border text-sm disabled:opacity-50 hover:bg-bg"
+          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50 hover:bg-bg"
           onClick={() => setPage(1)}
           disabled={page === 1}
         >
           First
         </button>
         <button
-          className="h-9 px-3 rounded-md border border-border text-sm disabled:opacity-50 hover:bg-bg"
+          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50 hover:bg-bg"
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page <= 1}
         >
@@ -365,14 +440,14 @@ export default function ProjectTasks() {
           <span className="text-muted">of {pages}</span>
         </div>
         <button
-          className="h-9 px-3 rounded-md border border-border text-sm disabled:opacity-50 hover:bg-bg"
+          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50 hover:bg-bg"
           onClick={() => setPage((p) => Math.min(pages, p + 1))}
           disabled={page >= pages}
         >
           Next
         </button>
         <button
-          className="h-9 px-3 rounded-md border border-border text-sm disabled:opacity-50 hover:bg-bg"
+          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50 hover:bg-bg"
           onClick={() => setPage(pages)}
           disabled={page === pages}
         >
@@ -383,10 +458,18 @@ export default function ProjectTasks() {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function SortTh({ label, dir, onClick }: { label: string; dir: "asc" | "desc" | null; onClick: () => void }) {
   return (
-    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
-      {children}
+    <th
+      className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer hover:text-text select-none"
+      onClick={onClick}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className="text-[10px]">
+          {dir === "asc" ? "▲" : dir === "desc" ? "▼" : "↕"}
+        </span>
+      </span>
     </th>
   );
 }

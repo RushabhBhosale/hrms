@@ -53,6 +53,13 @@ export default function LeaveRequest() {
   const [balances, setBalances] = useState<LeaveBalances | null>(() => getEmployee()?.leaveBalances || null);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [notifyIds, setNotifyIds] = useState<string[]>([]);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<'ALL' | Leave['status']>('ALL');
+  const [typeFilter, setTypeFilter] = useState<'ALL' | Leave['type']>('ALL');
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [sortKey, setSortKey] = useState<'start'|'end'|'days'|'type'|'status'>('start');
+  const [sortDir, setSortDir] = useState<'asc'|'desc'>('desc');
 
   async function load() {
     try {
@@ -109,6 +116,36 @@ export default function LeaveRequest() {
     if (new Date(form.endDate) < new Date(form.startDate)) return false;
     return true;
   }, [form.startDate, form.endDate]);
+
+  // Derived lists for table: search, filters, sorting, pagination (client-side)
+  const leavesFiltered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return leaves.filter((l) =>
+      (statusFilter === 'ALL' || l.status === statusFilter) &&
+      (typeFilter === 'ALL' || l.type === typeFilter) &&
+      (!term || (l.adminMessage || '').toLowerCase().includes(term))
+    );
+  }, [leaves, q, statusFilter, typeFilter]);
+
+  const leavesSorted = useMemo(() => {
+    const arr = [...leavesFiltered];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    arr.sort((a,b) => {
+      switch (sortKey) {
+        case 'end': return dir * (+new Date(a.endDate) - +new Date(b.endDate));
+        case 'days': return dir * (daysBetween(a.startDate,a.endDate) - daysBetween(b.startDate,b.endDate));
+        case 'type': return dir * a.type.localeCompare(b.type);
+        case 'status': return dir * a.status.localeCompare(b.status);
+        case 'start':
+        default: return dir * (+new Date(a.startDate) - +new Date(b.startDate));
+      }
+    });
+    return arr;
+  }, [leavesFiltered, sortKey, sortDir]);
+
+  const totalFiltered = leavesSorted.length;
+  const pages = useMemo(() => Math.max(1, Math.ceil(totalFiltered / Math.max(1, limit))), [totalFiltered, limit]);
+  const pageRows = useMemo(() => leavesSorted.slice((page-1)*limit, (page-1)*limit + limit), [leavesSorted, page, limit]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -289,10 +326,33 @@ export default function LeaveRequest() {
 
       {/* List */}
       <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
-        <div className="border-b border-border px-4 py-3 text-sm text-muted">
-          {loading
-            ? "Loading…"
-            : `${leaves.length} request${leaves.length === 1 ? "" : "s"}`}
+        <div className="border-b border-border px-4 py-3 flex items-center justify-between">
+          <div className="text-sm text-muted">
+            {loading ? 'Loading…' : `Showing ${totalFiltered === 0 ? 0 : (page-1)*limit + 1}-${Math.min(totalFiltered, page*limit)} of ${totalFiltered} requests`}
+          </div>
+        <div className="flex items-center gap-2">
+          <select className="h-9 rounded-md border border-border bg-surface px-2 text-sm" value={limit} onChange={(e)=>{ setPage(1); setLimit(parseInt(e.target.value,10)); }}>
+            {[10,20,50,100].map(n=> <option key={n} value={n}>{n} / page</option>)}
+          </select>
+        </div>
+        </div>
+
+        {/* Controls */}
+        <div className="px-4 py-3 flex flex-wrap gap-2">
+          <select className="h-9 rounded-md border border-border bg-surface px-3" value={statusFilter} onChange={e=>{ setPage(1); setStatusFilter(e.target.value as any); }}>
+            <option value="ALL">All Status</option>
+            <option value="PENDING">Pending</option>
+            <option value="APPROVED">Approved</option>
+            <option value="REJECTED">Rejected</option>
+          </select>
+          <select className="h-9 rounded-md border border-border bg-surface px-3" value={typeFilter} onChange={e=>{ setPage(1); setTypeFilter(e.target.value as any); }}>
+            <option value="ALL">All Types</option>
+            <option value="CASUAL">Casual</option>
+            <option value="PAID">Paid</option>
+            <option value="UNPAID">Unpaid</option>
+            <option value="SICK">Sick</option>
+          </select>
+          <input value={q} onChange={(e)=>{ setPage(1); setQ(e.target.value); }} placeholder="Search message…" className="h-9 w-64 rounded-md border border-border bg-surface px-3" />
         </div>
 
         {/* Desktop table */}
@@ -300,30 +360,25 @@ export default function LeaveRequest() {
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <Th>Start</Th>
-                <Th>End</Th>
-                <Th>Days</Th>
-                <Th>Type</Th>
-                <Th>Status</Th>
+                <SortTh label="Start" dir={sortKey==='start'?sortDir:null} onClick={()=> setSortKey('start') || setSortDir(d=> d==='asc'?'desc':'asc')} />
+                <SortTh label="End" dir={sortKey==='end'?sortDir:null} onClick={()=> setSortKey('end') || setSortDir(d=> d==='asc'?'desc':'asc')} />
+                <SortTh label="Days" dir={sortKey==='days'?sortDir:null} onClick={()=> setSortKey('days') || setSortDir(d=> d==='asc'?'desc':'asc')} />
+                <SortTh label="Type" dir={sortKey==='type'?sortDir:null} onClick={()=> setSortKey('type') || setSortDir(d=> d==='asc'?'desc':'asc')} />
+                <SortTh label="Status" dir={sortKey==='status'?sortDir:null} onClick={()=> setSortKey('status') || setSortDir(d=> d==='asc'?'desc':'asc')} />
                 <Th>Message</Th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <SkeletonRows rows={6} cols={6} />
-              ) : leaves.length === 0 ? (
+              ) : pageRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-6 text-center text-muted">
                     No leave requests yet.
                   </td>
                 </tr>
               ) : (
-                leaves
-                  .slice()
-                  .sort(
-                    (a, b) => +new Date(b.startDate) - +new Date(a.startDate)
-                  )
-                  .map((l) => (
+                pageRows.map((l) => (
                     <tr key={l._id} className="border-t border-border/70">
                       <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
                       <Td>{new Date(l.endDate).toLocaleDateString()}</Td>
@@ -362,15 +417,12 @@ export default function LeaveRequest() {
                 </div>
               ))}
             </div>
-          ) : leaves.length === 0 ? (
+          ) : pageRows.length === 0 ? (
             <div className="px-4 py-6 text-center text-muted">
               No leave requests yet.
             </div>
           ) : (
-            leaves
-              .slice()
-              .sort((a, b) => +new Date(b.startDate) - +new Date(a.startDate))
-              .map((l) => (
+            pageRows.map((l) => (
                 <div key={l._id} className="p-4">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">
@@ -392,6 +444,14 @@ export default function LeaveRequest() {
           )}
         </div>
       </section>
+
+      <div className="flex items-center gap-2 justify-end">
+        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(1)} disabled={page===1}>First</button>
+        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}>Prev</button>
+        <div className="text-sm text-muted">Page {page} of {pages}</div>
+        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages}>Next</button>
+        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(pages)} disabled={page>=pages}>Last</button>
+      </div>
     </div>
   );
 }
@@ -400,6 +460,16 @@ function Th({ children }: { children: React.ReactNode }) {
   return (
     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
       {children}
+    </th>
+  );
+}
+function SortTh({ label, dir, onClick }: { label: string; dir: 'asc'|'desc'|null; onClick: ()=>void }) {
+  return (
+    <th onClick={onClick} className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer hover:text-text select-none">
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className="text-[10px]">{dir==='asc'?'▲':dir==='desc'?'▼':'↕'}</span>
+      </span>
     </th>
   );
 }
@@ -421,6 +491,8 @@ function SkeletonRows({ rows, cols }: { rows: number; cols: number }) {
     </>
   );
 }
+
+// (no extra helpers)
 function StatusBadge({ status }: { status: Leave["status"] }) {
   const map: Record<Leave["status"], string> = {
     PENDING: "bg-accent/10 text-accent",

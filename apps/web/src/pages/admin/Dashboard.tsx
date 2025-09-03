@@ -174,6 +174,23 @@ export default function AdminDash() {
       });
   }, [employees, projects]);
 
+  // Project assignments table controls
+  const [assignQ, setAssignQ] = useState("");
+  const [assignPage, setAssignPage] = useState(1);
+  const [assignLimit, setAssignLimit] = useState(20);
+  const filteredAssignments = useMemo(() => {
+    const term = assignQ.trim().toLowerCase();
+    if (!term) return assignments;
+    return assignments.filter(({ emp }) =>
+      emp.name.toLowerCase().includes(term) || emp.email.toLowerCase().includes(term)
+    );
+  }, [assignments, assignQ]);
+  const assignTotal = filteredAssignments.length;
+  const assignPages = Math.max(1, Math.ceil(assignTotal / Math.max(1, assignLimit)));
+  const assignStart = assignTotal === 0 ? 0 : (assignPage - 1) * assignLimit + 1;
+  const assignEnd = Math.min(assignTotal, assignPage * assignLimit);
+  const assignRows = useMemo(() => filteredAssignments.slice((assignPage-1)*assignLimit, (assignPage-1)*assignLimit + assignLimit), [filteredAssignments, assignPage, assignLimit]);
+
   return (
     <div className="space-y-8">
       <div>
@@ -266,14 +283,28 @@ export default function AdminDash() {
 
       {/* Project assignments */}
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h3 className="text-lg font-semibold">Project Assignments</h3>
             <p className="text-sm text-muted">
               Employees and their assigned projects
             </p>
           </div>
-          <button
+          <div className="flex items-center gap-2">
+            <input
+              value={assignQ}
+              onChange={(e) => { setAssignPage(1); setAssignQ(e.target.value); }}
+              placeholder="Search name or email…"
+              className="h-10 w-64 rounded-md border border-border bg-surface px-3"
+            />
+            <select
+              className="h-10 rounded-md border border-border bg-surface px-2 text-sm"
+              value={assignLimit}
+              onChange={(e)=>{ setAssignPage(1); setAssignLimit(parseInt(e.target.value,10)); }}
+            >
+              {[10,20,50,100].map(n=> <option key={n} value={n}>{n} / page</option>)}
+            </select>
+            <button
             onClick={() => {
               // quick refresh of employees and projects
               (async () => {
@@ -302,14 +333,17 @@ export default function AdminDash() {
                 }
               })();
             }}
-            className="rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+            className="rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-bg disabled:opacity-60"
             disabled={loadingProjects}
           >
             {loadingProjects ? "Refreshing…" : "Refresh"}
           </button>
+          </div>
         </div>
 
-        <div className="mt-4 overflow-auto">
+        <div className="mt-3 text-sm text-muted">{loadingProjects ? 'Loading…' : `Showing ${assignStart}-${assignEnd} of ${assignTotal}`}</div>
+
+        <div className="mt-2 overflow-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-muted">
@@ -320,7 +354,7 @@ export default function AdminDash() {
               </tr>
             </thead>
             <tbody>
-              {assignments.map(({ emp, projs }) => (
+              {assignRows.map(({ emp, projs }) => (
                 <tr key={emp.id} className="border-t border-border/60">
                   <td className="py-2 pr-4 whitespace-nowrap">{emp.name}</td>
                   <td className="py-2 pr-4 text-muted whitespace-nowrap">
@@ -362,7 +396,7 @@ export default function AdminDash() {
                   </td>
                 </tr>
               ))}
-              {assignments.length === 0 && (
+              {assignTotal === 0 && (
                 <tr>
                   <td colSpan={4} className="py-4 text-center text-muted">
                     {loadingProjects
@@ -373,6 +407,14 @@ export default function AdminDash() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setAssignPage(1)} disabled={assignPage===1}>First</button>
+          <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setAssignPage(p=>Math.max(1,p-1))} disabled={assignPage===1}>Prev</button>
+          <div className="text-sm text-muted">Page {assignPage} of {assignPages}</div>
+          <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setAssignPage(p=>Math.min(assignPages,p+1))} disabled={assignPage>=assignPages}>Next</button>
+          <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setAssignPage(assignPages)} disabled={assignPage>=assignPages}>Last</button>
         </div>
       </section>
     </div>

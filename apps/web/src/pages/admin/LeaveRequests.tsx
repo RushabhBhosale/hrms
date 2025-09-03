@@ -18,6 +18,13 @@ export default function LeaveRequests() {
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<"ALL" | Leave["status"]>("ALL");
+  const [typeFilter, setTypeFilter] = useState<"ALL" | Leave["type"]>("ALL");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [sortKey, setSortKey] = useState<
+    "employee" | "start" | "end" | "type" | "status"
+  >("start");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [modal, setModal] = useState<{
     id: string;
     action: "approve" | "reject";
@@ -44,19 +51,59 @@ export default function LeaveRequests() {
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return rows
-      .filter((r) => (status === "ALL" ? true : r.status === status))
-      .filter(
-        (r) =>
-          !term ||
+    return rows.filter(
+      (r) =>
+        (status === "ALL" ? true : r.status === status) &&
+        (typeFilter === "ALL" ? true : r.type === typeFilter) &&
+        (!term ||
           r.employee.name.toLowerCase().includes(term) ||
-          r.reason?.toLowerCase().includes(term)
-      )
-      .sort(
-        (a, b) =>
-          new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
-      );
-  }, [rows, q, status]);
+          (r.reason || "").toLowerCase().includes(term))
+    );
+  }, [rows, q, status, typeFilter]);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case "employee":
+          return dir * a.employee.name.localeCompare(b.employee.name);
+        case "end":
+          return (
+            dir *
+            (new Date(a.endDate).getTime() - new Date(b.endDate).getTime())
+          );
+        case "type":
+          return dir * a.type.localeCompare(b.type);
+        case "status":
+          return dir * a.status.localeCompare(b.status);
+        case "start":
+        default:
+          return (
+            dir *
+            (new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+          );
+      }
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir]);
+
+  const total = sorted.length;
+  const pages = Math.max(1, Math.ceil(total / Math.max(1, limit)));
+  const start = total === 0 ? 0 : (page - 1) * limit + 1;
+  const end = Math.min(total, page * limit);
+  const pageRows = useMemo(
+    () => sorted.slice((page - 1) * limit, (page - 1) * limit + limit),
+    [sorted, page, limit]
+  );
+
+  function toggleSort(k: typeof sortKey) {
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir(k === "start" ? "desc" : "asc");
+    }
+  }
 
   async function confirmAction() {
     if (!modal) return;
@@ -82,7 +129,7 @@ export default function LeaveRequests() {
             Review and take action on employee leave requests.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <select
             className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
             value={status}
@@ -92,6 +139,17 @@ export default function LeaveRequests() {
             <option value="PENDING">Pending</option>
             <option value="APPROVED">Approved</option>
             <option value="REJECTED">Rejected</option>
+          </select>
+          <select
+            className="h-10 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as any)}
+          >
+            <option value="ALL">All Types</option>
+            <option value="CASUAL">Casual</option>
+            <option value="PAID">Paid</option>
+            <option value="UNPAID">Unpaid</option>
+            <option value="SICK">Sick</option>
           </select>
           <input
             value={q}
@@ -115,36 +173,70 @@ export default function LeaveRequests() {
       )}
 
       <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
-        <div className="border-b border-border px-4 py-3 text-sm text-muted">
-          {loading
-            ? "Loading…"
-            : `${filtered.length} request${filtered.length === 1 ? "" : "s"}`}
+        <div className="border-b border-border px-4 py-3 flex items-center justify-between">
+          <div className="text-sm text-muted">
+            {loading
+              ? "Loading…"
+              : `Showing ${start}-${end} of ${total} requests`}
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
+              value={limit}
+              onChange={(e) => {
+                setPage(1);
+                setLimit(parseInt(e.target.value, 10));
+              }}
+            >
+              {[10, 20, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n} / page
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="hidden md:block">
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <Th>Employee</Th>
-                <Th>Start</Th>
-                <Th>End</Th>
+                <SortableTh
+                  label="Employee"
+                  dir={sortKey === "employee" ? sortDir : null}
+                  onClick={() => toggleSort("employee")}
+                />
+                <SortableTh
+                  label="Start"
+                  dir={sortKey === "start" ? sortDir : null}
+                  onClick={() => toggleSort("start")}
+                />
+                <SortableTh
+                  label="End"
+                  dir={sortKey === "end" ? sortDir : null}
+                  onClick={() => toggleSort("end")}
+                />
                 <Th>Type</Th>
                 <Th>Reason</Th>
-                <Th>Status</Th>
+                <SortableTh
+                  label="Status"
+                  dir={sortKey === "status" ? sortDir : null}
+                  onClick={() => toggleSort("status")}
+                />
                 <Th>Actions</Th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <SkeletonRows rows={6} cols={7} />
-              ) : filtered.length === 0 ? (
+              ) : pageRows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-6 text-center text-muted">
                     No leave requests.
                   </td>
                 </tr>
               ) : (
-                filtered.map((l) => (
+                pageRows.map((l) => (
                   <tr key={l._id} className="border-t border-border/70">
                     <Td className="font-medium">{l.employee.name}</Td>
                     <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
@@ -255,6 +347,40 @@ export default function LeaveRequests() {
         </div>
       </section>
 
+      <div className="flex items-center gap-2 justify-end">
+        <button
+          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50"
+          onClick={() => setPage(1)}
+          disabled={page === 1}
+        >
+          First
+        </button>
+        <button
+          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50"
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={page === 1}
+        >
+          Prev
+        </button>
+        <div className="text-sm text-muted">
+          Page {page} of {pages}
+        </div>
+        <button
+          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50"
+          onClick={() => setPage((p) => Math.min(pages, p + 1))}
+          disabled={page >= pages}
+        >
+          Next
+        </button>
+        <button
+          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50"
+          onClick={() => setPage(pages)}
+          disabled={page >= pages}
+        >
+          Last
+        </button>
+      </div>
+
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
@@ -308,6 +434,30 @@ function Th({ children }: { children: React.ReactNode }) {
   return (
     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
       {children}
+    </th>
+  );
+}
+
+function SortableTh({
+  label,
+  dir,
+  onClick,
+}: {
+  label: string;
+  dir: "asc" | "desc" | null;
+  onClick: () => void;
+}) {
+  return (
+    <th
+      onClick={onClick}
+      className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer hover:text-text select-none"
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className="text-[10px]">
+          {dir === "asc" ? "▲" : dir === "desc" ? "▼" : "↕"}
+        </span>
+      </span>
     </th>
   );
 }
