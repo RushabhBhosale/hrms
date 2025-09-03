@@ -35,6 +35,27 @@ router.get("/theme", auth, async (req, res) => {
   return res.json({ theme: company.theme || null });
 });
 
+// Admin/Employee: get company branding (name + logo filename)
+router.get("/branding", auth, async (req, res) => {
+  try {
+    let company = null;
+    if (["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole)) {
+      company = await Company.findOne({ admin: req.employee.id }).select("name logo logoSquare logoHorizontal");
+    } else if (req.employee.primaryRole === "EMPLOYEE") {
+      company = await Company.findById(req.employee.company).select("name logo logoSquare logoHorizontal");
+    }
+    if (!company) return res.status(200).json({ branding: null });
+    return res.json({ branding: {
+      name: company.name,
+      logo: company.logo || null,
+      logoSquare: company.logoSquare || null,
+      logoHorizontal: company.logoHorizontal || null,
+    } });
+  } catch (e) {
+    return res.status(500).json({ error: "Failed to get branding" });
+  }
+});
+
 // Admin: update company theme
 router.put("/theme", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
@@ -61,9 +82,15 @@ router.put("/theme", auth, async (req, res) => {
 router.get("/profile", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const company = await Company.findOne({ admin: req.employee.id }).select("name");
+  const company = await Company.findOne({ admin: req.employee.id }).select("name logo logoSquare logoHorizontal");
   if (!company) return res.status(400).json({ error: "Company not found" });
-  res.json({ company: { id: company._id, name: company.name } });
+  res.json({ company: {
+    id: company._id,
+    name: company.name,
+    logo: company.logo || null,
+    logoSquare: company.logoSquare || null,
+    logoHorizontal: company.logoHorizontal || null,
+  } });
 });
 
 // Admin: update company name
@@ -83,7 +110,61 @@ router.put("/profile", auth, async (req, res) => {
   if (!company) return res.status(400).json({ error: "Company not found" });
   company.name = trimmed;
   await company.save();
-  res.json({ company: { id: company._id, name: company.name } });
+  res.json({ company: {
+    id: company._id,
+    name: company.name,
+    logo: company.logo || null,
+    logoSquare: company.logoSquare || null,
+    logoHorizontal: company.logoHorizontal || null,
+  } });
+});
+
+// Admin: upload or replace company logo
+router.post("/logo", auth, upload.single("logo"), async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  try {
+    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
+    const company = await Company.findOne({ admin: req.employee.id });
+    if (!company) return res.status(400).json({ error: "Company not found" });
+    company.logo = req.file.filename;
+    await company.save();
+    return res.json({ logo: company.logo });
+  } catch (e) {
+    return res.status(500).json({ error: "Failed to upload logo" });
+  }
+});
+
+// Admin: upload/replace square logo
+router.post("/logo-square", auth, upload.single("logo"), async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  try {
+    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
+    const company = await Company.findOne({ admin: req.employee.id });
+    if (!company) return res.status(400).json({ error: "Company not found" });
+    company.logoSquare = req.file.filename;
+    await company.save();
+    return res.json({ logoSquare: company.logoSquare });
+  } catch (e) {
+    return res.status(500).json({ error: "Failed to upload square logo" });
+  }
+});
+
+// Admin: upload/replace horizontal logo
+router.post("/logo-horizontal", auth, upload.single("logo"), async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  try {
+    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
+    const company = await Company.findOne({ admin: req.employee.id });
+    if (!company) return res.status(400).json({ error: "Company not found" });
+    company.logoHorizontal = req.file.filename;
+    await company.save();
+    return res.json({ logoHorizontal: company.logoHorizontal });
+  } catch (e) {
+    return res.status(500).json({ error: "Failed to upload horizontal logo" });
+  }
 });
 
 // Public: company self-registration (landing page submission)

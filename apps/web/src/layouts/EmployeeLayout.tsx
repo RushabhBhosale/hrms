@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { clearAuth, getEmployee } from "../lib/auth";
 import { useEffect, useMemo, useState } from "react";
+import { api } from "../lib/api";
 import {
   Home,
   Clock8,
@@ -25,6 +26,34 @@ export default function EmployeeLayout() {
   const [desktopOpen, setDesktopOpen] = useState(true); // collapse on md+
   const [mobileOpen, setMobileOpen] = useState(false); // drawer on <md
   useEffect(() => setMobileOpen(false), [pathname]); // auto-close drawer on route change
+  const [companyLogoSquareUrl, setCompanyLogoSquareUrl] = useState<
+    string | null
+  >(null);
+  const [companyLogoWideUrl, setCompanyLogoWideUrl] = useState<string | null>(
+    null
+  );
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get("/companies/branding");
+        const base = import.meta.env.VITE_API_URL || "http://localhost:4000";
+        const b = res?.data?.branding || {};
+        const square = b.logoSquare
+          ? `${base}/uploads/${b.logoSquare}`
+          : b.logo
+          ? `${base}/uploads/${b.logo}`
+          : null;
+        const wide = b.logoHorizontal
+          ? `${base}/uploads/${b.logoHorizontal}`
+          : b.logo
+          ? `${base}/uploads/${b.logo}`
+          : null;
+        setCompanyLogoSquareUrl(square);
+        setCompanyLogoWideUrl(wide);
+      } catch {}
+    })();
+  }, []);
 
   const links = [
     { to: "/app", label: "Dashboard", icon: Home },
@@ -54,7 +83,7 @@ export default function EmployeeLayout() {
       label: "Report",
       icon: FileText,
     });
-    if (u?.subRoles?.includes('hr')) {
+    if (u?.subRoles?.includes("hr")) {
       links.splice(3, 0, {
         to: "/app/salaries",
         label: "Salaries",
@@ -85,15 +114,21 @@ export default function EmployeeLayout() {
       <div className="flex flex-col w-full">
         {/* Brand */}
         <div
-          className={`flex items-center ${
-            compact ? "justify-center" : "justify-between"
-          } h-[66px] border-b border-border`}
+          className={`flex items-center justify-center h-[66px] border-b border-border`}
         >
           <div className={`font-bold text-sidebar-active tracking-wide`}>
             {compact ? (
-              <img src="/logo.png" alt="logo" className="max-w-none size-12" />
+              <img
+                src={companyLogoSquareUrl || "/logo.png"}
+                alt="logo"
+                className="max-w-none size-12 object-contain"
+              />
             ) : (
-              <img src="/logo-horizontal.png" alt="logo" className="size-32" />
+              <img
+                src={companyLogoWideUrl || "/logo-horizontal.png"}
+                alt="logo"
+                className="size-32 object-contain"
+              />
             )}
           </div>
         </div>

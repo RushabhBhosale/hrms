@@ -4,6 +4,11 @@ const CompanySchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     admin: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    // Optional company logo (stored as filename under /uploads)
+    logo: { type: String },
+    // Optional separate logos for different layouts
+    logoSquare: { type: String },       // compact sidebar / favicon-like
+    logoHorizontal: { type: String },   // full-width header/sidebar
     // Registration + approval workflow
     status: {
       type: String,

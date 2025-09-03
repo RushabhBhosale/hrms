@@ -8,6 +8,13 @@ export default function CompanyProfile() {
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [logo, setLogo] = useState<string | null>(null); // generic fallback
+  const [logoSquare, setLogoSquare] = useState<string | null>(null);
+  const [logoHorizontal, setLogoHorizontal] = useState<string | null>(null);
+  const [squareFile, setSquareFile] = useState<File | null>(null);
+  const [wideFile, setWideFile] = useState<File | null>(null);
+  const [uploadingSquare, setUploadingSquare] = useState(false);
+  const [uploadingWide, setUploadingWide] = useState(false);
   const [theme, setTheme] = useState<{ [k: string]: string }>({
     primary: "#2563eb",
     secondary: "#10b981",
@@ -23,6 +30,9 @@ export default function CompanyProfile() {
       try {
         const res = await api.get("/companies/profile");
         setName(res.data?.company?.name || "");
+        setLogo(res.data?.company?.logo || null);
+        setLogoSquare(res.data?.company?.logoSquare || null);
+        setLogoHorizontal(res.data?.company?.logoHorizontal || null);
         // Try to load theme
         const t = await api.get("/companies/theme");
         if (t?.data?.theme) setTheme((prev) => ({ ...prev, ...t.data.theme }));
@@ -58,7 +68,7 @@ export default function CompanyProfile() {
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Company Profile</h2>
-        <p className="text-sm text-muted">Update your company name.</p>
+        <p className="text-sm text-muted">Update your company name and logo.</p>
       </div>
 
       {err && (
@@ -103,6 +113,150 @@ export default function CompanyProfile() {
         </form>
       </section>
 
+      {/* Logos upload */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm">
+        <div className="flex items-center justify-between border-b border-border px-6 py-4">
+          <div>
+            <h3 className="text-lg font-semibold">Company Logos</h3>
+            <p className="text-xs text-muted">
+              Upload square and horizontal variants
+            </p>
+          </div>
+        </div>
+
+        <div className="px-6 py-6 space-y-10">
+          {/* Square logo */}
+          <div className="grid gap-6 md:grid-cols-[auto_1fr] items-start">
+            <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-md border border-border bg-bg shadow-sm">
+              {logoSquare ? (
+                <img
+                  src={`${
+                    import.meta.env.VITE_API_URL || "http://localhost:4000"
+                  }/uploads/${logoSquare}`}
+                  alt="Square logo"
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <span className="text-xs text-muted">No square logo</span>
+              )}
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium">Square Logo (1:1)</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setSquareFile(e.target.files?.[0] || null)}
+                className="block text-sm"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={async () => {
+                    if (!squareFile) return;
+                    setErr(null);
+                    setOk(null);
+                    setUploadingSquare(true);
+                    try {
+                      const fd = new FormData();
+                      fd.append("logo", squareFile);
+                      const res = await api.post("/companies/logo-square", fd, {
+                        headers: { "Content-Type": "multipart/form-data" },
+                      });
+                      setLogoSquare(res.data?.logoSquare || null);
+                      setSquareFile(null);
+                      setOk("Square logo updated");
+                    } catch (e: any) {
+                      setErr(
+                        e?.response?.data?.error ||
+                          "Failed to upload square logo"
+                      );
+                    } finally {
+                      setUploadingSquare(false);
+                    }
+                  }}
+                  disabled={uploadingSquare || !squareFile}
+                  className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+                >
+                  {uploadingSquare ? "Uploading…" : "Upload"}
+                </button>
+                <p className="text-xs text-muted">
+                  PNG/JPG • 256×256+ recommended
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Horizontal logo */}
+          <div className="grid gap-6 md:grid-cols-[auto_1fr] items-start">
+            <div className="flex h-20 w-52 items-center justify-center overflow-hidden rounded-md border border-border bg-bg shadow-sm">
+              {logoHorizontal ? (
+                <img
+                  src={`${
+                    import.meta.env.VITE_API_URL || "http://localhost:4000"
+                  }/uploads/${logoHorizontal}`}
+                  alt="Horizontal logo"
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <span className="text-xs text-muted">No horizontal logo</span>
+              )}
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm font-medium">
+                Horizontal Logo (wide)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setWideFile(e.target.files?.[0] || null)}
+                className="block text-sm"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={async () => {
+                    if (!wideFile) return;
+                    setErr(null);
+                    setOk(null);
+                    setUploadingWide(true);
+                    try {
+                      const fd = new FormData();
+                      fd.append("logo", wideFile);
+                      const res = await api.post(
+                        "/companies/logo-horizontal",
+                        fd,
+                        { headers: { "Content-Type": "multipart/form-data" } }
+                      );
+                      setLogoHorizontal(res.data?.logoHorizontal || null);
+                      setWideFile(null);
+                      setOk("Horizontal logo updated");
+                    } catch (e: any) {
+                      setErr(
+                        e?.response?.data?.error ||
+                          "Failed to upload horizontal logo"
+                      );
+                    } finally {
+                      setUploadingWide(false);
+                    }
+                  }}
+                  disabled={uploadingWide || !wideFile}
+                  className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+                >
+                  {uploadingWide ? "Uploading…" : "Upload"}
+                </button>
+                <p className="text-xs text-muted">
+                  PNG/JPG • 512×128+ recommended
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Fallback info */}
+          <p className="text-xs text-muted text-center">
+            If a variant is missing, the app will use the available logo or
+            default.
+          </p>
+        </div>
+      </section>
+
       {/* Theme customization */}
       <section className="rounded-lg border border-border bg-surface shadow-sm">
         <div className="border-b border-border px-6 py-4 flex items-center justify-between">
@@ -111,21 +265,34 @@ export default function CompanyProfile() {
         </div>
         <div className="px-6 py-5 space-y-5">
           <div className="grid gap-6 md:grid-cols-3">
-            {(["primary", "secondary", "accent", "success", "warning", "error"] as const).map((key) => (
+            {(
+              [
+                "primary",
+                "secondary",
+                "accent",
+                "success",
+                "warning",
+                "error",
+              ] as const
+            ).map((key) => (
               <div key={key} className="space-y-2">
                 <label className="text-sm font-medium capitalize">{key}</label>
                 <div className="flex items-center gap-3">
                   <input
                     type="color"
                     value={theme[key]}
-                    onChange={(e) => setTheme((t) => ({ ...t, [key]: e.target.value }))}
+                    onChange={(e) =>
+                      setTheme((t) => ({ ...t, [key]: e.target.value }))
+                    }
                     className="h-10 w-16 rounded-md border border-border bg-surface cursor-pointer"
                     aria-label={`${key} color`}
                   />
                   <input
                     type="text"
                     value={theme[key]}
-                    onChange={(e) => setTheme((t) => ({ ...t, [key]: e.target.value }))}
+                    onChange={(e) =>
+                      setTheme((t) => ({ ...t, [key]: e.target.value }))
+                    }
                     className="flex-1 rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm"
                     placeholder="#000000"
                   />
@@ -138,14 +305,19 @@ export default function CompanyProfile() {
             <button
               onClick={async () => {
                 setSavingTheme(true);
-                setOk(null); setErr(null);
+                setOk(null);
+                setErr(null);
                 try {
-                  const payload = Object.fromEntries(Object.entries(theme).filter(([_, v]) => typeof v === 'string' && v));
-                  await api.put('/companies/theme', payload);
-                  setOk('Theme updated');
+                  const payload = Object.fromEntries(
+                    Object.entries(theme).filter(
+                      ([_, v]) => typeof v === "string" && v
+                    )
+                  );
+                  await api.put("/companies/theme", payload);
+                  setOk("Theme updated");
                   applyTheme(theme);
                 } catch (e: any) {
-                  setErr(e?.response?.data?.error || 'Failed to update theme');
+                  setErr(e?.response?.data?.error || "Failed to update theme");
                 } finally {
                   setSavingTheme(false);
                 }
@@ -153,9 +325,11 @@ export default function CompanyProfile() {
               disabled={savingTheme}
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
             >
-              {savingTheme ? 'Saving…' : 'Save Theme'}
+              {savingTheme ? "Saving…" : "Save Theme"}
             </button>
-            <span className="text-xs text-muted">Changes apply immediately in this session.</span>
+            <span className="text-xs text-muted">
+              Changes apply immediately in this session.
+            </span>
           </div>
         </div>
       </section>
@@ -163,7 +337,13 @@ export default function CompanyProfile() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-2">
       <label className="text-sm font-medium">{label}</label>
