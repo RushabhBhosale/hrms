@@ -56,16 +56,18 @@ export default function AdminDash() {
     closed: number;
   } | null>(null);
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
+  const [leaveMap, setLeaveMap] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     async function load() {
       try {
         setErr(null);
         setLoadingProjects(true);
-        const [empRes, att, projRes] = await Promise.all([
+        const [empRes, att, projRes, leavesRes] = await Promise.all([
           api.get("/companies/employees"),
           api.get("/attendance/company/today"),
           api.get("/projects"),
+          api.get("/leaves/company/today"),
         ]);
         const empList: EmployeeLite[] = empRes.data.employees || [];
         const projList: ProjectLite[] = (projRes.data.projects || []).filter(
@@ -73,6 +75,12 @@ export default function AdminDash() {
         );
         setEmployees(empList);
         setProjects(projList);
+        const lmap: Record<string, boolean> = {};
+        (leavesRes.data.leaves || []).forEach((l: any) => {
+          const id = l.employee.id || l.employee._id;
+          lmap[id] = true;
+        });
+        setLeaveMap(lmap);
         setStats({
           employees: empList.length,
           present: att.data.attendance.length,
@@ -271,9 +279,10 @@ export default function AdminDash() {
               (async () => {
                 try {
                   setLoadingProjects(true);
-                  const [empRes, projRes] = await Promise.all([
+                  const [empRes, projRes, leavesRes] = await Promise.all([
                     api.get("/companies/employees"),
                     api.get("/projects"),
+                    api.get("/leaves/company/today"),
                   ]);
                   const empList: EmployeeLite[] = empRes.data.employees || [];
                   const projList: ProjectLite[] = (
@@ -281,6 +290,12 @@ export default function AdminDash() {
                   ).filter((p: ProjectLite) => !p.isPersonal);
                   setEmployees(empList);
                   setProjects(projList);
+                  const lmap: Record<string, boolean> = {};
+                  (leavesRes.data.leaves || []).forEach((l: any) => {
+                    const id = l.employee.id || l.employee._id;
+                    lmap[id] = true;
+                  });
+                  setLeaveMap(lmap);
                   setStats((s) => ({ ...s, employees: empList.length }));
                 } finally {
                   setLoadingProjects(false);
@@ -300,6 +315,7 @@ export default function AdminDash() {
               <tr className="text-left text-muted">
                 <th className="py-2 pr-4 font-medium">Employee</th>
                 <th className="py-2 pr-4 font-medium">Email</th>
+                <th className="py-2 pr-4 font-medium">Status</th>
                 <th className="py-2 font-medium">Projects</th>
               </tr>
             </thead>
@@ -309,6 +325,23 @@ export default function AdminDash() {
                   <td className="py-2 pr-4 whitespace-nowrap">{emp.name}</td>
                   <td className="py-2 pr-4 text-muted whitespace-nowrap">
                     {emp.email}
+                  </td>
+                  <td className="py-2 pr-4 whitespace-nowrap">
+                    <span
+                      className={[
+                        "inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium",
+                        leaveMap[emp.id]
+                          ? "bg-accent/10 text-accent"
+                          : "bg-secondary/10 text-secondary",
+                      ].join(" ")}
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          leaveMap[emp.id] ? "bg-accent" : "bg-secondary"
+                        }`}
+                      />
+                      {leaveMap[emp.id] ? "On Leave" : "Present"}
+                    </span>
                   </td>
                   <td className="py-2">
                     {projs.length > 0 ? (
@@ -331,7 +364,7 @@ export default function AdminDash() {
               ))}
               {assignments.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="py-4 text-center text-muted">
+                  <td colSpan={4} className="py-4 text-center text-muted">
                     {loadingProjects
                       ? "Loading assignments…"
                       : "No employees or projects found."}
