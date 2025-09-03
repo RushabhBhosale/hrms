@@ -33,6 +33,7 @@ export default function ProjectDetails() {
   const me = getEmployee();
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [timeTotalMinutes, setTimeTotalMinutes] = useState<number>(0);
   const [taskTotal, setTaskTotal] = useState<number>(0);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [loading, setLoading] = useState(false);
@@ -71,13 +72,15 @@ export default function ProjectDetails() {
     if (!id) return;
     setLoading(true);
     try {
-      const [proj, tlist] = await Promise.all([
+      const [proj, tlist, tsum] = await Promise.all([
         api.get(`/projects/${id}`),
         api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } }),
+        api.get(`/projects/${id}/time-summary`),
       ]);
       setProject(proj.data.project);
       setTasks(tlist.data.tasks || []);
       setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
+      setTimeTotalMinutes(tsum.data.totalTimeSpentMinutes || 0);
       const est = proj?.data?.project?.estimatedTimeMinutes || 0;
       setEditEstimatedHours(est ? String(Math.round((est / 60) * 10) / 10) : '');
       // Try to load full employees list (admin/hr/manager). Fallback to project members only.
@@ -151,9 +154,7 @@ export default function ProjectDetails() {
     );
   }
 
-  const spentMinutes = useMemo(() => {
-    return (tasks || []).reduce((s, t) => s + (t.timeSpentMinutes || 0), 0);
-  }, [tasks]);
+  const spentMinutes = timeTotalMinutes;
 
   const canEditEstimate = useMemo(() => {
     return me?.primaryRole === 'ADMIN' || me?.primaryRole === 'SUPERADMIN';
@@ -171,6 +172,15 @@ export default function ProjectDetails() {
     } finally {
       setSavingEstimate(false);
     }
+  }
+
+  // Refresh time summary after changing any task's time
+  async function refreshTimeSummary() {
+    if (!id) return;
+    try {
+      const tsum = await api.get(`/projects/${id}/time-summary`);
+      setTimeTotalMinutes(tsum.data.totalTimeSpentMinutes || 0);
+    } catch {}
   }
 
   const sortedTasks = useMemo(() => {
@@ -223,14 +233,21 @@ export default function ProjectDetails() {
     // Replace total time for this task
     await api.put(`/projects/${id}/tasks/${taskId}/time`, { hours });
     setTimeEntry((s) => ({ ...s, [taskId]: { hours: '' } }));
-    const tlist = await api.get(`/projects/${id}/tasks`);
-    setTasks(tlist.data.tasks || []);
+    try {
+      const tlist = await api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } });
+      setTasks(tlist.data.tasks || []);
+      setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
+    } catch {}
+    await refreshTimeSummary();
   }
 
   async function updateStatus(taskId: string, status: Task['status']) {
     await api.put(`/projects/${id}/tasks/${taskId}`, { status });
-    const tlist = await api.get(`/projects/${id}/tasks`);
-    setTasks(tlist.data.tasks || []);
+    try {
+      const tlist = await api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } });
+      setTasks(tlist.data.tasks || []);
+      setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
+    } catch {}
   }
 
   return (

@@ -52,9 +52,8 @@ export default function ProjectsAdmin() {
       await Promise.all(
         projList.map(async (p) => {
           try {
-            const t = await api.get(`/projects/${p._id}/tasks`);
-            const tasks = (t.data.tasks || []) as { timeSpentMinutes?: number }[];
-            map[p._id] = tasks.reduce((s, x) => s + (x.timeSpentMinutes || 0), 0);
+            const t = await api.get(`/projects/${p._id}/time-summary`);
+            map[p._id] = t.data.totalTimeSpentMinutes || 0;
           } catch {
             map[p._id] = 0;
           }

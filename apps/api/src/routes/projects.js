@@ -223,6 +223,34 @@ router.get('/:id', auth, async (req, res) => {
   res.json({ project });
 });
 
+// Total time summary for a project (minutes)
+// For privileged users (admin/hr/manager): aggregates across all tasks in the project
+// For regular members: aggregates only tasks assigned to the current user
+router.get('/:id/time-summary', auth, async (req, res) => {
+  const project = await Project.findById(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found' });
+  if (!canViewProject(req.employee, project))
+    return res.status(403).json({ error: 'Forbidden' });
+
+  const isHrOrManager = (req.employee.subRoles || []).some((r) => r === 'hr' || r === 'manager');
+  const isPrivileged = isAdmin(req.employee) || isHrOrManager;
+
+  const match = { project: project._id };
+  if (!isPrivileged) {
+    match["assignedTo"] = req.employee.id;
+  }
+  try {
+    const agg = await Task.aggregate([
+      { $match: match },
+      { $group: { _id: null, total: { $sum: { $ifNull: ["$timeSpentMinutes", 0] } } } },
+    ]);
+    const total = agg?.[0]?.total || 0;
+    res.json({ totalTimeSpentMinutes: total });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to compute time summary' });
+  }
+});
+
 // List project members with minimal fields
 router.get('/:id/members', auth, async (req, res) => {
   const project = await Project.findById(req.params.id);
