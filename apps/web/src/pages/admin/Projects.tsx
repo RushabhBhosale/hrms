@@ -11,6 +11,7 @@ type Project = {
   techStack?: string[];
   teamLead: string;
   members: string[];
+  estimatedTimeMinutes?: number;
 };
 
 export default function ProjectsAdmin() {
@@ -19,12 +20,14 @@ export default function ProjectsAdmin() {
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [spentByProject, setSpentByProject] = useState<Record<string, number>>({});
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [tech, setTech] = useState('');
   const [teamLead, setTeamLead] = useState('');
   const [members, setMembers] = useState<string[]>([]);
+  const [estimatedHours, setEstimatedHours] = useState('');
 
   const teamLeadOptions = useMemo(() => {
     // prefer HR or manager as team lead
@@ -40,8 +43,24 @@ export default function ProjectsAdmin() {
         api.get('/companies/employees'),
         api.get('/projects'),
       ]);
+      const projList: Project[] = projs.data.projects || [];
       setEmployees(emps.data.employees || []);
-      setProjects(projs.data.projects || []);
+      setProjects(projList);
+
+      // Load total spent minutes per project (best-effort)
+      const map: Record<string, number> = {};
+      await Promise.all(
+        projList.map(async (p) => {
+          try {
+            const t = await api.get(`/projects/${p._id}/tasks`);
+            const tasks = (t.data.tasks || []) as { timeSpentMinutes?: number }[];
+            map[p._id] = tasks.reduce((s, x) => s + (x.timeSpentMinutes || 0), 0);
+          } catch {
+            map[p._id] = 0;
+          }
+        })
+      );
+      setSpentByProject(map);
     } finally {
       setLoading(false);
     }
@@ -60,16 +79,24 @@ export default function ProjectsAdmin() {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
-      await api.post('/projects', { title, description, techStack, teamLead, members });
+      const eh = parseFloat(estimatedHours || '0');
+      const payload: any = { title, description, techStack, teamLead, members };
+      if (isFinite(eh) && eh > 0) payload.estimatedTimeMinutes = Math.round(eh * 60);
+      await api.post('/projects', payload);
       setTitle('');
       setDescription('');
       setTech('');
       setTeamLead('');
       setMembers([]);
+      setEstimatedHours('');
       await load();
     } finally {
       setLoading(false);
     }
+  }
+
+  function minutesToHours(min: number) {
+    return Math.round((min / 60) * 10) / 10;
   }
 
   return (
@@ -98,6 +125,18 @@ export default function ProjectsAdmin() {
               value={tech}
               onChange={(e) => setTech(e.target.value)}
               placeholder="e.g. React, Node, MongoDB"
+            />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Estimated Time (hours)</label>
+            <input
+              className="w-full h-10 rounded border border-border bg-bg px-3"
+              type="number"
+              min={0}
+              step={0.1}
+              value={estimatedHours}
+              onChange={(e) => setEstimatedHours(e.target.value)}
+              placeholder="e.g. 120"
             />
           </div>
           <div className="md:col-span-2">
@@ -172,6 +211,31 @@ export default function ProjectsAdmin() {
                 {!!(p.techStack?.length) && (
                   <div className="mt-2 text-xs text-muted">Tech: {p.techStack?.join(', ')}</div>
                 )}
+                <div className="mt-2 text-xs flex items-center gap-4">
+                  <span className="text-muted">
+                    Est: {minutesToHours(p.estimatedTimeMinutes || 0)} h
+                  </span>
+                  <span className={(() => {
+                    const spent = spentByProject[p._id] || 0;
+                    const over = spent > (p.estimatedTimeMinutes || 0);
+                    return over ? 'text-error font-medium' : 'text-muted';
+                  })()}>
+                    Spent: {minutesToHours(spentByProject[p._id] || 0)} h
+                  </span>
+                  {(() => {
+                    const est = p.estimatedTimeMinutes || 0;
+                    const spent = spentByProject[p._id] || 0;
+                    const over = spent - est;
+                    if (over > 0) {
+                      return (
+                        <span className="inline-flex items-center gap-1 text-error">
+                          • Over by {minutesToHours(over)} h
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <Link
@@ -191,4 +255,3 @@ export default function ProjectsAdmin() {
     </div>
   );
 }
-

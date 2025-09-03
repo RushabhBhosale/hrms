@@ -61,6 +61,15 @@ router.get('/personal', auth, async (req, res) => {
 router.post('/', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (req, res) => {
   try {
     const { title, description, techStack, teamLead, members } = req.body;
+    // Estimated time handling: accept minutes or hours
+    let estimatedTimeMinutes = 0;
+    if (req.body.estimatedTimeMinutes !== undefined) {
+      const m = parseInt(req.body.estimatedTimeMinutes, 10);
+      if (isFinite(m) && m >= 0) estimatedTimeMinutes = m;
+    } else if (req.body.estimatedHours !== undefined || req.body.estimatedTimeHours !== undefined) {
+      const h = parseFloat(String(req.body.estimatedHours ?? req.body.estimatedTimeHours));
+      if (isFinite(h) && h >= 0) estimatedTimeMinutes = Math.round(h * 60);
+    }
     const project = await Project.create({
       title,
       description,
@@ -68,6 +77,7 @@ router.post('/', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (req, res)
       teamLead,
       members,
       company: req.employee.company,
+      estimatedTimeMinutes,
     });
     res.json({ project });
 
@@ -243,6 +253,16 @@ router.put('/:id', auth, requirePrimary(['ADMIN', 'SUPERADMIN']), async (req, re
   if (techStack !== undefined) project.techStack = techStack;
   if (teamLead !== undefined) project.teamLead = teamLead;
   if (members !== undefined) project.members = members;
+  // Estimated time: accept minutes or hours
+  if (req.body.estimatedTimeMinutes !== undefined) {
+    const m = parseInt(req.body.estimatedTimeMinutes, 10);
+    if (!isFinite(m) || m < 0) return res.status(400).json({ error: 'Invalid estimatedTimeMinutes' });
+    project.estimatedTimeMinutes = m;
+  } else if (req.body.estimatedHours !== undefined || req.body.estimatedTimeHours !== undefined) {
+    const h = parseFloat(String(req.body.estimatedHours ?? req.body.estimatedTimeHours));
+    if (!isFinite(h) || h < 0) return res.status(400).json({ error: 'Invalid estimated hours' });
+    project.estimatedTimeMinutes = Math.round(h * 60);
+  }
   await project.save();
   res.json({ project });
 });
@@ -313,8 +333,27 @@ router.get('/:id/tasks', auth, async (req, res) => {
   const isPrivileged = isAdmin(req.employee) || isHrOrManager;
   const baseQuery = { project: project._id };
   const query = isPrivileged ? baseQuery : { ...baseQuery, assignedTo: req.employee.id };
-  const tasks = await Task.find(query).lean();
-  res.json({ tasks });
+  // Optional pagination
+  let limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : undefined;
+  let page = req.query.page !== undefined ? parseInt(req.query.page, 10) : 1;
+  if (isFinite(limit)) {
+    limit = Math.max(1, Math.min(100, limit));
+  } else {
+    limit = undefined;
+  }
+  if (!isFinite(page) || page < 1) page = 1;
+
+  const sort = { createdAt: -1 };
+
+  if (limit) {
+    const total = await Task.countDocuments(query);
+    const tasks = await Task.find(query).sort(sort).skip((page - 1) * limit).limit(limit).lean();
+    const pages = Math.max(1, Math.ceil(total / limit));
+    return res.json({ tasks, total, page, pages, limit });
+  }
+  // No pagination requested; return all (existing behavior)
+  const tasks = await Task.find(query).sort(sort).lean();
+  res.json({ tasks, total: tasks.length, page: 1, pages: 1, limit: tasks.length });
 });
 
 // Update a task

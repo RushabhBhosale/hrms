@@ -11,6 +11,7 @@ type Project = {
   techStack?: string[];
   teamLead: string;
   members: string[];
+  estimatedTimeMinutes?: number;
 };
 
 type Task = {
@@ -23,6 +24,8 @@ type Task = {
   priority?: 'URGENT' | 'FIRST' | 'SECOND' | 'LEAST';
   comments?: { author: string; text: string; createdAt: string }[];
   timeSpentMinutes?: number;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export default function ProjectDetails() {
@@ -30,6 +33,7 @@ export default function ProjectDetails() {
   const me = getEmployee();
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskTotal, setTaskTotal] = useState<number>(0);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -41,6 +45,8 @@ export default function ProjectDetails() {
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string }>>({});
   const [openCommentsFor, setOpenCommentsFor] = useState<string | null>(null);
+  const [editEstimatedHours, setEditEstimatedHours] = useState<string>('');
+  const [savingEstimate, setSavingEstimate] = useState(false);
 
   const memberIds = useMemo(() => {
     if (!project) return [] as string[];
@@ -67,10 +73,13 @@ export default function ProjectDetails() {
     try {
       const [proj, tlist] = await Promise.all([
         api.get(`/projects/${id}`),
-        api.get(`/projects/${id}/tasks`),
+        api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } }),
       ]);
       setProject(proj.data.project);
       setTasks(tlist.data.tasks || []);
+      setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
+      const est = proj?.data?.project?.estimatedTimeMinutes || 0;
+      setEditEstimatedHours(est ? String(Math.round((est / 60) * 10) / 10) : '');
       // Try to load full employees list (admin/hr/manager). Fallback to project members only.
       try {
         const emps = await api.get('/companies/employees');
@@ -88,6 +97,92 @@ export default function ProjectDetails() {
     loadAll();
   }, [id]);
 
+  function minutesToHours(min: number) {
+    return Math.round((min / 60) * 10) / 10;
+  }
+
+  // Tiny donut chart copied inline (no external deps)
+  function Donut({
+    data,
+    size = 160,
+    thickness = 22,
+  }: {
+    data: { label: string; value: number; color: string }[];
+    size?: number;
+    thickness?: number;
+  }) {
+    const total = data.reduce((s, d) => s + d.value, 0) || 1;
+    const r = size / 2;
+    const ir = r - thickness;
+    let a = -90;
+    const arcs = data.map((d) => {
+      const ang = (d.value / total) * 360;
+      const s = a;
+      const e = a + ang;
+      a = e;
+      return { ...d, start: s, end: e };
+    });
+    function arcPath(startAngle: number, endAngle: number) {
+      const sa = (startAngle * Math.PI) / 180;
+      const ea = (endAngle * Math.PI) / 180;
+      const x1 = r + r * Math.cos(sa);
+      const y1 = r + r * Math.sin(sa);
+      const x2 = r + r * Math.cos(ea);
+      const y2 = r + r * Math.sin(ea);
+      const xi1 = r + ir * Math.cos(ea);
+      const yi1 = r + ir * Math.sin(ea);
+      const xi2 = r + ir * Math.cos(sa);
+      const yi2 = r + ir * Math.sin(sa);
+      const large = endAngle - startAngle > 180 ? 1 : 0;
+      return `M ${x1} ${y1}
+              A ${r} ${r} 0 ${large} 1 ${x2} ${y2}
+              L ${xi1} ${yi1}
+              A ${ir} ${ir} 0 ${large} 0 ${xi2} ${yi2}
+              Z`;
+    }
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={r} cy={r} r={ir} fill="white" />
+        {arcs.map((seg, i) => (
+          <path key={i} d={arcPath(seg.start, seg.end)} fill={seg.color} />
+        ))}
+        <circle cx={r} cy={r} r={ir} fill="white" />
+      </svg>
+    );
+  }
+
+  const spentMinutes = useMemo(() => {
+    return (tasks || []).reduce((s, t) => s + (t.timeSpentMinutes || 0), 0);
+  }, [tasks]);
+
+  const canEditEstimate = useMemo(() => {
+    return me?.primaryRole === 'ADMIN' || me?.primaryRole === 'SUPERADMIN';
+  }, [me]);
+
+  async function saveEstimate() {
+    if (!id) return;
+    const h = parseFloat(editEstimatedHours || '0');
+    if (!isFinite(h) || h < 0) return;
+    setSavingEstimate(true);
+    try {
+      const payload: any = { estimatedTimeMinutes: Math.round(h * 60) };
+      const resp = await api.put(`/projects/${id}`, payload);
+      setProject(resp.data.project);
+    } finally {
+      setSavingEstimate(false);
+    }
+  }
+
+  const sortedTasks = useMemo(() => {
+    const list = [...tasks];
+    list.sort((a, b) => {
+      const ad = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bd = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bd - ad;
+    });
+    return list;
+  }, [tasks]);
+
   async function addTask(e: React.FormEvent) {
     e.preventDefault();
     if (!id || !newTitle || !assignee) return;
@@ -103,8 +198,9 @@ export default function ProjectDetails() {
       setNewDesc('');
       setAssignee('');
       setPriority('SECOND');
-      const tlist = await api.get(`/projects/${id}/tasks`);
-      setTasks(tlist.data.tasks || []);
+        const tlist = await api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } });
+        setTasks(tlist.data.tasks || []);
+        setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
     } finally {
       setLoading(false);
     }
@@ -115,8 +211,9 @@ export default function ProjectDetails() {
     if (!text) return;
     await api.post(`/projects/${id}/tasks/${taskId}/comments`, { text });
     setCommentText((s) => ({ ...s, [taskId]: '' }));
-    const tlist = await api.get(`/projects/${id}/tasks`);
-    setTasks(tlist.data.tasks || []);
+        const tlist = await api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } });
+        setTasks(tlist.data.tasks || []);
+        setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
   }
 
   async function saveTime(taskId: string) {
@@ -163,6 +260,98 @@ export default function ProjectDetails() {
                   <div className="text-xs text-muted">{m.subRoles?.[0] || 'member'}</div>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Time overview */}
+          <div className="mt-6 grid lg:grid-cols-2 gap-6">
+            <div className="rounded-md border border-border bg-bg p-4">
+              <div className="text-sm font-medium mb-3">Time Overview</div>
+              <div className="flex items-center gap-6 flex-wrap">
+                {(() => {
+                  const est = project.estimatedTimeMinutes || 0;
+                  const spent = spentMinutes;
+                  const data = (() => {
+                    if (spent <= est) {
+                      return [
+                        { label: 'Spent', value: spent, color: '#2563eb' },
+                        { label: 'Remaining', value: Math.max(0, est - spent), color: '#e5e7eb' },
+                      ];
+                    }
+                    // overshoot
+                    return [
+                      { label: 'Within Estimate', value: est, color: '#2563eb' },
+                      { label: 'Over', value: Math.max(0, spent - est), color: '#ef4444' },
+                    ];
+                  })();
+                  return <Donut data={data} />;
+                })()}
+                <div className="space-y-2 text-sm min-w-[180px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted">Estimated</span>
+                    <span className="font-medium">{minutesToHours(project.estimatedTimeMinutes || 0)} h</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted">Spent</span>
+                    <span className="font-medium">{minutesToHours(spentMinutes)} h</span>
+                  </div>
+                  {(project.estimatedTimeMinutes || 0) >= spentMinutes ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted">Remaining</span>
+                      <span className="font-medium">{minutesToHours(Math.max(0, (project.estimatedTimeMinutes || 0) - spentMinutes))} h</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between text-error">
+                      <span>Over by</span>
+                      <span className="font-medium">{minutesToHours(spentMinutes - (project.estimatedTimeMinutes || 0))} h</span>
+                    </div>
+                  )}
+                  <div className="h-2 w-full bg-surface border border-border rounded overflow-hidden">
+                    {(() => {
+                      const est = project.estimatedTimeMinutes || 0;
+                      const spent = spentMinutes;
+                      if (spent <= est) {
+                        const pct = Math.min(100, (spent / Math.max(1, est)) * 100);
+                        return <div className="h-full bg-primary" style={{ width: `${pct}%` }} />;
+                      }
+                      // overshoot: show full bar for estimate, with small red cap indicator for overshoot
+                      const overPct = Math.min(100, ((spent - est) / Math.max(1, spent)) * 100);
+                      return (
+                        <div className="h-full w-full relative">
+                          <div className="absolute inset-0 bg-primary" />
+                          <div className="absolute top-0 right-0 h-full" style={{ width: `${overPct}%`, background: '#ef4444' }} />
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-md border border-border bg-bg p-4">
+              <div className="text-sm font-medium mb-3">Edit Estimate</div>
+              {canEditEstimate ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    className="h-10 rounded border border-border bg-surface px-3"
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    placeholder="Estimated hours"
+                    value={editEstimatedHours}
+                    onChange={(e) => setEditEstimatedHours(e.target.value)}
+                  />
+                  <button
+                    onClick={saveEstimate}
+                    disabled={savingEstimate}
+                    className="h-10 px-4 rounded-md border border-border hover:bg-surface disabled:opacity-50"
+                  >
+                    {savingEstimate ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              ) : (
+                <div className="text-sm text-muted">Only admins can update the estimate.</div>
+              )}
             </div>
           </div>
         </div>
@@ -220,9 +409,9 @@ export default function ProjectDetails() {
         </form>
       )}
 
-      {/* Tasks list */}
+      {/* Tasks list (recent 3) */}
       <div className="space-y-3">
-        {tasks.map((t) => {
+        {sortedTasks.slice(0, 3).map((t) => {
           const assigneeName = employees.find((e) => e.id === String(t.assignedTo))?.name;
           const statusLabel = t.status === 'PENDING' ? 'Pending' : t.status === 'INPROGRESS' ? 'In Progress' : 'Done';
           const totalHours = Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100;
@@ -292,6 +481,17 @@ export default function ProjectDetails() {
           );
         })}
         {tasks.length === 0 && <div className="text-sm text-muted">No tasks yet.</div>}
+        {taskTotal > 3 && (
+          <div>
+            <Link
+              to="tasks"
+              relative="path"
+              className="h-10 px-4 rounded-md border border-border hover:bg-bg text-sm inline-flex items-center"
+            >
+              View All Tasks
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Comments modal */}

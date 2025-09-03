@@ -10,6 +10,8 @@ const ProjectSchema = new mongoose.Schema(
     company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
     // Personal projects are owned by a single employee and used for non-project tasks
     isPersonal: { type: Boolean, default: false },
+    // Estimated total time to complete (in minutes)
+    estimatedTimeMinutes: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true }
 );

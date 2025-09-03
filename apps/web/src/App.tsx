@@ -27,6 +27,7 @@ import AnnouncementsAdmin from "./pages/admin/Announcements";
 import CompanyProfile from "./pages/admin/CompanyProfile";
 import MyProjects from "./pages/projects/MyProjects";
 import ProjectDetails from "./pages/projects/ProjectDetails";
+import ProjectTasks from "./pages/projects/ProjectTasks";
 import MyTasks from "./pages/tasks/MyTasks";
 
 import EmployeeDash from "./pages/employee/Dashboard";
@@ -82,6 +83,7 @@ export default function App() {
         <Route path="employees/:id" element={<EmployeeDetails />} />
         <Route path="projects" element={<ProjectsAdmin />} />
         <Route path="projects/:id" element={<ProjectDetails />} />
+        <Route path="projects/:id/tasks" element={<ProjectTasks />} />
         <Route path="attendances" element={<AttendanceRecords />} />
         <Route path="report" element={<MonthlyReport />} />
         <Route path="leave-settings" element={<LeaveSettings />} />
@@ -138,6 +140,7 @@ export default function App() {
         <Route path="tasks" element={<MyTasks />} />
         <Route path="projects" element={<MyProjects />} />
         <Route path="projects/:id" element={<ProjectDetails />} />
+        <Route path="projects/:id/tasks" element={<ProjectTasks />} />
         <Route path="announcements" element={<Announcements />} />
         <Route path="profile" element={<Profile />} />
       </Route>
