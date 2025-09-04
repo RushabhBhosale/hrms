@@ -402,6 +402,25 @@ router.post("/:id/tasks", auth, async (req, res) => {
   ];
   if (!allowed.includes(String(assignedTo)))
     return res.status(400).json({ error: "Assignee not in project" });
+  // Parse optional estimate: accept minutes or hours
+  let estimatedTimeMinutes = 0;
+  if (req.body.estimatedTimeMinutes !== undefined) {
+    const m = parseInt(req.body.estimatedTimeMinutes, 10);
+    if (!isFinite(m) || m < 0)
+      return res.status(400).json({ error: "Invalid estimatedTimeMinutes" });
+    estimatedTimeMinutes = m;
+  } else if (
+    req.body.estimatedHours !== undefined ||
+    req.body.estimatedTimeHours !== undefined
+  ) {
+    const h = parseFloat(
+      String(req.body.estimatedHours ?? req.body.estimatedTimeHours)
+    );
+    if (!isFinite(h) || h < 0)
+      return res.status(400).json({ error: "Invalid estimated hours" });
+    estimatedTimeMinutes = Math.round(h * 60);
+  }
+
   const newTask = {
     project: project._id,
     title,
@@ -410,6 +429,7 @@ router.post("/:id/tasks", auth, async (req, res) => {
     createdBy: req.employee.id,
   };
   if (priority) newTask.priority = priority; // enum enforced by schema
+  if (estimatedTimeMinutes) newTask.estimatedTimeMinutes = estimatedTimeMinutes;
   const task = await Task.create(newTask);
   res.json({ task });
 
@@ -527,7 +547,10 @@ router.put("/:id/tasks/:taskId", auth, async (req, res) => {
     title !== undefined ||
     description !== undefined ||
     assignedTo !== undefined ||
-    priority !== undefined
+    priority !== undefined ||
+    req.body.estimatedTimeMinutes !== undefined ||
+    req.body.estimatedHours !== undefined ||
+    req.body.estimatedTimeHours !== undefined
   ) {
     if (!isLeadOrAdmin) return res.status(403).json({ error: "Forbidden" });
   }
@@ -543,6 +566,23 @@ router.put("/:id/tasks/:taskId", auth, async (req, res) => {
     task.assignedTo = assignedTo;
   }
   if (priority !== undefined) task.priority = priority; // enum enforced by schema
+  // Estimated time updates
+  if (req.body.estimatedTimeMinutes !== undefined) {
+    const m = parseInt(req.body.estimatedTimeMinutes, 10);
+    if (!isFinite(m) || m < 0)
+      return res.status(400).json({ error: "Invalid estimatedTimeMinutes" });
+    task.estimatedTimeMinutes = m;
+  } else if (
+    req.body.estimatedHours !== undefined ||
+    req.body.estimatedTimeHours !== undefined
+  ) {
+    const h = parseFloat(
+      String(req.body.estimatedHours ?? req.body.estimatedTimeHours)
+    );
+    if (!isFinite(h) || h < 0)
+      return res.status(400).json({ error: "Invalid estimated hours" });
+    task.estimatedTimeMinutes = Math.round(h * 60);
+  }
   await task.save();
   res.json({ task });
 

@@ -19,6 +19,7 @@ type Task = {
   status: "PENDING" | "INPROGRESS" | "DONE";
   priority?: "URGENT" | "FIRST" | "SECOND" | "LEAST";
   timeSpentMinutes?: number;
+  estimatedTimeMinutes?: number;
   createdAt?: string;
 };
 

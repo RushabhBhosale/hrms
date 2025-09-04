@@ -13,6 +13,8 @@ const SalaryFieldSchema = new mongoose.Schema(
     // - deduction: counted towards total deductions
     // - info: ancillary info displayed separately
     category: { type: String, enum: ['earning', 'deduction', 'info'], default: 'info' },
+    // For number fields, indicates if value is fixed amount or percentage
+    amountType: { type: String, enum: ['fixed', 'percent'], default: 'fixed' },
     defaultValue: { type: mongoose.Schema.Types.Mixed },
     order: { type: Number, default: 0 },
   },

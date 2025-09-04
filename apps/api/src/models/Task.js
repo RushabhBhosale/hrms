@@ -14,6 +14,8 @@ const mongoose = require('mongoose');
         enum: ['URGENT', 'FIRST', 'SECOND', 'LEAST'],
         default: 'SECOND',
       },
+      // Estimated time to complete the task (in minutes)
+      estimatedTimeMinutes: { type: Number, default: 0, min: 0 },
       // Inline comments on the task
       comments: [
         {

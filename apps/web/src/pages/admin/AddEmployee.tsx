@@ -11,7 +11,8 @@ type FormState = {
   dob: string;
   reportingPerson: string;
   employeeId: string;
-  ctc: string; // monthly CTC
+  ctc: string; // value in selected unit
+  ctcMode: "monthly" | "annual";
 };
 
 export default function AddEmployee() {
@@ -26,6 +27,7 @@ export default function AddEmployee() {
     reportingPerson: "",
     employeeId: "",
     ctc: "",
+    ctcMode: "annual",
   });
   const [docs, setDocs] = useState<FileList | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -45,7 +47,9 @@ export default function AddEmployee() {
       form.address.trim() &&
       form.phone.trim() &&
       form.employeeId.trim() &&
-      form.ctc.trim() && !isNaN(Number(form.ctc)) && Number(form.ctc) >= 0
+      form.ctc.trim() &&
+      !isNaN(Number(form.ctc)) &&
+      Number(form.ctc) >= 0
     );
   }, [form]);
 
@@ -80,7 +84,13 @@ export default function AddEmployee() {
     try {
       setSubmitting(true);
       const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => fd.append(k, String(v)));
+      // Convert CTC to monthly for backend
+      const monthlyCtc =
+        form.ctcMode === "annual" ? Number(form.ctc) / 12 : Number(form.ctc);
+      const payload: Record<string, any> = { ...form, ctc: String(monthlyCtc) };
+      // Do not send ctcMode to backend
+      delete payload.ctcMode;
+      Object.entries(payload).forEach(([k, v]) => fd.append(k, String(v)));
       if (docs) Array.from(docs).forEach((f) => fd.append("documents", f));
       await api.post("/companies/employees", fd, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -96,6 +106,7 @@ export default function AddEmployee() {
         reportingPerson: "",
         employeeId: "",
         ctc: "",
+        ctcMode: "annual",
       });
       setDocs(null);
       setOk("Employee added");
@@ -205,16 +216,37 @@ export default function AddEmployee() {
                 onChange={(e) => onChange("employeeId", e.target.value)}
               />
             </Field>
-            <Field label="CTC (Monthly)">
-              <input
-                type="number"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g. 50000"
-                value={form.ctc}
-                onChange={(e) => onChange("ctc", e.target.value)}
-                min={0}
-                step="0.01"
-              />
+            <Field label="CTC">
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                  placeholder={
+                    form.ctcMode === "annual" ? "e.g. 600000" : "e.g. 50000"
+                  }
+                  value={form.ctc}
+                  onChange={(e) => onChange("ctc", e.target.value)}
+                  min={0}
+                  step="0.01"
+                />
+                <select
+                  className="rounded-md border border-border bg-surface px-2"
+                  value={form.ctcMode}
+                  onChange={(e) =>
+                    onChange("ctcMode", e.target.value as "monthly" | "annual")
+                  }
+                >
+                  <option value="annual">Per Annum</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+              {form.ctc && (
+                <div className="text-xs text-muted mt-1">
+                  {form.ctcMode === "annual"
+                    ? `≈ Monthly: ${(Number(form.ctc) / 12 || 0).toFixed(2)}`
+                    : `≈ Annual: ${(Number(form.ctc) * 12 || 0).toFixed(2)}`}
+                </div>
+              )}
             </Field>
           </div>
 

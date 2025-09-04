@@ -25,6 +25,7 @@ type Task = {
   priority?: 'URGENT' | 'FIRST' | 'SECOND' | 'LEAST';
   comments?: { author: string; text: string; createdAt: string }[];
   timeSpentMinutes?: number;
+  estimatedTimeMinutes?: number;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -43,6 +44,7 @@ export default function ProjectDetails() {
   const [newDesc, setNewDesc] = useState('');
   const [assignee, setAssignee] = useState('');
   const [priority, setPriority] = useState<'URGENT' | 'FIRST' | 'SECOND' | 'LEAST'>('SECOND');
+  const [estimatedHours, setEstimatedHours] = useState('');
 
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string }>>({});
@@ -228,16 +230,20 @@ export default function ProjectDetails() {
     if (!id || !newTitle || !assignee) return;
     setLoading(true);
     try {
-      await api.post(`/projects/${id}/tasks`, {
+      const payload: any = {
         title: newTitle,
         description: newDesc,
         assignedTo: assignee,
         priority,
-      });
+      };
+      const h = parseFloat(estimatedHours || '');
+      if (isFinite(h) && h >= 0) payload.estimatedHours = h;
+      await api.post(`/projects/${id}/tasks`, payload);
       setNewTitle('');
       setNewDesc('');
       setAssignee('');
       setPriority('SECOND');
+      setEstimatedHours('');
         const tlist = await api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } });
         setTasks(tlist.data.tasks || []);
         setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
@@ -462,6 +468,15 @@ export default function ProjectDetails() {
               <option value="SECOND">Second Priority</option>
               <option value="LEAST">Least Priority</option>
             </select>
+            <input
+              className="h-10 rounded border border-border bg-bg px-3"
+              type="number"
+              min={0}
+              step={0.1}
+              placeholder="Estimated hours (optional)"
+              value={estimatedHours}
+              onChange={(e) => setEstimatedHours(e.target.value)}
+            />
             <div className="md:col-span-2">
               <textarea
                 className="w-full rounded border border-border bg-bg px-3 py-2 min-h-20"
@@ -510,6 +525,9 @@ export default function ProjectDetails() {
                     <span>Assigned to: {assigneeName || 'Member'}</span>
                     <span>Status: {statusLabel}</span>
                     <span>Time spent: {totalHours} h</span>
+                    {!!(t.estimatedTimeMinutes) && (
+                      <span>Est: {Math.round(((t.estimatedTimeMinutes || 0) / 60) * 10) / 10} h</span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

@@ -11,6 +11,7 @@ const SalarySlip = require("../models/SalarySlip");
 const PDFDocument = require("pdfkit");
 const Attendance = require("../models/Attendance");
 const Leave = require("../models/Leave");
+const CompanyDayOverride = require("../models/CompanyDayOverride");
 
 function monthValid(m) {
   return typeof m === "string" && /^\d{4}-\d{2}$/.test(m);
@@ -28,6 +29,7 @@ function defaultLockedFields() {
       key: BASIC_KEY,
       label: "Basic Earned",
       type: "number",
+      amountType: "fixed",
       required: true,
       locked: true,
       category: "earning",
@@ -37,6 +39,7 @@ function defaultLockedFields() {
       key: HRA_KEY,
       label: "HRA",
       type: "number",
+      amountType: "fixed",
       required: true,
       locked: true,
       category: "earning",
@@ -46,6 +49,7 @@ function defaultLockedFields() {
       key: MEDICAL_KEY,
       label: "Medical",
       type: "number",
+      amountType: "fixed",
       required: false,
       locked: true,
       category: "earning",
@@ -55,10 +59,22 @@ function defaultLockedFields() {
       key: OTHER_KEY,
       label: "Other Allowances",
       type: "number",
+      amountType: "fixed",
       required: false,
       locked: true,
       category: "earning",
       order: 3,
+    },
+    // System deduction for loss-of-pay based on absence/half-days
+    {
+      key: "lop_deduction",
+      label: "LOP Deduction",
+      type: "number",
+      amountType: "fixed",
+      required: false,
+      locked: true,
+      category: "deduction",
+      order: 50,
     },
   ];
 }
@@ -134,6 +150,9 @@ router.post(
               .replace(/^_|_$/g, ""),
           label: String(f.label || "").trim(),
           type: ["text", "number", "date"].includes(f.type) ? f.type : "text",
+          amountType: ["fixed", "percent"].includes(f.amountType)
+            ? f.amountType
+            : "fixed",
           required: !!f.required,
           locked: !!f.locked, // client-provided locked ignored for default keys; kept for any future server-defined fields
           category: ["earning", "deduction", "info"].includes(f.category)
@@ -243,6 +262,137 @@ function overlayDefaults(template, values) {
   return out;
 }
 
+function grossFromValues(template, slipValues, employeeCtc) {
+  const fields = template?.fields || [];
+  const sumFromFields = fields
+    .filter((f) => f?.category === "earning" && f?.type === "number")
+    .reduce((acc, f) => acc + numberOrZero(slipValues?.[f.key]), 0);
+  const gross = numberOrZero(sumFromFields);
+  if (gross > 0) return gross;
+  // Fallback to employee CTC if earnings not populated yet
+  const ctc = numberOrZero(employeeCtc);
+  return ctc > 0 ? ctc : 0;
+}
+
+// --- helpers for date handling (server local) ---
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+function dateKeyLocal(d) {
+  const x = startOfDay(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, "0");
+  const day = String(x.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Compute paid days and LOP (loss of pay) days for a month
+// LOP days count: 1 for full leave/absence, 0.5 for half-day work or company half-day overrides
+async function computePaidAndLopDays({ employeeId, companyId, month }) {
+  const start = startOfDay(new Date(`${month}-01`));
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+
+  // Load company holidays + overrides, attendance, and approved leaves
+  const [company, overrides, records, leaves] = await Promise.all([
+    Company.findById(companyId).select("bankHolidays").lean(),
+    CompanyDayOverride.find({ company: companyId, date: { $gte: start, $lt: end } })
+      .select("date type")
+      .lean(),
+    Attendance.find({ employee: employeeId, date: { $gte: start, $lt: end } }).lean(),
+    Leave.find({
+      employee: employeeId,
+      status: "APPROVED",
+      startDate: { $lte: end },
+      endDate: { $gte: start },
+    })
+      .select("startDate endDate")
+      .lean(),
+  ]);
+
+  const ovByKey = new Map((overrides || []).map((o) => [dateKeyLocal(o.date), o]));
+  const bankHolidaySet = new Set(
+    (company?.bankHolidays || []).map((h) => dateKeyLocal(h.date))
+  );
+
+  // Build attendance map by day key
+  const recByKey = new Map((records || []).map((r) => [dateKeyLocal(r.date), r]));
+
+  // Build approved leave day set (no half-day metadata in Leave model, so mark entire dates)
+  const approvedLeaveSet = new Set();
+  for (const l of leaves || []) {
+    const s = l.startDate < start ? start : startOfDay(new Date(l.startDate));
+    const e = l.endDate > end ? new Date(end.getTime() - 1) : startOfDay(new Date(l.endDate));
+    for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+      approvedLeaveSet.add(dateKeyLocal(d));
+    }
+  }
+
+  let workingDays = 0;
+  let totalLopUnits = 0;
+  const now = new Date();
+  for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
+    const key = dateKeyLocal(d);
+    const ov = ovByKey.get(key);
+    const dow = d.getDay();
+    let isWeekend = dow === 0 || dow === 6;
+    if (ov?.type === "WORKING") isWeekend = false;
+    let isHoliday = bankHolidaySet.has(key) || ov?.type === "HOLIDAY";
+    if (ov?.type === "WORKING") isHoliday = false;
+
+    if (!isWeekend && !isHoliday) workingDays += 1;
+
+    // Determine time spent for attendance record
+    const rec = recByKey.get(key);
+    let timeSpentMs = 0;
+    if (rec) {
+      timeSpentMs = rec.workedMs || 0;
+      if (rec.lastPunchIn && !rec.lastPunchOut) {
+        const recDay = startOfDay(new Date(rec.date));
+        if (recDay.getTime() === startOfDay(now).getTime()) {
+          timeSpentMs += now.getTime() - new Date(rec.lastPunchIn).getTime();
+        }
+      }
+      if (!timeSpentMs && rec.firstPunchIn && rec.lastPunchOut) {
+        timeSpentMs =
+          new Date(rec.lastPunchOut).getTime() -
+          new Date(rec.firstPunchIn).getTime();
+      }
+    }
+
+    let leaveUnit = 0;
+    if (!isWeekend && !isHoliday) {
+      const hasWork = !!rec && timeSpentMs > 0;
+      const isHalfDayWork = !!rec && timeSpentMs > 0 && timeSpentMs <= 6 * 3600000;
+      const isApprovedLeave = approvedLeaveSet.has(key);
+
+      if (hasWork) {
+        if (isHalfDayWork) leaveUnit = 0.5;
+      } else if (isApprovedLeave) {
+        leaveUnit = 1;
+      } else {
+        // Absent day with no work and no approved leave
+        leaveUnit = 1;
+      }
+
+      // Company half-day override: if no work recorded, count as 0.5
+      if (ov?.type === "HALF_DAY" && !hasWork) {
+        // If previously counted as 1 due to absence, reduce to 0.5
+        leaveUnit = Math.min(leaveUnit, 0.5);
+        if (leaveUnit === 0) leaveUnit = 0.5;
+      }
+    }
+
+    totalLopUnits += leaveUnit;
+  }
+
+  const paidDays = Math.max(0, round2(workingDays - totalLopUnits));
+  const lopDays = round2(totalLopUnits);
+  return { paidDays, lopDays, workingDays };
+}
+
 // Get salary slip for an employee + month (self or hr/manager/admin)
 router.get("/slips", auth, async (req, res) => {
   try {
@@ -274,13 +424,30 @@ router.get("/slips", auth, async (req, res) => {
     );
     const rawVals = slip?.values || {};
     const lockedVals = computeLockedValues({ template, employee });
-    const values = overlayDefaults(
+    let values = overlayDefaults(
       template,
       overlayLocked(
         rawVals instanceof Map ? Object.fromEntries(rawVals) : rawVals,
         lockedVals
       )
     );
+
+    // Auto-compute paid/LOP days for the month
+    try {
+      const { paidDays, lopDays } = await computePaidAndLopDays({
+        employeeId,
+        companyId,
+        month,
+      });
+      const perDay = numberOrZero(employee?.ctc) / 30;
+      const lopDeduction = round2(perDay * numberOrZero(lopDays));
+      values = {
+        ...values,
+        paid_days: round2(paidDays),
+        lop_days: round2(lopDays),
+        lop_deduction: lopDeduction,
+      };
+    } catch (_) {}
 
     res.json({
       template,
@@ -316,13 +483,28 @@ router.get("/slips/mine", auth, async (req, res) => {
     );
     const rawVals = slip?.values || {};
     const lockedVals = computeLockedValues({ template, employee });
-    const values = overlayDefaults(
+    let values = overlayDefaults(
       template,
       overlayLocked(
         rawVals instanceof Map ? Object.fromEntries(rawVals) : rawVals,
         lockedVals
       )
     );
+    try {
+      const { paidDays, lopDays } = await computePaidAndLopDays({
+        employeeId,
+        companyId,
+        month,
+      });
+      const perDay = numberOrZero(employee?.ctc) / 30;
+      const lopDeduction = round2(perDay * numberOrZero(lopDays));
+      values = {
+        ...values,
+        paid_days: round2(paidDays),
+        lop_days: round2(lopDays),
+        lop_deduction: lopDeduction,
+      };
+    } catch (_) {}
     res.json({
       template,
       slip: slip
@@ -405,7 +587,7 @@ router.post("/slips", auth, async (req, res) => {
       template,
       employee: employeeFull,
     });
-    const valuesOut = overlayDefaults(
+    let valuesOut = overlayDefaults(
       template,
       overlayLocked(
         slip.values instanceof Map
@@ -414,6 +596,21 @@ router.post("/slips", auth, async (req, res) => {
         lockedVals
       )
     );
+    try {
+      const { paidDays, lopDays } = await computePaidAndLopDays({
+        employeeId,
+        companyId,
+        month,
+      });
+      const perDay = numberOrZero(employeeFull?.ctc) / 30;
+      const lopDeduction = round2(perDay * numberOrZero(lopDays));
+      valuesOut = {
+        ...valuesOut,
+        paid_days: round2(paidDays),
+        lop_days: round2(lopDays),
+        lop_deduction: lopDeduction,
+      };
+    } catch (_) {}
     res.json({ slip: { ...slip.toObject(), values: valuesOut } });
   } catch (e) {
     if (e && e.code === 11000) {
@@ -437,7 +634,6 @@ function numberOrZero(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Render a salary slip PDF using template + slip values
 async function renderSlipPDF({
   res,
   company,
@@ -470,19 +666,31 @@ async function renderSlipPDF({
     return d.toLocaleString("en-US", { month: "long", year: "numeric" });
   })();
 
+  // ---------- fields + canonical ordering ----------
   const fields = (template?.fields || []).map((f) => ({
     ...f,
     category: f.category || "info",
   }));
-  const earnings = fields.filter(
+  const allEarnings = fields.filter(
     (f) => f.category === "earning" && f.type === "number"
   );
   const deductions = fields.filter(
     (f) => f.category === "deduction" && f.type === "number"
   );
-  const info = fields.filter(
-    (f) => f.category !== "earning" && f.category !== "deduction"
-  );
+
+  // enforce ordering: basic_earned -> hra -> medical -> (other earnings) -> other_allowances
+  const sysFirst = ["basic_earned", "hra", "medical"];
+  const lastKey = "other_allowances";
+  const earnings = [
+    ...sysFirst
+      .map((k) => allEarnings.find((f) => f.key === k))
+      .filter(Boolean),
+    ...allEarnings
+      .filter((f) => !sysFirst.includes(f.key) && f.key !== lastKey)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    ...allEarnings.filter((f) => f.key === lastKey),
+  ];
+
   const sum = (list) =>
     list.reduce((acc, f) => acc + numberOrZero(slipValues[f.key]), 0);
   const totalEarnings = sum(earnings);
@@ -503,32 +711,48 @@ async function renderSlipPDF({
     doc.fillColor("#000");
   };
 
-  // Letterhead with optional company logo
+  // ---------- header ----------
   const headerY = 24;
   const headerH = 56;
   doc.roundedRect(margin, headerY, contentWidth, headerH, 8).fill("#F9FAFB");
   doc.fillColor("#111827");
-  // Try to render a logo if available
   try {
-    const logoFile = company?.logoHorizontal || company?.logo || company?.logoSquare;
+    const logoFile =
+      company?.logoHorizontal || company?.logo || company?.logoSquare;
     if (logoFile) {
       const logoPath = path.join(__dirname, "../../uploads", String(logoFile));
       if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, margin + 10, headerY + 10, { fit: [140, 36], align: "left", valign: "center" });
+        doc.image(logoPath, margin + 10, headerY + 10, {
+          fit: [140, 36],
+          align: "left",
+          valign: "center",
+        });
       }
     }
-  } catch (_) {
-    // ignore logo issues; continue rendering
-  }
-  // Company name and month on the right
+  } catch (_) {}
   doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827");
-  text(company?.name || "Company", margin + 160, headerY + 12, contentWidth - 170, { align: "right" });
+  text(
+    company?.name || "Company",
+    margin + 160,
+    headerY + 12,
+    contentWidth - 170,
+    { align: "right" }
+  );
   doc.font("Helvetica").fontSize(10).fillColor("#6B7280");
-  text("Payslip For the Month", margin + 160, headerY + 30, contentWidth - 170, { align: "right" });
+  text(
+    "Payslip For the Month",
+    margin + 160,
+    headerY + 30,
+    contentWidth - 170,
+    { align: "right" }
+  );
   doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827");
-  text(monthStr.toUpperCase(), margin + 160, headerY + 42, contentWidth - 170, { align: "right" });
+  text(monthStr.toUpperCase(), margin + 160, headerY + 42, contentWidth - 170, {
+    align: "right",
+  });
   doc.fillColor("#000");
 
+  // ---------- summary ----------
   const yStart = headerY + headerH + 12;
   const leftW = Math.floor((contentWidth * 2) / 3) - GUTTER / 2;
   const rightW = contentWidth - leftW - GUTTER;
@@ -585,6 +809,7 @@ async function renderSlipPDF({
   text(String(lopDays), xRight + PAD + half + 8, smallY + 20, half - 16);
   doc.fillColor("#000");
 
+  // PF / UAN line
   const pfY = yStart + 136;
   const pf = slipValues["pf_ac_number"] || "-";
   const uan = slipValues["uan"] || "-";
@@ -598,6 +823,7 @@ async function renderSlipPDF({
   text(`:  ${uan}`, xLeft + leftW - 92, pfY, 92, { align: "left" });
   doc.fillColor("#000");
 
+  // ---------- tables (no YTD) ----------
   const tableTop = pfY + 24;
   const colW = Math.floor((contentWidth - GUTTER) / 2);
   const xTableLeft = margin;
@@ -608,56 +834,62 @@ async function renderSlipPDF({
     doc.fillColor("#111827").font("Helvetica-Bold").fontSize(11);
     text(title.toUpperCase(), x + PAD, y + 6, colW - PAD * 2);
     doc.font("Helvetica").fontSize(9).fillColor("#6B7280");
-    text("AMOUNT", x + colW - 150, y + 7, 70, { align: "right" });
-    text("YTD", x + colW - 70, y + 7, 60, { align: "right" });
+    text("AMOUNT", x + colW - 80, y + 7, 70, { align: "right" }); // only amount
     doc.fillColor("#000");
   };
 
-  const rowBlock = (items, x, y, ytd) => {
+  // dynamic-height rows to avoid overlap on wrapped labels
+  const rowBlock = (items, x, y) => {
     let yy = y + 28;
-    const labelW = colW - 170 - PAD;
-    items.length === 0 &&
-      (doc.font("Helvetica").fontSize(10).fillColor("#111827"),
-      text("—", x + PAD, yy, labelW),
-      (yy += LINE));
-    items.forEach((f) => {
-      const amount = numberOrZero(slipValues[f.key]);
-      const ytdVal = numberOrZero(ytd[f.key]);
-      doc.font("Helvetica").fontSize(10).fillColor("#111827");
-      text(f.label || f.key, x + PAD, yy, labelW);
-      text(fmtAmount(amount), x + colW - 150, yy, 70, { align: "right" });
-      doc.fillColor("#6B7280");
-      text(fmtAmount(ytdVal), x + colW - 70, yy, 60, { align: "right" });
-      doc.fillColor("#000");
+    const labelW = colW - 80 - PAD; // space for 1 number col
+    const fontSize = 10;
+
+    if (!items.length) {
+      doc.font("Helvetica").fontSize(fontSize).fillColor("#111827");
+      text("—", x + PAD, yy, labelW);
       yy += LINE;
+      return yy;
+    }
+
+    items.forEach((f) => {
+      const label = f.label || f.key;
+      const amount = numberOrZero(slipValues[f.key]);
+
+      doc.font("Helvetica").fontSize(fontSize);
+      const labelH = doc.heightOfString(String(label), {
+        width: labelW,
+        align: "left",
+      });
+
+      const lines = Math.max(1, Math.ceil(labelH / LINE));
+      const rowH = lines * LINE;
+
+      doc.fillColor("#111827");
+      text(label, x + PAD, yy, labelW);
+
+      doc.fillColor("#111827");
+      text(fmtAmount(amount), x + colW - 80, yy, 70, { align: "right" });
+      doc.fillColor("#000");
+
+      yy += rowH;
     });
+
     return yy;
   };
 
-  const [year, m] = month.split("-").map((x) => parseInt(x, 10));
-  const ytdMap = await computeYTD(
-    employee._id || employee.id,
-    company._id || company.id,
-    year,
-    m
-  );
-
   head("Earnings", xTableLeft, tableTop);
-  const yAfterEarn = rowBlock(earnings, xTableLeft, tableTop, ytdMap);
+  const yAfterEarn = rowBlock(earnings, xTableLeft, tableTop);
   head("Deductions", xTableRight, tableTop);
-  const yAfterDed = rowBlock(deductions, xTableRight, tableTop, ytdMap);
+  const yAfterDed = rowBlock(deductions, xTableRight, tableTop);
   const yAfterTables = Math.max(yAfterEarn, yAfterDed) + 6;
 
+  // totals
   doc.roundedRect(xTableLeft, yAfterTables, colW, 26, 6).fill("#F9FAFB");
   doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
-  text("Gross Earnings", xTableLeft + PAD, yAfterTables + 7, colW - 150 - PAD);
-  text(
-    fmtAmount(totalEarnings),
-    xTableLeft + colW - 150,
-    yAfterTables + 7,
-    70,
-    { align: "right" }
-  );
+  text("Gross Earnings", xTableLeft + PAD, yAfterTables + 7, colW - 80 - PAD);
+  text(fmtAmount(totalEarnings), xTableLeft + colW - 80, yAfterTables + 7, 70, {
+    align: "right",
+  });
 
   doc.roundedRect(xTableRight, yAfterTables, colW, 26, 6).fill("#F9FAFB");
   doc.font("Helvetica").fontSize(9).fillColor("#6B7280");
@@ -677,6 +909,7 @@ async function renderSlipPDF({
   );
   doc.fillColor("#000");
 
+  // net
   const yNet = yAfterTables + 38;
   doc.roundedRect(margin, yNet, contentWidth, 38, 8).stroke("#E5E7EB");
   doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827");
@@ -689,8 +922,8 @@ async function renderSlipPDF({
   });
   doc.fillColor("#000");
 
+  // footer note
   const yWords = yNet + 46;
-
   doc.font("Helvetica").fontSize(8).fillColor("#9CA3AF");
   text(
     "— This payslip is system generated and does not require a signature —",
@@ -835,10 +1068,27 @@ router.get("/slips/pdf", auth, async (req, res) => {
       raw instanceof Map ? Array.from(raw.entries()) : Object.entries(raw);
     for (const [k, v] of entries) valuesObj[k] = v;
     const lockedVals = computeLockedValues({ template, employee });
-    const finalVals = overlayDefaults(
+    let finalVals = overlayDefaults(
       template,
       overlayLocked(valuesObj, lockedVals)
     );
+
+    // Auto-compute paid/LOP days + LOP deduction (use CTC/30)
+    try {
+      const { paidDays, lopDays } = await computePaidAndLopDays({
+        employeeId,
+        companyId,
+        month,
+      });
+      const perDay = numberOrZero(employee?.ctc) / 30;
+      const lopDeduction = round2(perDay * numberOrZero(lopDays));
+      finalVals = {
+        ...finalVals,
+        paid_days: round2(paidDays),
+        lop_days: round2(lopDays),
+        lop_deduction: lopDeduction,
+      };
+    } catch (_) {}
 
     await renderSlipPDF({
       res,
@@ -865,7 +1115,7 @@ router.get("/slips/mine/pdf", auth, async (req, res) => {
     if (!companyId) return res.status(400).json({ error: "Company not found" });
 
     const [employee, company, templateRaw, slip] = await Promise.all([
-      Employee.findById(employeeId).select("name email employeeId company"),
+      Employee.findById(employeeId).select("name email employeeId company ctc"),
       Company.findById(companyId).lean(),
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({
@@ -882,13 +1132,28 @@ router.get("/slips/mine/pdf", auth, async (req, res) => {
     for (const [k, v] of entries) valuesObj[k] = v;
     const lockedVals = computeLockedValues({
       template,
-      employee: await Employee.findById(employeeId).select("ctc"),
+      employee,
     });
-    const finalVals = overlayDefaults(
+    let finalVals = overlayDefaults(
       template,
       overlayLocked(valuesObj, lockedVals)
     );
 
+    try {
+      const { paidDays, lopDays } = await computePaidAndLopDays({
+        employeeId,
+        companyId,
+        month,
+      });
+      const perDay = numberOrZero(employee?.ctc) / 30;
+      const lopDeduction = round2(perDay * numberOrZero(lopDays));
+      finalVals = {
+        ...finalVals,
+        paid_days: round2(paidDays),
+        lop_days: round2(lopDays),
+        lop_deduction: lopDeduction,
+      };
+    } catch (_) {}
     await renderSlipPDF({
       res,
       company,

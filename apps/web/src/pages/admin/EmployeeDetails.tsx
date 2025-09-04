@@ -25,15 +25,16 @@ export default function EmployeeDetails() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [month, setMonth] = useState(
-    new Date().toISOString().slice(0, 7)
-  );
-  const [report, setReport] = useState<{ workedDays: number; leaveDays: number } | null>(
-    null
-  );
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [report, setReport] = useState<{
+    workedDays: number;
+    leaveDays: number;
+  } | null>(null);
   const [rLoading, setRLoading] = useState(false);
   const [rErr, setRErr] = useState<string | null>(null);
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
+    []
+  );
   const [reportingPerson, setReportingPerson] = useState("");
   const [uLoading, setULoading] = useState(false);
   const [uErr, setUErr] = useState<string | null>(null);
@@ -49,6 +50,7 @@ export default function EmployeeDetails() {
   const [phone, setPhone] = useState("");
   const [dobEdit, setDobEdit] = useState("");
   const [ctc, setCtc] = useState<string>("0");
+  const [ctcMode, setCtcMode] = useState<"monthly" | "annual">("annual");
   const [aadhar, setAadhar] = useState("");
   const [pan, setPan] = useState("");
   const [bankAcc, setBankAcc] = useState("");
@@ -69,8 +71,13 @@ export default function EmployeeDetails() {
         // Prime edit fields
         setAddress(res.data.employee.address || "");
         setPhone(res.data.employee.phone || "");
-        setDobEdit(res.data.employee.dob ? String(res.data.employee.dob).slice(0, 10) : "");
-        setCtc(String(res.data.employee.ctc ?? 0));
+        setDobEdit(
+          res.data.employee.dob
+            ? String(res.data.employee.dob).slice(0, 10)
+            : ""
+        );
+        setCtc(String(res.data.employee.ctc ?? 0)); // monthly from backend
+        setCtcMode("monthly");
         setAadhar(res.data.employee.aadharNumber || "");
         setPan(res.data.employee.panNumber || "");
         setBankAcc(res.data.employee.bankDetails?.accountNumber || "");
@@ -166,11 +173,12 @@ export default function EmployeeDetails() {
       setSaveLoading(true);
       setSaveErr(null);
       setSaveOk(null);
+      const monthlyCtc = ctcMode === "annual" ? Number(ctc) / 12 : Number(ctc);
       const payload = {
         address,
         phone,
         dob: dobEdit || undefined,
-        ctc: Number(ctc),
+        ctc: monthlyCtc,
         aadharNumber: aadhar,
         panNumber: pan,
         bankDetails: { accountNumber: bankAcc, bankName, ifsc },
@@ -184,7 +192,7 @@ export default function EmployeeDetails() {
               address,
               phone,
               dob: dobEdit || prev.dob,
-              ctc: Number(ctc),
+              ctc: monthlyCtc,
               aadharNumber: aadhar,
               panNumber: pan,
               bankDetails: { accountNumber: bankAcc, bankName, ifsc },
@@ -226,7 +234,9 @@ export default function EmployeeDetails() {
           <h2 className="text-2xl font-semibold">{employee.name}</h2>
           <div className="text-sm text-muted">{employee.email}</div>
           {employee.employeeId && (
-            <div className="text-xs text-muted mt-1">Employee ID: {employee.employeeId}</div>
+            <div className="text-xs text-muted mt-1">
+              Employee ID: {employee.employeeId}
+            </div>
           )}
         </div>
         <button
@@ -238,7 +248,10 @@ export default function EmployeeDetails() {
       </div>
 
       {/* Details card */}
-      <form onSubmit={saveDetails} className="space-y-4 bg-surface border border-border rounded-md p-4">
+      <form
+        onSubmit={saveDetails}
+        className="space-y-4 bg-surface border border-border rounded-md p-4"
+      >
         <div className="flex items-center justify-between">
           <h3 className="font-semibold">Personal & Job Details</h3>
           {saveErr && <div className="text-sm text-error">{saveErr}</div>}
@@ -246,15 +259,45 @@ export default function EmployeeDetails() {
         </div>
         <div className="grid md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm mb-1">Monthly CTC</label>
-            <input
-              type="number"
-              step="0.01"
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={ctc}
-              onChange={(e) => setCtc(e.target.value)}
-              placeholder="0"
-            />
+            <label className="block text-sm mb-1">CTC</label>
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <input
+                type="number"
+                step="0.01"
+                className="w-full h-10 rounded border border-border bg-bg px-3"
+                value={ctc}
+                onChange={(e) => setCtc(e.target.value)}
+                placeholder={
+                  ctcMode === "annual" ? "Annual CTC" : "Monthly CTC"
+                }
+              />
+              <select
+                className="h-10 rounded border border-border bg-bg px-2"
+                value={ctcMode}
+                onChange={(e) => {
+                  const next = e.target.value as "monthly" | "annual";
+                  // Convert current value to the target unit for user convenience
+                  const n = Number(ctc);
+                  if (Number.isFinite(n)) {
+                    if (ctcMode === "monthly" && next === "annual")
+                      setCtc(String(n * 12));
+                    if (ctcMode === "annual" && next === "monthly")
+                      setCtc(String(n / 12));
+                  }
+                  setCtcMode(next);
+                }}
+              >
+                <option value="annual">Per Annum</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            {ctc && (
+              <div className="text-xs text-muted mt-1">
+                {ctcMode === "annual"
+                  ? `≈ Monthly: ${(Number(ctc) / 12 || 0).toFixed(2)}`
+                  : `≈ Annual: ${(Number(ctc) * 12 || 0).toFixed(2)}`}
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-sm mb-1">Phone</label>
