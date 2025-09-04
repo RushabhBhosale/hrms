@@ -1,11 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
-import { api } from '../../lib/api';
-import { Th, Td } from '../../components/ui/Table';
-import { toast } from 'react-hot-toast';
-import { getEmployee } from '../../lib/auth';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../../lib/api";
+import { Th, Td } from "../../components/ui/Table";
+import { toast } from "react-hot-toast";
+import { getEmployee } from "../../lib/auth";
+import { Link, useNavigate } from "react-router-dom";
 
-type EmployeeLite = { id: string; name: string; email: string; subRoles: string[] };
+type EmployeeLite = {
+  id: string;
+  name: string;
+  email: string;
+  subRoles: string[];
+};
 type Project = {
   _id: string;
   title: string;
@@ -24,20 +29,26 @@ export default function ProjectsAdmin() {
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [spentByProject, setSpentByProject] = useState<Record<string, number>>({});
+  const [spentByProject, setSpentByProject] = useState<Record<string, number>>(
+    {}
+  );
 
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [tech, setTech] = useState('');
-  const [teamLead, setTeamLead] = useState('');
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [tech, setTech] = useState("");
+  const [teamLead, setTeamLead] = useState("");
   const [members, setMembers] = useState<string[]>([]);
-  const [estimatedHours, setEstimatedHours] = useState('');
-  const [startTime, setStartTime] = useState<string>(''); // datetime-local string
+  const [estimatedHours, setEstimatedHours] = useState("");
+  const [startTime, setStartTime] = useState<string>(""); // datetime-local string
 
   const teamLeadOptions = useMemo(() => {
     // prefer HR or manager as team lead
-    const priority = employees.filter((e) => e.subRoles?.some((r) => r === 'hr' || r === 'manager'));
-    const others = employees.filter((e) => !e.subRoles?.some((r) => r === 'hr' || r === 'manager'));
+    const priority = employees.filter((e) =>
+      e.subRoles?.some((r) => r === "hr" || r === "manager")
+    );
+    const others = employees.filter(
+      (e) => !e.subRoles?.some((r) => r === "hr" || r === "manager")
+    );
     return [...priority, ...others];
   }, [employees]);
 
@@ -45,8 +56,8 @@ export default function ProjectsAdmin() {
     setLoading(true);
     try {
       const [emps, projs] = await Promise.all([
-        api.get('/companies/employees'),
-        api.get('/projects'),
+        api.get("/companies/employees"),
+        api.get("/projects"),
       ]);
       const projList: Project[] = projs.data.projects || [];
       setEmployees(emps.data.employees || []);
@@ -80,21 +91,22 @@ export default function ProjectsAdmin() {
     setLoading(true);
     try {
       const techStack = tech
-        .split(',')
+        .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      const eh = parseFloat(estimatedHours || '0');
+      const eh = parseFloat(estimatedHours || "0");
       const payload: any = { title, description, techStack, teamLead, members };
-      if (isFinite(eh) && eh > 0) payload.estimatedTimeMinutes = Math.round(eh * 60);
+      if (isFinite(eh) && eh > 0)
+        payload.estimatedTimeMinutes = Math.round(eh * 60);
       if (startTime && startTime.trim()) payload.startTime = startTime;
-      await api.post('/projects', payload);
-      setTitle('');
-      setDescription('');
-      setTech('');
-      setTeamLead('');
+      await api.post("/projects", payload);
+      setTitle("");
+      setDescription("");
+      setTech("");
+      setTeamLead("");
       setMembers([]);
-      setEstimatedHours('');
-      setStartTime('');
+      setEstimatedHours("");
+      setStartTime("");
       await load();
     } finally {
       setLoading(false);
@@ -106,10 +118,14 @@ export default function ProjectsAdmin() {
   }
 
   function fmtDate(s?: string) {
-    if (!s) return '-';
+    if (!s) return "-";
     const d = new Date(s);
-    if (isNaN(d.getTime())) return '-';
-    return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+    if (isNaN(d.getTime())) return "-";
+    return d.toLocaleDateString([], {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   }
 
   return (
@@ -119,7 +135,10 @@ export default function ProjectsAdmin() {
       </div>
 
       {/* Create form */}
-      <form onSubmit={createProject} className="space-y-4 bg-surface border border-border rounded-md p-4">
+      <form
+        onSubmit={createProject}
+        className="space-y-4 bg-surface border border-border rounded-md p-4"
+      >
         <div className="grid md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm mb-1">Title</label>
@@ -184,7 +203,7 @@ export default function ProjectsAdmin() {
               <option value="">Select team lead</option>
               {teamLeadOptions.map((e) => (
                 <option key={e.id} value={e.id}>
-                  {e.name} ({e.subRoles?.[0] || 'employee'})
+                  {e.name} ({e.subRoles?.[0] || "employee"})
                 </option>
               ))}
             </select>
@@ -193,18 +212,26 @@ export default function ProjectsAdmin() {
             <label className="block text-sm mb-1">Members</label>
             <div className="grid grid-cols-2 gap-2 max-h-40 overflow-auto border border-border rounded p-2 bg-bg">
               {employees.map((e) => (
-                <label key={e.id} className="inline-flex items-center gap-2 text-sm">
+                <label
+                  key={e.id}
+                  className="inline-flex items-center gap-2 text-sm"
+                >
                   <input
                     type="checkbox"
                     checked={members.includes(e.id)}
                     onChange={(ev) =>
                       setMembers((prev) =>
-                        ev.target.checked ? [...prev, e.id] : prev.filter((id) => id !== e.id)
+                        ev.target.checked
+                          ? [...prev, e.id]
+                          : prev.filter((id) => id !== e.id)
                       )
                     }
                   />
                   <span>
-                    {e.name} <span className="text-muted">({e.subRoles?.[0] || 'employee'})</span>
+                    {e.name}{" "}
+                    <span className="text-muted">
+                      ({e.subRoles?.[0] || "employee"})
+                    </span>
                   </span>
                 </label>
               ))}
@@ -217,7 +244,7 @@ export default function ProjectsAdmin() {
             className="inline-flex items-center justify-center h-10 px-4 rounded-md bg-primary text-white disabled:opacity-50"
             disabled={loading}
           >
-            {loading ? 'Creating…' : 'Create Project'}
+            {loading ? "Creating…" : "Create Project"}
           </button>
         </div>
       </form>
@@ -231,7 +258,7 @@ export default function ProjectsAdmin() {
               <Th>Team Lead</Th>
               <Th>Members</Th>
               <Th>Start</Th>
-              <Th>Estimated (h)</Th>
+              <Th>Est (h)</Th>
               <Th>Spent (h)</Th>
               <Th>Status</Th>
               <Th>Actions</Th>
@@ -246,18 +273,31 @@ export default function ProjectsAdmin() {
                 <tr key={p._id} className="border-b border-border">
                   <Td>
                     <div className="font-medium">{p.title}</div>
-                    {p.description && <div className="text-xs text-muted truncate max-w-[360px]" title={p.description}>{p.description}</div>}
+                    {p.description && (
+                      <div
+                        className="text-xs text-muted truncate max-w-[360px]"
+                        title={p.description}
+                      >
+                        {p.description}
+                      </div>
+                    )}
                   </Td>
-                  <Td>{employees.find((e) => e.id === p.teamLead)?.name || '—'}</Td>
+                  <Td>
+                    {employees.find((e) => e.id === p.teamLead)?.name || "—"}
+                  </Td>
                   <Td>{p.members?.length || 0}</Td>
                   <Td>{fmtDate(p.startTime || p.createdAt)}</Td>
                   <Td>{minutesToHours(est)}</Td>
                   <Td>{minutesToHours(spent)}</Td>
                   <Td>
                     {over > 0 ? (
-                      <span className="text-error">Over by {minutesToHours(over)} h</span>
+                      <span className="text-error">
+                        + {minutesToHours(over)} h
+                      </span>
                     ) : (
-                      <span className="text-muted">Remaining {minutesToHours(Math.max(0, est - spent))} h</span>
+                      <span className="text-muted">
+                        - {minutesToHours(Math.max(0, est - spent))} h
+                      </span>
                     )}
                   </Td>
                   <Td>
@@ -268,7 +308,7 @@ export default function ProjectsAdmin() {
                       >
                         Open
                       </Link>
-                      <button
+                      {/* <button
                         onClick={async () => {
                           if (!confirm('Delete this project? This cannot be undone.')) return;
                           try {
@@ -282,7 +322,7 @@ export default function ProjectsAdmin() {
                         className="h-8 px-3 rounded-md border border-error/30 text-error hover:bg-error/10 inline-flex items-center"
                       >
                         Delete
-                      </button>
+                      </button> */}
                     </div>
                   </Td>
                 </tr>
@@ -290,7 +330,9 @@ export default function ProjectsAdmin() {
             })}
             {projects.length === 0 && (
               <tr>
-                <td className="px-3 py-3 text-sm text-muted" colSpan={8}>No projects yet.</td>
+                <td className="px-3 py-3 text-sm text-muted" colSpan={8}>
+                  No projects yet.
+                </td>
               </tr>
             )}
           </tbody>

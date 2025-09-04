@@ -1,17 +1,22 @@
-import React from 'react';
+import React from "react";
 
-export function Th({ children, sortable, onSort, dir }: {
+export function Th({
+  children,
+  sortable,
+  onSort,
+  dir,
+}: {
   children: React.ReactNode;
   sortable?: boolean;
   onSort?: () => void;
-  dir?: 'asc' | 'desc' | null;
+  dir?: "asc" | "desc" | null;
 }) {
   const content = (
     <div className="inline-flex items-center gap-1 select-none">
       <span>{children}</span>
       {sortable ? (
         <span className="text-muted text-[10px] leading-none">
-          {dir === 'asc' ? '▲' : dir === 'desc' ? '▼' : '↕'}
+          {dir === "asc" ? "▲" : dir === "desc" ? "▼" : "↕"}
         </span>
       ) : null}
     </div>
@@ -27,12 +32,24 @@ export function Th({ children, sortable, onSort, dir }: {
     );
   }
   return (
-    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">{content}</th>
+    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
+      {content}
+    </th>
   );
 }
 
-export function Td({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={["px-4 py-3 align-middle", className || ''].join(' ')}>{children}</td>;
+export function Td({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <td className={["px-4 py-3 align-middle", className || ""].join(" ")}>
+      {children}
+    </td>
+  );
 }
 
 export function SkeletonRows({ rows, cols }: { rows: number; cols: number }) {
@@ -68,15 +85,41 @@ export function Pagination({
   onLast: () => void;
   disabled?: boolean;
 }) {
-  const btn = "h-9 px-3 rounded-md bg-surface border border-border text-sm hover:bg-bg disabled:opacity-50";
+  const btn =
+    "h-9 px-3 rounded-md bg-surface border border-border text-sm hover:bg-bg disabled:opacity-50";
   return (
     <div className="flex items-center gap-2">
-      <button className={btn} onClick={onFirst} disabled={page === 1 || disabled}>First</button>
-      <button className={btn} onClick={onPrev} disabled={page === 1 || disabled}>Prev</button>
-      <div className="text-sm text-muted">Page {page} of {Math.max(1, pages)}</div>
-      <button className={btn} onClick={onNext} disabled={page >= pages || disabled}>Next</button>
-      <button className={btn} onClick={onLast} disabled={page >= pages || disabled}>Last</button>
+      <button
+        className={btn}
+        onClick={onFirst}
+        disabled={page === 1 || disabled}
+      >
+        First
+      </button>
+      <button
+        className={btn}
+        onClick={onPrev}
+        disabled={page === 1 || disabled}
+      >
+        Prev
+      </button>
+      <div className="text-sm text-muted">
+        Page {page} of {Math.max(1, pages)}
+      </div>
+      <button
+        className={btn}
+        onClick={onNext}
+        disabled={page >= pages || disabled}
+      >
+        Next
+      </button>
+      <button
+        className={btn}
+        onClick={onLast}
+        disabled={page >= pages || disabled}
+      >
+        Last
+      </button>
     </div>
   );
 }
-

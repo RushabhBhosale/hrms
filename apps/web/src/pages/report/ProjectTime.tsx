@@ -191,7 +191,7 @@ function StackedBars({
             <div key={r.label} className="space-y-1">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-medium">
-                  {r.id === 'PERSONAL' ? (
+                  {r.id === "PERSONAL" ? (
                     <span>{r.label}</span>
                   ) : (
                     <Link
@@ -291,7 +291,7 @@ export default function ProjectTime() {
         const personalProjs = projs.filter((p) => p.isPersonal);
 
         // Aggregate personal projects into a single global project
-        const PERSONAL_ID = 'PERSONAL';
+        const PERSONAL_ID = "PERSONAL";
         const aggregatedProjects: Project[] = [
           ...normalProjs.map((p) => ({
             _id: p._id,
@@ -311,14 +311,12 @@ export default function ProjectTime() {
             .filter(Boolean) as string[];
           const earliestStart = startTimes.length
             ? new Date(
-                Math.min(
-                  ...startTimes.map((d) => new Date(d).getTime())
-                )
+                Math.min(...startTimes.map((d) => new Date(d).getTime()))
               ).toISOString()
             : undefined;
           aggregatedProjects.push({
             _id: PERSONAL_ID,
-            title: 'Personal Tasks',
+            title: "Personal Tasks",
             estimatedTimeMinutes: estSum || undefined,
             startTime: earliestStart,
             isPersonal: true,
@@ -730,11 +728,11 @@ export default function ProjectTime() {
                         <Td>
                           {over > 0 ? (
                             <span className="text-error">
-                              Over by {minutesToHours(over)} h
+                              + {minutesToHours(over)} h
                             </span>
                           ) : (
                             <span className="text-muted">
-                              Remaining{" "}
+                              -{" "}
                               {minutesToHours(
                                 Math.max(0, r.estimatedMinutes - r.spentMinutes)
                               )}{" "}
