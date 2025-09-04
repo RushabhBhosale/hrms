@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const encrypt = require('mongoose-encryption');
 
 const LeaveSchema = new mongoose.Schema(
   {
@@ -27,5 +28,17 @@ const LeaveSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// ---- Encryption plugin ----
+const encKey = process.env.ENC_KEY; // 32-byte key (base64)
+if (!encKey) {
+  console.warn('⚠️ ENC_KEY not set — Leave.reason/adminMessage will NOT be encrypted!');
+}
+
+LeaveSchema.plugin(encrypt, {
+  secret: encKey,
+  encryptedFields: ['reason', 'adminMessage'],
+  requireAuthenticationCode: false,
+});
 
 module.exports = mongoose.model('Leave', LeaveSchema);

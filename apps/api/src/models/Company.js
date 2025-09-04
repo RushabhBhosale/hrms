@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const encrypt = require('mongoose-encryption');
 
 const CompanySchema = new mongoose.Schema(
   {
@@ -56,5 +57,18 @@ const CompanySchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// ---- Encryption plugin ----
+const encKey = process.env.ENC_KEY; // 32-byte key (base64)
+if (!encKey) {
+  console.warn('⚠️ ENC_KEY not set — Company.requestedAdmin fields will NOT be encrypted!');
+}
+
+// Encrypt PII for pending admin requests (not used in indexes/queries)
+CompanySchema.plugin(encrypt, {
+  secret: encKey,
+  encryptedFields: ['requestedAdmin.name', 'requestedAdmin.email'],
+  requireAuthenticationCode: false,
+});
 
 module.exports = mongoose.model('Company', CompanySchema);

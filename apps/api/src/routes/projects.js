@@ -504,13 +504,12 @@ router.get("/:id/tasks", auth, async (req, res) => {
     const tasks = await Task.find(query)
       .sort(sort)
       .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+      .limit(limit);
     const pages = Math.max(1, Math.ceil(total / limit));
     return res.json({ tasks, total, page, pages, limit });
   }
   // No pagination requested; return all (existing behavior)
-  const tasks = await Task.find(query).sort(sort).lean();
+  const tasks = await Task.find(query).sort(sort);
   res.json({
     tasks,
     total: tasks.length,

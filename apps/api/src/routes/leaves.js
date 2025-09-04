@@ -92,8 +92,7 @@ router.post("/", auth, async (req, res) => {
 // Employee views their leave requests
 router.get("/", auth, async (req, res) => {
   const leaves = await Leave.find({ employee: req.employee.id })
-    .sort({ createdAt: -1 })
-    .lean();
+    .sort({ createdAt: -1 });
   res.json({ leaves });
 });
 
@@ -101,8 +100,7 @@ router.get("/", auth, async (req, res) => {
 router.get("/assigned", auth, async (req, res) => {
   const leaves = await Leave.find({ approver: req.employee.id })
     .populate("employee", "name")
-    .sort({ createdAt: -1 })
-    .lean();
+    .sort({ createdAt: -1 });
   res.json({ leaves });
 });
 
@@ -114,8 +112,7 @@ router.get(
   async (req, res) => {
     const leaves = await Leave.find({ company: req.employee.company })
       .populate("employee", "name")
-      .sort({ createdAt: -1 })
-      .lean();
+      .sort({ createdAt: -1 });
     res.json({ leaves });
   }
 );
@@ -134,8 +131,7 @@ router.get("/company/today", auth, async (req, res) => {
     startDate: { $lte: today },
     endDate: { $gte: today },
   })
-    .populate("employee", "name")
-    .lean();
+    .populate("employee", "name");
 
   res.json({ leaves });
 });

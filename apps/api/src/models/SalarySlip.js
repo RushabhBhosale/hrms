@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const encrypt = require('mongoose-encryption');
 
 const SalarySlipSchema = new mongoose.Schema(
   {
@@ -14,5 +15,17 @@ const SalarySlipSchema = new mongoose.Schema(
 
 SalarySlipSchema.index({ employee: 1, company: 1, month: 1 }, { unique: true });
 
-module.exports = mongoose.model('SalarySlip', SalarySlipSchema);
+// ---- Encryption plugin ----
+const encKey = process.env.ENC_KEY; // 32-byte key (base64)
+if (!encKey) {
+  console.warn('⚠️ ENC_KEY not set — SalarySlip.values will NOT be encrypted!');
+}
 
+// Encrypt only the dynamic values map (salary details)
+SalarySlipSchema.plugin(encrypt, {
+  secret: encKey,
+  encryptedFields: ['values'],
+  requireAuthenticationCode: false,
+});
+
+module.exports = mongoose.model('SalarySlip', SalarySlipSchema);
