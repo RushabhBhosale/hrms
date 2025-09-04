@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 
 type FieldType = "text" | "number" | "date";
 type FieldCategory = "earning" | "deduction" | "info";
 type Field = {
+  id: string;
   key: string;
   label: string;
   type: FieldType;
@@ -29,6 +30,17 @@ function slugify(s: string) {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_|_$/g, "");
 }
+function uid() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+const PROTECTED_KEYS = new Set([
+  "basic",
+  "hra",
+  "medical",
+  "basic_pay",
+  "house_rent_allowance",
+]);
 
 export default function SalaryTemplate() {
   const [loading, setLoading] = useState(true);
@@ -43,23 +55,34 @@ export default function SalaryTemplate() {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<"all" | FieldCategory>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | FieldType>("all");
-  const dragIndex = useRef<number | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get("/salary/templates");
-        const f = (res.data.template?.fields || []) as Field[];
-        setFields(
-          f
-            .map((fld) => ({
-              autoKey: !fld.key || fld.key === slugify(fld.label),
-              ...fld,
-              category: (fld.category as FieldCategory) || "info",
-            }))
-            .sort((a, b) => (a.order || 0) - (b.order || 0))
-        );
+        const f = (res.data.template?.fields || []) as any[];
         const s = res.data.template?.settings || {};
+        const normalized = f
+          .map((fld: any, i: number) => {
+            const k = fld.key || slugify(fld.label || "");
+            const prot =
+              PROTECTED_KEYS.has(k) ||
+              PROTECTED_KEYS.has(slugify(fld.label || ""));
+            return {
+              id: fld.id || uid(),
+              autoKey: !fld.key || fld.key === slugify(fld.label),
+              key: k,
+              label: fld.label || "",
+              type: (fld.type as FieldType) || "text",
+              required: !!fld.required,
+              defaultValue: fld.defaultValue ?? "",
+              category: (fld.category as FieldCategory) || "info",
+              order: Number.isFinite(fld.order) ? fld.order : i,
+              locked: fld.locked || prot,
+            } as Field;
+          })
+          .sort((a, b) => (a.order || 0) - (b.order || 0));
+        setFields(normalized);
         setSettings({
           basicPercent: Number.isFinite(Number(s.basicPercent))
             ? Number(s.basicPercent)
@@ -146,6 +169,7 @@ export default function SalaryTemplate() {
     setFields((prev) => [
       ...prev,
       {
+        id: uid(),
         key: "",
         label: "",
         type: "text",
@@ -162,6 +186,18 @@ export default function SalaryTemplate() {
     setFields((prev) =>
       prev.map((f, idx) => {
         if (idx !== i) return f;
+        const prot =
+          f.locked ||
+          PROTECTED_KEYS.has(f.key) ||
+          PROTECTED_KEYS.has(slugify(f.label));
+        if (prot) {
+          const allowed: Partial<Field> = {};
+          if ("defaultValue" in patch)
+            allowed.defaultValue = patch.defaultValue;
+          if ("category" in patch) allowed.category = patch.category;
+          if ("type" in patch) allowed.type = patch.type as FieldType;
+          return { ...f, ...allowed, locked: true };
+        }
         const next = { ...f, ...patch };
         if (next.autoKey && "label" in patch)
           next.key = slugify(next.label || "");
@@ -171,34 +207,14 @@ export default function SalaryTemplate() {
   }
 
   function removeField(i: number) {
-    setFields((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  function move(i: number, dir: -1 | 1) {
     setFields((prev) => {
-      const next = [...prev];
-      const j = i + dir;
-      if (j < 0 || j >= next.length) return prev;
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
-  }
-
-  function onDragStart(idx: number) {
-    dragIndex.current = idx;
-  }
-  function onDragOver(e: React.DragEvent) {
-    e.preventDefault();
-  }
-  function onDrop(idx: number) {
-    const from = dragIndex.current;
-    dragIndex.current = null;
-    if (from == null || from === idx) return;
-    setFields((prev) => {
-      const arr = [...prev];
-      const [moved] = arr.splice(from, 1);
-      arr.splice(idx, 0, moved);
-      return arr;
+      const f = prev[i];
+      const prot =
+        f.locked ||
+        PROTECTED_KEYS.has(f.key) ||
+        PROTECTED_KEYS.has(slugify(f.label));
+      if (prot) return prev;
+      return prev.filter((_, idx) => idx !== i);
     });
   }
 
@@ -217,10 +233,10 @@ export default function SalaryTemplate() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search…"
-            className="h-9 w-full rounded-md border border-border bg-bg px-3 text-sm sm:w-56"
+            className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm sm:w-60"
           />
           <select
-            className="h-9 rounded-md border border-border bg-bg px-2 text-sm"
+            className="h-10 rounded-md border border-border bg-bg px-2 text-sm"
             value={cat}
             onChange={(e) => setCat(e.target.value as any)}
           >
@@ -230,7 +246,7 @@ export default function SalaryTemplate() {
             <option value="deduction">Deduction</option>
           </select>
           <select
-            className="h-9 rounded-md border border-border bg-bg px-2 text-sm"
+            className="h-10 rounded-md border border-border bg-bg px-2 text-sm"
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as any)}
           >
@@ -239,30 +255,10 @@ export default function SalaryTemplate() {
             <option value="number">Number</option>
             <option value="date">Date</option>
           </select>
-          <button
-            onClick={addField}
-            className="h-9 rounded-md border border-border bg-bg px-3 text-sm"
-          >
-            Add
-          </button>
-          <button
-            onClick={save}
-            disabled={hasDuplicateKeys || invalids.size > 0}
-            className="h-9 rounded-md bg-primary px-4 text-sm text-white disabled:opacity-50"
-            title={
-              hasDuplicateKeys
-                ? "Duplicate keys"
-                : invalids.size
-                ? "Fix empty label/key"
-                : undefined
-            }
-          >
-            Save
-          </button>
         </div>
       </div>
 
-      <div className="rounded-md border border-border bg-surface p-3">
+      <div className="rounded-md border border-border bg-surface p-4">
         <div className="mb-2 text-sm font-medium">Default Components</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div>
@@ -278,7 +274,7 @@ export default function SalaryTemplate() {
                   basicPercent: Number(e.target.value),
                 }))
               }
-              className="h-9 w-full rounded-md border border-border bg-bg px-3 text-sm"
+              className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm"
               min={0}
               step="0.01"
             />
@@ -294,7 +290,7 @@ export default function SalaryTemplate() {
                   hraPercent: Number(e.target.value),
                 }))
               }
-              className="h-9 w-full rounded-md border border-border bg-bg px-3 text-sm"
+              className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm"
               min={0}
               step="0.01"
             />
@@ -310,7 +306,7 @@ export default function SalaryTemplate() {
                   medicalAmount: Number(e.target.value),
                 }))
               }
-              className="h-9 w-full rounded-md border border-border bg-bg px-3 text-sm"
+              className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm"
               min={0}
               step="0.01"
             />
@@ -318,7 +314,7 @@ export default function SalaryTemplate() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3">
+      <div className="grid grid-cols-1 gap-3 pb-20">
         {filtered.length === 0 && (
           <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted">
             No fields match.
@@ -329,22 +325,20 @@ export default function SalaryTemplate() {
           const i = fields.indexOf(f);
           const isDup = f.key && duplicateSet.has(f.key);
           const isInvalid = invalids.has(i);
-          const disabled = !!f.locked;
+          const prot =
+            f.locked ||
+            PROTECTED_KEYS.has(f.key) ||
+            PROTECTED_KEYS.has(slugify(f.label));
+          const disabled = !!prot;
+
           return (
             <div
-              key={`${f.key}-${i}`}
-              className={`rounded-md border bg-surface p-2 ${
+              key={f.id}
+              className={`rounded-md border bg-surface p-3 ${
                 isInvalid ? "border-amber-600" : "border-border"
               }`}
-              draggable
-              onDragStart={() => onDragStart(i)}
-              onDragOver={onDragOver}
-              onDrop={() => onDrop(i)}
             >
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <button className="h-8 w-8 cursor-grab rounded-md border border-border text-xs">
-                  ⋮⋮
-                </button>
                 <span
                   className={`rounded-full px-2 py-0.5 text-[11px] ${
                     (f.category || "info") === "earning"
@@ -359,44 +353,20 @@ export default function SalaryTemplate() {
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-800">
                   {f.type}
                 </span>
-                {f.locked && (
+                {prot && (
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800">
-                    locked
+                    protected
                   </span>
                 )}
-                {isDup && (
-                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] text-rose-800">
-                    duplicate
-                  </span>
-                )}
-                <div className="ml-auto flex items-center gap-1">
-                  <button
-                    className="rounded-md border border-border px-2 py-1 text-xs disabled:opacity-40"
-                    onClick={() => move(i, -1)}
-                    disabled={i === 0 || disabled}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    className="rounded-md border border-border px-2 py-1 text-xs disabled:opacity-40"
-                    onClick={() => move(i, 1)}
-                    disabled={i === fields.length - 1 || disabled}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    className="rounded-md border border-border px-2 py-1 text-xs disabled:opacity-40"
-                    onClick={() => updateField(i, { locked: !f.locked })}
-                  >
-                    {f.locked ? "Unlock" : "Lock"}
-                  </button>
-                  <button
-                    className="rounded-md px-2 py-1 text-xs text-error underline disabled:opacity-40"
-                    onClick={() => removeField(i)}
-                    disabled={disabled}
-                  >
-                    Remove
-                  </button>
+                <div className="ml-auto">
+                  {!prot && (
+                    <button
+                      className="rounded-md px-2 py-1 text-xs text-error underline"
+                      onClick={() => removeField(i)}
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -412,7 +382,7 @@ export default function SalaryTemplate() {
                       })
                     }
                     disabled={disabled}
-                    className="h-9 w-full rounded-md border border-border bg-bg px-3 text-sm disabled:opacity-60"
+                    className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm disabled:opacity-60"
                     placeholder="Basic Pay"
                   />
                 </div>
@@ -427,6 +397,7 @@ export default function SalaryTemplate() {
                         onChange={(e) =>
                           updateField(i, { autoKey: e.target.checked })
                         }
+                        disabled={disabled}
                       />
                       Auto
                     </label>
@@ -437,7 +408,7 @@ export default function SalaryTemplate() {
                       updateField(i, { key: slugify(e.target.value) })
                     }
                     disabled={disabled || !!f.autoKey}
-                    className={`h-9 w-full rounded-md border px-3 text-sm ${
+                    className={`h-10 w-full rounded-md border px-3 text-sm ${
                       isDup ? "border-error" : "border-border"
                     } bg-bg disabled:opacity-60`}
                     placeholder="basic_pay"
@@ -455,7 +426,7 @@ export default function SalaryTemplate() {
                       })
                     }
                     disabled={disabled}
-                    className="h-9 w-full rounded-md border border-border bg-bg px-3 text-sm disabled:opacity-60"
+                    className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm disabled:opacity-60"
                   >
                     <option value="text">Text</option>
                     <option value="number">Number</option>
@@ -473,7 +444,7 @@ export default function SalaryTemplate() {
                       })
                     }
                     disabled={disabled}
-                    className="h-9 w-full rounded-md border border-border bg-bg px-3 text-sm disabled:opacity-60"
+                    className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm disabled:opacity-60"
                   >
                     <option value="info">Info</option>
                     <option value="earning">Earning</option>
@@ -502,20 +473,8 @@ export default function SalaryTemplate() {
                             : e.target.value,
                       })
                     }
-                    disabled={disabled}
-                    className="h-9 w-full rounded-md border border-border bg-bg px-3 text-sm disabled:opacity-60"
+                    className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm"
                   />
-                  <label className="mt-2 inline-flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={!!f.required}
-                      onChange={(e) =>
-                        updateField(i, { required: e.target.checked })
-                      }
-                      disabled={disabled}
-                    />
-                    Required
-                  </label>
                 </div>
               </div>
             </div>
@@ -523,16 +482,39 @@ export default function SalaryTemplate() {
         })}
       </div>
 
-      {(err || ok || hasDuplicateKeys || invalids.size > 0) && (
-        <div className="text-sm">
-          {err && <div className="text-error">{err}</div>}
-          {ok && <div className="text-success">{ok}</div>}
-          {(hasDuplicateKeys || invalids.size > 0) && (
-            <div className="text-amber-600">
-              {hasDuplicateKeys ? "Duplicate keys. " : ""}
-              {invalids.size ? `${invalids.size} field(s) need label/key.` : ""}
-            </div>
-          )}
+      <div className="sticky bottom-0 left-0 right-0 z-10 border-t border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
+        <div className="mx-auto flex max-w-screen-lg items-center gap-2 px-3 py-3">
+          {err && <div className="text-xs text-error">{err}</div>}
+          {ok && <div className="text-xs text-success">{ok}</div>}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={addField}
+              className="h-10 rounded-md border border-border bg-bg px-4 text-sm"
+            >
+              Add Field
+            </button>
+            <button
+              onClick={save}
+              disabled={hasDuplicateKeys || invalids.size > 0}
+              className="h-10 rounded-md bg-primary px-5 text-sm text-white disabled:opacity-50"
+              title={
+                hasDuplicateKeys
+                  ? "Duplicate keys"
+                  : invalids.size
+                  ? "Fix empty label/key"
+                  : undefined
+              }
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {(hasDuplicateKeys || invalids.size > 0) && (
+        <div className="text-sm text-amber-600">
+          {hasDuplicateKeys ? "Duplicate keys. " : ""}
+          {invalids.size ? `${invalids.size} field(s) need label/key.` : ""}
         </div>
       )}
     </div>
