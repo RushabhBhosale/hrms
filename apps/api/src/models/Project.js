@@ -8,6 +8,8 @@ const ProjectSchema = new mongoose.Schema(
     teamLead: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
     members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }],
     company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
+    // Optional project start time/date
+    startTime: { type: Date },
     // Personal projects are owned by a single employee and used for non-project tasks
     isPersonal: { type: Boolean, default: false },
     // Estimated total time to complete (in minutes)

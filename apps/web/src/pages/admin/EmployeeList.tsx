@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
+import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
 
 type CompanyEmployee = {
   id: string;
@@ -125,9 +126,9 @@ export default function EmployeeList() {
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <SortableTh label="Name" dir={sortKey==='name'?sortDir:null} onClick={()=>toggleSort('name')} />
-                <SortableTh label="Email" dir={sortKey==='email'?sortDir:null} onClick={()=>toggleSort('email')} />
-                <SortableTh label="Role" dir={sortKey==='role'?sortDir:null} onClick={()=>toggleSort('role')} />
+                <Th sortable onSort={()=>toggleSort('name')} dir={sortKey==='name'?sortDir:null}>Name</Th>
+                <Th sortable onSort={()=>toggleSort('email')} dir={sortKey==='email'?sortDir:null}>Email</Th>
+                <Th sortable onSort={()=>toggleSort('role')} dir={sortKey==='role'?sortDir:null}>Role</Th>
               </tr>
             </thead>
             <tbody>
@@ -205,39 +206,22 @@ export default function EmployeeList() {
         </div>
       </section>
 
-      <div className="flex items-center gap-2 justify-end">
-        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(1)} disabled={page===1}>First</button>
-        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}>Prev</button>
-        <div className="text-sm text-muted">Page {page} of {pages}</div>
-        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages}>Next</button>
-        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(pages)} disabled={page>=pages}>Last</button>
+      <div className="flex items-center justify-end">
+        <Pagination
+          page={page}
+          pages={pages}
+          onFirst={()=>setPage(1)}
+          onPrev={()=>setPage(p=>Math.max(1,p-1))}
+          onNext={()=>setPage(p=>Math.min(pages,p+1))}
+          onLast={()=>setPage(pages)}
+          disabled={loading}
+        />
       </div>
     </div>
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
-      {children}
-    </th>
-  );
-}
-
-function SortableTh({ label, dir, onClick }: { label: string; dir: 'asc'|'desc'|null; onClick: ()=>void }) {
-  return (
-    <th onClick={onClick} className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer hover:text-text select-none">
-      <span className="inline-flex items-center gap-1">
-        {label}
-        <span className="text-[10px]">{dir==='asc'?'▲':dir==='desc'?'▼':'↕'}</span>
-      </span>
-    </th>
-  );
-}
-
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-4 py-3 align-middle">{children}</td>;
-}
+// Using shared Th, Td, SkeletonRows, Pagination from components/ui/Table
 
 function RoleBadge({ role }: { role?: string }) {
   const label = (role || "employee").toLowerCase();
@@ -256,18 +240,4 @@ function RoleBadge({ role }: { role?: string }) {
   );
 }
 
-function SkeletonRows({ rows, cols }: { rows: number; cols: number }) {
-  return (
-    <>
-      {Array.from({ length: rows }).map((_, r) => (
-        <tr key={r} className="border-t border-border/70">
-          {Array.from({ length: cols }).map((__, c) => (
-            <td key={c} className="px-4 py-3">
-              <div className="h-4 w-40 bg-bg rounded animate-pulse" />
-            </td>
-          ))}
-        </tr>
-      ))}
-    </>
-  );
-}
+// Using shared SkeletonRows

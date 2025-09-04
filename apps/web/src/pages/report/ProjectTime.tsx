@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
+import { Th, Td } from "../../components/ui/Table";
 import { getEmployee } from "../../lib/auth";
 
 type EmployeeLite = { id: string; name: string; email: string };
-type Project = { _id: string; title: string; estimatedTimeMinutes?: number };
+type Project = { _id: string; title: string; estimatedTimeMinutes?: number; startTime?: string };
 type TimeLog = { minutes: number; note?: string; addedBy: string; createdAt: string };
 type Task = {
   _id: string;
@@ -183,7 +184,7 @@ export default function ProjectTime() {
         setEmployees(emps);
         const projs = (projsRes.data.projects || []) as any[];
         setProjects(
-          projs.map((p) => ({ _id: p._id, title: p.title, estimatedTimeMinutes: p.estimatedTimeMinutes }))
+          projs.map((p) => ({ _id: p._id, title: p.title, estimatedTimeMinutes: p.estimatedTimeMinutes, startTime: p.startTime }))
         );
 
         // Load tasks for each project (includes timeLogs)
@@ -339,6 +340,34 @@ export default function ProjectTime() {
 
   const timeLabel = useMemo(() => (dateMode === "MONTH" ? monthLabel : "All Dates"), [dateMode, monthLabel]);
 
+  // Table data: per-project spent within current filters
+  const projectTable = useMemo(() => {
+    const rows = projects
+      .filter((p) => projectId === "ALL" || p._id === projectId)
+      .map((p) => {
+        const tasks = tasksByProject[p._id] || [];
+        let spent = 0;
+        for (const t of tasks) {
+          const logs = (t.timeLogs || []) as TimeLog[];
+          for (const l of logs) {
+            const when = new Date(l.createdAt);
+            if (when < start || when > end) continue;
+            if (employeeId !== "ALL" && String(l.addedBy) !== String(employeeId)) continue;
+            spent += l.minutes || 0;
+          }
+        }
+        return {
+          id: p._id,
+          title: p.title,
+          estimatedMinutes: p.estimatedTimeMinutes || 0,
+          spentMinutes: spent,
+          startTime: p.startTime,
+        };
+      })
+      .sort((a, b) => b.spentMinutes - a.spentMinutes);
+    return rows;
+  }, [projects, tasksByProject, start, end, employeeId, projectId]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -451,6 +480,49 @@ export default function ProjectTime() {
               ) : (
                 <div className="text-sm text-muted">No data</div>
               )}
+            </div>
+          </div>
+
+          {/* Projects table */}
+          <div className="rounded-md border border-border bg-surface p-4">
+            <div className="text-sm font-medium mb-2">Projects</div>
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="bg-bg border-b border-border">
+                    <Th>Project</Th>
+                    <Th>Start</Th>
+                    <Th>Estimated (h)</Th>
+                    <Th>Spent (h)</Th>
+                    <Th>Status</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {projectTable.map((r) => {
+                    const over = r.spentMinutes - r.estimatedMinutes;
+                    return (
+                      <tr key={r.id} className="border-b border-border">
+                        <Td>{r.title}</Td>
+                        <Td>{r.startTime ? new Date(r.startTime).toLocaleDateString() : '-'}</Td>
+                        <Td>{minutesToHours(r.estimatedMinutes)}</Td>
+                        <Td>{minutesToHours(r.spentMinutes)}</Td>
+                        <Td>
+                          {over > 0 ? (
+                            <span className="text-error">Over by {minutesToHours(over)} h</span>
+                          ) : (
+                            <span className="text-muted">Remaining {minutesToHours(Math.max(0, r.estimatedMinutes - r.spentMinutes))} h</span>
+                          )}
+                        </Td>
+                      </tr>
+                    );
+                  })}
+                  {projectTable.length === 0 && (
+                    <tr>
+                      <td className="px-3 py-3 text-sm text-muted" colSpan={5}>No projects</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </>

@@ -12,6 +12,7 @@ type Project = {
   teamLead: string;
   members: string[];
   estimatedTimeMinutes?: number;
+  startTime?: string;
 };
 
 type Task = {
@@ -48,6 +49,8 @@ export default function ProjectDetails() {
   const [openCommentsFor, setOpenCommentsFor] = useState<string | null>(null);
   const [editEstimatedHours, setEditEstimatedHours] = useState<string>('');
   const [savingEstimate, setSavingEstimate] = useState(false);
+  const [editStartTime, setEditStartTime] = useState<string>("");
+  const [savingStartTime, setSavingStartTime] = useState(false);
 
   const memberIds = useMemo(() => {
     if (!project) return [] as string[];
@@ -83,6 +86,8 @@ export default function ProjectDetails() {
       setTimeTotalMinutes(tsum.data.totalTimeSpentMinutes || 0);
       const est = proj?.data?.project?.estimatedTimeMinutes || 0;
       setEditEstimatedHours(est ? String(Math.round((est / 60) * 10) / 10) : '');
+      const st = proj?.data?.project?.startTime;
+      setEditStartTime(st ? toInputDateTimeLocal(st) : '');
       // Try to load full employees list (admin/hr/manager). Fallback to project members only.
       try {
         const emps = await api.get('/companies/employees');
@@ -102,6 +107,19 @@ export default function ProjectDetails() {
 
   function minutesToHours(min: number) {
     return Math.round((min / 60) * 10) / 10;
+  }
+
+  function toInputDateTimeLocal(s?: string) {
+    if (!s) return '';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const mi = pad(d.getMinutes());
+    return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
   }
 
   // Tiny donut chart copied inline (no external deps)
@@ -171,6 +189,18 @@ export default function ProjectDetails() {
       setProject(resp.data.project);
     } finally {
       setSavingEstimate(false);
+    }
+  }
+
+  async function saveStartTime() {
+    if (!id) return;
+    setSavingStartTime(true);
+    try {
+      const payload: any = { startTime: editStartTime || null };
+      const resp = await api.put(`/projects/${id}`, payload);
+      setProject(resp.data.project);
+    } finally {
+      setSavingStartTime(false);
     }
   }
 
@@ -263,6 +293,29 @@ export default function ProjectDetails() {
               {!!(project.techStack?.length) && (
                 <div className="mt-2 text-xs text-muted">Tech: {project.techStack?.join(', ')}</div>
               )}
+              <div className="mt-2 text-xs flex items-center gap-2 flex-wrap">
+                <span className="text-muted">Start:</span>
+                <span className="text-muted">
+                  {project.startTime ? new Date(project.startTime).toLocaleString() : '—'}
+                </span>
+                {canEditEstimate && (
+                  <>
+                    <input
+                      type="datetime-local"
+                      className="h-8 rounded border border-border bg-bg px-2 text-xs"
+                      value={editStartTime}
+                      onChange={(e) => setEditStartTime(e.target.value)}
+                    />
+                    <button
+                      onClick={saveStartTime}
+                      className="h-8 px-3 rounded-md border border-border text-xs hover:bg-bg disabled:opacity-50"
+                      disabled={savingStartTime}
+                    >
+                      {savingStartTime ? 'Saving…' : 'Save Start'}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             <Link to=".." relative="path" className="text-sm underline text-accent">
               Back

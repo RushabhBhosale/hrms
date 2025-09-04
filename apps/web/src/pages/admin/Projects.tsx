@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
+import { Th, Td } from '../../components/ui/Table';
 import { getEmployee } from '../../lib/auth';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -13,6 +14,7 @@ type Project = {
   members: string[];
   estimatedTimeMinutes?: number;
   createdAt?: string;
+  startTime?: string;
 };
 
 export default function ProjectsAdmin() {
@@ -29,6 +31,7 @@ export default function ProjectsAdmin() {
   const [teamLead, setTeamLead] = useState('');
   const [members, setMembers] = useState<string[]>([]);
   const [estimatedHours, setEstimatedHours] = useState('');
+  const [startTime, setStartTime] = useState<string>(''); // datetime-local string
 
   const teamLeadOptions = useMemo(() => {
     // prefer HR or manager as team lead
@@ -82,6 +85,7 @@ export default function ProjectsAdmin() {
       const eh = parseFloat(estimatedHours || '0');
       const payload: any = { title, description, techStack, teamLead, members };
       if (isFinite(eh) && eh > 0) payload.estimatedTimeMinutes = Math.round(eh * 60);
+      if (startTime && startTime.trim()) payload.startTime = startTime;
       await api.post('/projects', payload);
       setTitle('');
       setDescription('');
@@ -89,6 +93,7 @@ export default function ProjectsAdmin() {
       setTeamLead('');
       setMembers([]);
       setEstimatedHours('');
+      setStartTime('');
       await load();
     } finally {
       setLoading(false);
@@ -144,6 +149,15 @@ export default function ProjectsAdmin() {
               value={estimatedHours}
               onChange={(e) => setEstimatedHours(e.target.value)}
               placeholder="e.g. 120"
+            />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Start Time</label>
+            <input
+              className="w-full h-10 rounded border border-border bg-bg px-3"
+              type="datetime-local"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
             />
           </div>
           <div className="md:col-span-2">
@@ -207,61 +221,62 @@ export default function ProjectsAdmin() {
         </div>
       </form>
 
-      {/* List */}
-      <div className="grid gap-3">
-        {projects.map((p) => (
-          <div key={p._id} className="border border-border bg-surface rounded-md p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="font-semibold">{p.title}</div>
-                {p.description && <div className="text-sm text-muted mt-1">{p.description}</div>}
-                {!!(p.techStack?.length) && (
-                  <div className="mt-2 text-xs text-muted">Tech: {p.techStack?.join(', ')}</div>
-                )}
-                <div className="mt-2 text-xs flex items-center gap-4">
-                  <span className="text-muted">Start: {fmtDate(p.createdAt)}</span>
-                  <span className="text-muted">Lead: {employees.find((e) => e.id === p.teamLead)?.name || '—'}</span>
-                </div>
-                <div className="mt-1 text-xs flex items-center gap-4">
-                  <span className="text-muted">
-                    Est: {minutesToHours(p.estimatedTimeMinutes || 0)} h
-                  </span>
-                  <span className={(() => {
-                    const spent = spentByProject[p._id] || 0;
-                    const over = spent > (p.estimatedTimeMinutes || 0);
-                    return over ? 'text-error font-medium' : 'text-muted';
-                  })()}>
-                    Spent: {minutesToHours(spentByProject[p._id] || 0)} h
-                  </span>
-                  {(() => {
-                    const est = p.estimatedTimeMinutes || 0;
-                    const spent = spentByProject[p._id] || 0;
-                    const over = spent - est;
-                    if (over > 0) {
-                      return (
-                        <span className="inline-flex items-center gap-1 text-error">
-                          • Over by {minutesToHours(over)} h
-                        </span>
-                      );
-                    }
-                    return null;
-                  })()}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Link
-                  to={`/admin/projects/${p._id}`}
-                  className="h-9 px-3 rounded-md border border-border hover:bg-bg inline-flex items-center"
-                >
-                  Open
-                </Link>
-              </div>
-            </div>
-          </div>
-        ))}
-        {projects.length === 0 && (
-          <div className="text-sm text-muted">No projects yet.</div>
-        )}
+      {/* List as table */}
+      <div className="overflow-auto border border-border rounded-md bg-surface">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="bg-bg border-b border-border">
+              <Th>Project</Th>
+              <Th>Team Lead</Th>
+              <Th>Members</Th>
+              <Th>Start</Th>
+              <Th>Estimated (h)</Th>
+              <Th>Spent (h)</Th>
+              <Th>Status</Th>
+              <Th>Actions</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {projects.map((p) => {
+              const est = p.estimatedTimeMinutes || 0;
+              const spent = spentByProject[p._id] || 0;
+              const over = spent - est;
+              return (
+                <tr key={p._id} className="border-b border-border">
+                  <Td>
+                    <div className="font-medium">{p.title}</div>
+                    {p.description && <div className="text-xs text-muted truncate max-w-[360px]" title={p.description}>{p.description}</div>}
+                  </Td>
+                  <Td>{employees.find((e) => e.id === p.teamLead)?.name || '—'}</Td>
+                  <Td>{p.members?.length || 0}</Td>
+                  <Td>{fmtDate(p.startTime || p.createdAt)}</Td>
+                  <Td>{minutesToHours(est)}</Td>
+                  <Td>{minutesToHours(spent)}</Td>
+                  <Td>
+                    {over > 0 ? (
+                      <span className="text-error">Over by {minutesToHours(over)} h</span>
+                    ) : (
+                      <span className="text-muted">Remaining {minutesToHours(Math.max(0, est - spent))} h</span>
+                    )}
+                  </Td>
+                  <Td>
+                    <Link
+                      to={`/admin/projects/${p._id}`}
+                      className="h-8 px-3 rounded-md border border-border hover:bg-bg inline-flex items-center"
+                    >
+                      Open
+                    </Link>
+                  </Td>
+                </tr>
+              );
+            })}
+            {projects.length === 0 && (
+              <tr>
+                <td className="px-3 py-3 text-sm text-muted" colSpan={8}>No projects yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

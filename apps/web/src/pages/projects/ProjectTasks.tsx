@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
+import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
 
 type EmployeeLite = {
   id: string;
@@ -295,12 +296,12 @@ export default function ProjectTasks() {
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <SortTh label="Title" onClick={() => toggleSort("title")} dir={sortKey==='title'?sortDir:null} />
-                <SortTh label="Assignee" onClick={() => toggleSort("assignee")} dir={sortKey==='assignee'?sortDir:null} />
-                <SortTh label="Status" onClick={() => toggleSort("status")} dir={sortKey==='status'?sortDir:null} />
-                <SortTh label="Priority" onClick={() => toggleSort("priority")} dir={sortKey==='priority'?sortDir:null} />
-                <SortTh label="Time Spent" onClick={() => toggleSort("time")} dir={sortKey==='time'?sortDir:null} />
-                <SortTh label="Created" onClick={() => toggleSort("created")} dir={sortKey==='created'?sortDir:null} />
+                <Th sortable onSort={() => toggleSort("title")} dir={sortKey==='title'?sortDir:null}>Title</Th>
+                <Th sortable onSort={() => toggleSort("assignee")} dir={sortKey==='assignee'?sortDir:null}>Assignee</Th>
+                <Th sortable onSort={() => toggleSort("status")} dir={sortKey==='status'?sortDir:null}>Status</Th>
+                <Th sortable onSort={() => toggleSort("priority")} dir={sortKey==='priority'?sortDir:null}>Priority</Th>
+                <Th sortable onSort={() => toggleSort("time")} dir={sortKey==='time'?sortDir:null}>Time Spent</Th>
+                <Th sortable onSort={() => toggleSort("created")} dir={sortKey==='created'?sortDir:null}>Created</Th>
               </tr>
             </thead>
             <tbody>
@@ -347,7 +348,7 @@ export default function ProjectTasks() {
                         <PriorityBadge p={t.priority} />
                       </Td>
                       <Td>{totalHours} h</Td>
-                      <Td classNameOverride="whitespace-nowrap text-muted">
+                      <Td className="whitespace-nowrap text-muted">
                         {created}
                       </Td>
                     </tr>
@@ -410,98 +411,19 @@ export default function ProjectTasks() {
         </div>
       </section>
 
-      <div className="flex items-center gap-2 justify-end">
-        <button
-          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50 hover:bg-bg"
-          onClick={() => setPage(1)}
-          disabled={page === 1}
-        >
-          First
-        </button>
-        <button
-          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50 hover:bg-bg"
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={page <= 1}
-        >
-          Prev
-        </button>
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted">Page</span>
-          <input
-            type="number"
-            min={1}
-            max={pages}
-            value={page}
-            onChange={(e) =>
-              setPage(Math.min(Math.max(1, Number(e.target.value) || 1), pages))
-            }
-            className="h-9 w-16 rounded-md border border-border bg-surface px-2 text-center"
-          />
-          <span className="text-muted">of {pages}</span>
-        </div>
-        <button
-          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50 hover:bg-bg"
-          onClick={() => setPage((p) => Math.min(pages, p + 1))}
-          disabled={page >= pages}
-        >
-          Next
-        </button>
-        <button
-          className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50 hover:bg-bg"
-          onClick={() => setPage(pages)}
-          disabled={page === pages}
-        >
-          Last
-        </button>
+      <div className="flex items-center justify-end">
+        <Pagination
+          page={page}
+          pages={pages}
+          onFirst={() => setPage(1)}
+          onPrev={() => setPage((p) => Math.max(1, p - 1))}
+          onNext={() => setPage((p) => Math.min(pages, p + 1))}
+          onLast={() => setPage(pages)}
+          disabled={loading}
+        />
       </div>
     </div>
   );
 }
 
-function SortTh({ label, dir, onClick }: { label: string; dir: "asc" | "desc" | null; onClick: () => void }) {
-  return (
-    <th
-      className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer hover:text-text select-none"
-      onClick={onClick}
-    >
-      <span className="inline-flex items-center gap-1">
-        {label}
-        <span className="text-[10px]">
-          {dir === "asc" ? "▲" : dir === "desc" ? "▼" : "↕"}
-        </span>
-      </span>
-    </th>
-  );
-}
-
-function Td({
-  children,
-  classNameOverride,
-}: {
-  children: React.ReactNode;
-  classNameOverride?: string;
-}) {
-  return (
-    <td
-      className={["px-4 py-3 align-middle", classNameOverride || ""].join(" ")}
-    >
-      {children}
-    </td>
-  );
-}
-
-function SkeletonRows({ rows, cols }: { rows: number; cols: number }) {
-  return (
-    <>
-      {Array.from({ length: rows }).map((_, r) => (
-        <tr key={r} className="border-t border-border/70">
-          {Array.from({ length: cols }).map((__, c) => (
-            <td key={c} className="px-4 py-3">
-              <div className="h-4 w-40 bg-bg rounded animate-pulse" />
-            </td>
-          ))}
-        </tr>
-      ))}
-    </>
-  );
-}
+// Using shared Th, Td, SkeletonRows, Pagination from components/ui/Table

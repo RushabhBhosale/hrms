@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
+import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
 import { getEmployee, setAuth, LeaveBalances } from "../../lib/auth";
 
 type Leave = {
@@ -360,11 +361,11 @@ export default function LeaveRequest() {
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <SortTh label="Start" dir={sortKey==='start'?sortDir:null} onClick={()=> setSortKey('start') || setSortDir(d=> d==='asc'?'desc':'asc')} />
-                <SortTh label="End" dir={sortKey==='end'?sortDir:null} onClick={()=> setSortKey('end') || setSortDir(d=> d==='asc'?'desc':'asc')} />
-                <SortTh label="Days" dir={sortKey==='days'?sortDir:null} onClick={()=> setSortKey('days') || setSortDir(d=> d==='asc'?'desc':'asc')} />
-                <SortTh label="Type" dir={sortKey==='type'?sortDir:null} onClick={()=> setSortKey('type') || setSortDir(d=> d==='asc'?'desc':'asc')} />
-                <SortTh label="Status" dir={sortKey==='status'?sortDir:null} onClick={()=> setSortKey('status') || setSortDir(d=> d==='asc'?'desc':'asc')} />
+                <Th sortable onSort={()=> { setSortKey('start'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='start'?sortDir:null}>Start</Th>
+                <Th sortable onSort={()=> { setSortKey('end'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='end'?sortDir:null}>End</Th>
+                <Th sortable onSort={()=> { setSortKey('days'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='days'?sortDir:null}>Days</Th>
+                <Th sortable onSort={()=> { setSortKey('type'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='type'?sortDir:null}>Type</Th>
+                <Th sortable onSort={()=> { setSortKey('status'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='status'?sortDir:null}>Status</Th>
                 <Th>Message</Th>
               </tr>
             </thead>
@@ -445,52 +446,22 @@ export default function LeaveRequest() {
         </div>
       </section>
 
-      <div className="flex items-center gap-2 justify-end">
-        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(1)} disabled={page===1}>First</button>
-        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}>Prev</button>
-        <div className="text-sm text-muted">Page {page} of {pages}</div>
-        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages}>Next</button>
-        <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setPage(pages)} disabled={page>=pages}>Last</button>
+      <div className="flex items-center justify-end">
+        <Pagination
+          page={page}
+          pages={pages}
+          onFirst={()=>setPage(1)}
+          onPrev={()=>setPage(p=>Math.max(1,p-1))}
+          onNext={()=>setPage(p=>Math.min(pages,p+1))}
+          onLast={()=>setPage(pages)}
+          disabled={loading}
+        />
       </div>
     </div>
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
-      {children}
-    </th>
-  );
-}
-function SortTh({ label, dir, onClick }: { label: string; dir: 'asc'|'desc'|null; onClick: ()=>void }) {
-  return (
-    <th onClick={onClick} className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer hover:text-text select-none">
-      <span className="inline-flex items-center gap-1">
-        {label}
-        <span className="text-[10px]">{dir==='asc'?'▲':dir==='desc'?'▼':'↕'}</span>
-      </span>
-    </th>
-  );
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-4 py-3 align-middle">{children}</td>;
-}
-function SkeletonRows({ rows, cols }: { rows: number; cols: number }) {
-  return (
-    <>
-      {Array.from({ length: rows }).map((_, r) => (
-        <tr key={r} className="border-t border-border/70">
-          {Array.from({ length: cols }).map((__, c) => (
-            <td key={c} className="px-4 py-3">
-              <div className="h-4 w-40 bg-bg rounded animate-pulse" />
-            </td>
-          ))}
-        </tr>
-      ))}
-    </>
-  );
-}
+// Using shared Th, Td, SkeletonRows, Pagination from components/ui/Table
 
 // (no extra helpers)
 function StatusBadge({ status }: { status: Leave["status"] }) {
