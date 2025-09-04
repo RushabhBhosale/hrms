@@ -3,7 +3,7 @@ import { api } from "../../lib/api";
 import { getEmployee } from "../../lib/auth";
 
 type EmployeeLite = { id: string; name: string; email: string };
-type Project = { _id: string; title: string };
+type Project = { _id: string; title: string; estimatedTimeMinutes?: number };
 type TimeLog = { minutes: number; note?: string; addedBy: string; createdAt: string };
 type Task = {
   _id: string;
@@ -55,6 +55,9 @@ function Donut({
     return { ...d, start: s, end: e };
   });
 
+  const nonZero = data.filter((d) => d.value > 0);
+  const isSingleFull = nonZero.length === 1 && Math.abs(nonZero[0].value - total) < 1e-6;
+
   function arcPath(startAngle: number, endAngle: number) {
     const sa = (startAngle * Math.PI) / 180;
     const ea = (endAngle * Math.PI) / 180;
@@ -76,13 +79,19 @@ function Donut({
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      {/* background ring */}
-      <circle cx={r} cy={r} r={ir} fill="white" />
-      {arcs.map((seg, i) => (
-        <path key={i} d={arcPath(seg.start, seg.end)} fill={seg.color} />
-      ))}
-      {/* inner circle to create ring effect */}
-      <circle cx={r} cy={r} r={ir} fill="white" />
+      {isSingleFull ? (
+        <>
+          <circle cx={r} cy={r} r={r} fill={nonZero[0].color} />
+          <circle cx={r} cy={r} r={ir} fill="white" />
+        </>
+      ) : (
+        <>
+          {arcs.map((seg, i) => (
+            <path key={i} d={arcPath(seg.start, seg.end)} fill={seg.color} />
+          ))}
+          <circle cx={r} cy={r} r={ir} fill="white" />
+        </>
+      )}
     </svg>
   );
 }
@@ -137,9 +146,11 @@ function StackedBars({
 export default function ProjectTime() {
   const me = getEmployee();
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // yyyy-mm
+  const [dateMode, setDateMode] = useState<"ALL" | "MONTH">("ALL");
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [employeeId, setEmployeeId] = useState<string>("ALL");
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectId, setProjectId] = useState<string>("ALL");
   const [tasksByProject, setTasksByProject] = useState<Record<string, Task[]>>({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -171,7 +182,9 @@ export default function ProjectTime() {
         const emps = (empsRes.data.employees || []) as EmployeeLite[];
         setEmployees(emps);
         const projs = (projsRes.data.projects || []) as any[];
-        setProjects(projs.map((p) => ({ _id: p._id, title: p.title })));
+        setProjects(
+          projs.map((p) => ({ _id: p._id, title: p.title, estimatedTimeMinutes: p.estimatedTimeMinutes }))
+        );
 
         // Load tasks for each project (includes timeLogs)
         const taskMap: Record<string, Task[]> = {};
@@ -195,7 +208,28 @@ export default function ProjectTime() {
     })();
   }, []);
 
-  const { start, end } = useMemo(() => parseMonthStr(month), [month]);
+  // All-time range from first available time log to now
+  const allTimeRange = useMemo(() => {
+    let minDate: Date | null = null;
+    for (const pid of Object.keys(tasksByProject)) {
+      const tasks = tasksByProject[pid] || [];
+      for (const t of tasks) {
+        const logs = (t.timeLogs || []) as TimeLog[];
+        for (const l of logs) {
+          const when = new Date(l.createdAt);
+          if (!minDate || when < minDate) minDate = when;
+        }
+      }
+    }
+    return {
+      start: minDate || new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+      end: new Date(),
+    };
+  }, [tasksByProject]);
+
+  const { start, end } = useMemo(() => {
+    return dateMode === "MONTH" ? parseMonthStr(month) : allTimeRange;
+  }, [dateMode, month, allTimeRange]);
 
   // Aggregations
   const agg = useMemo(() => {
@@ -207,6 +241,7 @@ export default function ProjectTime() {
     const includeEmp = (empId: string) => employeeId === "ALL" || employeeId === empId;
 
     for (const pid of Object.keys(tasksByProject)) {
+      if (projectId !== "ALL" && pid !== projectId) continue;
       const tasks = tasksByProject[pid] || [];
       for (const t of tasks) {
         const logs = (t.timeLogs || []) as TimeLog[];
@@ -226,15 +261,26 @@ export default function ProjectTime() {
       }
     }
 
-    // Prepare donut data: share of time by project
-    const donut = Object.keys(byProject)
-      .sort((a, b) => (byProject[b] || 0) - (byProject[a] || 0))
-      .map((pid, i) => ({
-        id: pid,
-        label: projects.find((p) => p._id === pid)?.title || "Project",
-        value: byProject[pid] || 0,
-        color: palette[i % palette.length],
-      }));
+    // Prepare donut data
+    // - If a specific project is selected: show breakdown by employees for that project
+    // - Otherwise: show share of time by project
+    const donut = projectId !== "ALL"
+      ? Object.entries(byProjectByEmp[projectId] || {})
+          .sort((a, b) => b[1] - a[1])
+          .map(([empId, val], i) => ({
+            id: String(empId),
+            label: employees.find((e) => e.id === empId)?.name || "Employee",
+            value: val || 0,
+            color: palette[i % palette.length],
+          }))
+      : Object.keys(byProject)
+          .sort((a, b) => (byProject[b] || 0) - (byProject[a] || 0))
+          .map((pid, i) => ({
+            id: pid,
+            label: projects.find((p) => p._id === pid)?.title || "Project",
+            value: byProject[pid] || 0,
+            color: palette[i % palette.length],
+          }));
 
     // Prepare stacked bars: per project segments by employee
     const empMap = new Map(employees.map((e) => [e.id, e.name]));
@@ -262,14 +308,13 @@ export default function ProjectTime() {
     // Summary
     const totalMinutes = Object.values(byProject).reduce((s, v) => s + v, 0);
     const activeProjects = Object.keys(byProject).length;
-    const topProjectId = Object.entries(byProject).sort((a, b) => b[1] - a[1])[0]?.[0];
-    const topProject = topProjectId ? projects.find((p) => p._id === topProjectId)?.title : undefined;
-    const topContributorId = Object.entries(byEmpTotal).sort((a, b) => b[1] - a[1])[0]?.[0];
-    const topContributor = topContributorId ? empMap.get(topContributorId) : undefined;
     const avgPerActiveDay = (() => {
       const days = Object.keys(byDay).length || 1;
       return Math.round(((totalMinutes / days) / 60) * 100) / 100;
     })();
+
+    const selectedSpent = projectId !== "ALL" ? (byProject[projectId] || 0) : undefined;
+    const selectedEst = projectId !== "ALL" ? (projects.find((p) => p._id === projectId)?.estimatedTimeMinutes || 0) : undefined;
 
     return {
       donut,
@@ -278,12 +323,13 @@ export default function ProjectTime() {
       summary: {
         totalHours: minutesToHours(totalMinutes),
         activeProjects,
-        topProject: topProject || "-",
-        topContributor: employeeId === "ALL" ? topContributor || "-" : employees.find((e) => e.id === employeeId)?.name || "-",
         avgPerActiveDay,
+        selectedProjectId: projectId !== "ALL" ? projectId : undefined,
+        selectedEstimatedHours: selectedEst !== undefined ? minutesToHours(selectedEst) : undefined,
+        selectedSpentHours: selectedSpent !== undefined ? minutesToHours(selectedSpent) : undefined,
       },
     };
-  }, [tasksByProject, projects, employees, month, employeeId]);
+  }, [tasksByProject, projects, employees, start, end, employeeId, projectId]);
 
   const monthLabel = useMemo(() => {
     const [y, m] = month.split("-").map(Number);
@@ -291,17 +337,41 @@ export default function ProjectTime() {
     return d.toLocaleDateString([], { month: "long", year: "numeric" });
   }, [month]);
 
+  const timeLabel = useMemo(() => (dateMode === "MONTH" ? monthLabel : "All Dates"), [dateMode, monthLabel]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-xl font-semibold">Project Time Analytics</h2>
-        <div className="flex items-center gap-2">
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
             className="h-10 rounded-md border border-border bg-surface px-3"
-          />
+            value={dateMode}
+            onChange={(e) => setDateMode(e.target.value as any)}
+          >
+            <option value="ALL">All time</option>
+            <option value="MONTH">Monthly</option>
+          </select>
+          {dateMode === "MONTH" && (
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="h-10 rounded-md border border-border bg-surface px-3"
+            />
+          )}
+          <select
+            className="h-10 rounded-md border border-border bg-surface px-3"
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+          >
+            <option value="ALL">All projects</option>
+            {projects.map((p) => (
+              <option key={p._id} value={p._id}>
+                {p.title}
+              </option>
+            ))}
+          </select>
           <select
             className="h-10 rounded-md border border-border bg-surface px-3"
             value={employeeId}
@@ -327,28 +397,35 @@ export default function ProjectTime() {
           {/* Summary cards */}
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-md border border-border bg-surface p-4">
-              <div className="text-xs text-muted">Total Hours ({monthLabel})</div>
+              <div className="text-xs text-muted">Total Hours ({timeLabel})</div>
               <div className="text-2xl font-semibold mt-1">{agg.summary.totalHours} h</div>
             </div>
             <div className="rounded-md border border-border bg-surface p-4">
               <div className="text-xs text-muted">Active Projects</div>
               <div className="text-2xl font-semibold mt-1">{agg.summary.activeProjects}</div>
             </div>
-            <div className="rounded-md border border-border bg-surface p-4">
-              <div className="text-xs text-muted">Top Project</div>
-              <div className="text-base font-medium mt-1">{agg.summary.topProject}</div>
-            </div>
-            <div className="rounded-md border border-border bg-surface p-4">
-              <div className="text-xs text-muted">{employeeId === "ALL" ? "Top Contributor" : "Selected Employee"}</div>
-              <div className="text-base font-medium mt-1">{agg.summary.topContributor}</div>
-              <div className="text-xs text-muted mt-1">Avg per active day: {agg.summary.avgPerActiveDay} h</div>
-            </div>
+            {agg.summary.selectedProjectId && (
+              <>
+                <div className="rounded-md border border-border bg-surface p-4">
+                  <div className="text-xs text-muted">Estimated Time (selected project)</div>
+                  <div className="text-base font-medium mt-1">
+                    {agg.summary.selectedEstimatedHours !== undefined ? `${agg.summary.selectedEstimatedHours} h` : "-"}
+                  </div>
+                </div>
+                <div className="rounded-md border border-border bg-surface p-4">
+                  <div className="text-xs text-muted">Spent Time (selected project)</div>
+                  <div className="text-base font-medium mt-1">
+                    {agg.summary.selectedSpentHours !== undefined ? `${agg.summary.selectedSpentHours} h` : "-"}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Charts */}
           <div className="grid lg:grid-cols-2 gap-6">
             <div className="rounded-md border border-border bg-surface p-4">
-              <div className="text-sm font-medium mb-2">Time by Project</div>
+              <div className="text-sm font-medium mb-2">{projectId === "ALL" ? "Time by Project" : "Time by Employee (Selected Project)"}</div>
               {agg.donut.length ? (
                 <div className="flex items-center gap-6 flex-wrap">
                   <Donut data={agg.donut} />
@@ -363,7 +440,7 @@ export default function ProjectTime() {
                   </div>
                 </div>
               ) : (
-                <div className="text-sm text-muted">No time logged in {monthLabel}.</div>
+                <div className="text-sm text-muted">No time logged in {timeLabel}.</div>
               )}
             </div>
 
@@ -381,4 +458,3 @@ export default function ProjectTime() {
     </div>
   );
 }
-

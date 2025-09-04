@@ -29,6 +29,7 @@ Role‑based HRMS with attendance, leave management, projects/tasks, and reports
 ```
 
 Relevant entry points and config:
+
 - `apps/api/src/index.js:1` – Express app, routes, CORS, server start
 - `apps/api/src/routes` – Feature routes (auth, companies, attendance, leaves, documents, projects)
 - `apps/web/src/App.tsx:1` – Router with role‑based layouts
@@ -61,6 +62,7 @@ curl -X POST http://localhost:4000/seed/superadmin \
 ```
 
 Then log in at `http://localhost:5173` with:
+
 - Email: `superadmin@hrms.dev`
 - Password: `password`
 
@@ -69,11 +71,13 @@ Then log in at `http://localhost:5173` with:
 ### API environment (`apps/api/.env`)
 
 Required:
+
 - `MONGO_URL` – e.g., `mongodb://localhost:27017`
 - `JWT_SECRET` – any strong secret
 - `CLIENT_ORIGIN` – Web app origin (default dev is `http://localhost:5173`)
 
 Optional:
+
 - `PORT` – API port (default `4000`)
 - `AUTO_PUNCH_OUT_TIME` – HH:mm (24h) for auto punch‑out job (defaults to `08:30`)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` – enable email
@@ -84,13 +88,14 @@ SMTP notes: If unset, emails are skipped with a warning. For Gmail, prefer `SMTP
 ### Web environment (`apps/web`)
 
 Optional `.env` with:
+
 - `VITE_API_URL` – API base URL (defaults to `http://localhost:4000`)
 
 ## First‑Time Setup (Product Flow)
 
-1) Log in as Super Admin and add a company: `Super Admin → Companies → Add` (`/superadmin/companies/add`).
-2) The flow creates the company and its Admin. Admin then manages employees, roles, leave policy, bank holidays, and projects.
-3) Employees log into `/app`, punch in/out, request leaves, upload documents, and log task time.
+1. Log in as Super Admin and add a company: `Super Admin → Companies → Add` (`/superadmin/companies/add`).
+2. The flow creates the company and its Admin. Admin then manages employees, roles, leave policy, bank holidays, and projects.
+3. Employees log into `/app`, punch in/out, request leaves, upload documents, and log task time.
 
 ## Running & Scripts
 
@@ -165,7 +170,3 @@ Auto punch‑out job: at `AUTO_PUNCH_OUT_TIME` (default 08:30) the server closes
 - CORS errors: update `CLIENT_ORIGIN` in API `.env` to your web origin
 - Emails not sending: verify `SMTP_HOST`, credentials, and that provider allows SMTP; use `SMTP_DEBUG=true`
 - Excel export fails: check date format `?month=yyyy-mm` and auth permissions
-
----
-
-Happy building! If you want, I can also document a full API reference or add Postman/Insomnia collections.

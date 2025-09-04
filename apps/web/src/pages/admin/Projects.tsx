@@ -12,6 +12,7 @@ type Project = {
   teamLead: string;
   members: string[];
   estimatedTimeMinutes?: number;
+  createdAt?: string;
 };
 
 export default function ProjectsAdmin() {
@@ -96,6 +97,13 @@ export default function ProjectsAdmin() {
 
   function minutesToHours(min: number) {
     return Math.round((min / 60) * 10) / 10;
+  }
+
+  function fmtDate(s?: string) {
+    if (!s) return '-';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
   return (
@@ -211,6 +219,10 @@ export default function ProjectsAdmin() {
                   <div className="mt-2 text-xs text-muted">Tech: {p.techStack?.join(', ')}</div>
                 )}
                 <div className="mt-2 text-xs flex items-center gap-4">
+                  <span className="text-muted">Start: {fmtDate(p.createdAt)}</span>
+                  <span className="text-muted">Lead: {employees.find((e) => e.id === p.teamLead)?.name || '—'}</span>
+                </div>
+                <div className="mt-1 text-xs flex items-center gap-4">
                   <span className="text-muted">
                     Est: {minutesToHours(p.estimatedTimeMinutes || 0)} h
                   </span>

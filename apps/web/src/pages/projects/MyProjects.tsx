@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
 import { Link } from 'react-router-dom';
 
@@ -7,17 +7,28 @@ type Project = {
   title: string;
   description?: string;
   techStack?: string[];
+  teamLead: string;
+  members: string[];
+  estimatedTimeMinutes?: number;
+  createdAt?: string;
 };
+
+type EmployeeLite = { id: string; name: string; email: string };
 
 export default function MyProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [loading, setLoading] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
-      const res = await api.get('/projects');
-      setProjects(res.data.projects || []);
+      const [projRes, empRes] = await Promise.all([
+        api.get('/projects'),
+        api.get('/companies/employees'),
+      ]);
+      setProjects(projRes.data.projects || []);
+      setEmployees(empRes.data.employees || []);
     } finally {
       setLoading(false);
     }
@@ -27,9 +38,22 @@ export default function MyProjects() {
     load();
   }, []);
 
+  const empMap = useMemo(() => new Map(employees.map((e) => [e.id, e.name])), [employees]);
+
+  function minutesToHours(min: number) {
+    return Math.round((min / 60) * 10) / 10;
+  }
+
+  function fmtDate(s?: string) {
+    if (!s) return '-';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold">My Projects</h2>
+      <h2 className="text-xl font-semibold">Projects</h2>
 
       <div className="grid gap-3">
         {projects.map((p) => (
@@ -41,6 +65,12 @@ export default function MyProjects() {
                 {!!(p.techStack?.length) && (
                   <div className="mt-2 text-xs text-muted">Tech: {p.techStack?.join(', ')}</div>
                 )}
+                <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                  <span className="text-muted">Start: {fmtDate(p.createdAt)}</span>
+                  <span className="text-muted">Est: {minutesToHours(p.estimatedTimeMinutes || 0)} h</span>
+                  <span className="text-muted">Lead: {empMap.get(String(p.teamLead)) || '—'}</span>
+                  <span className="text-muted">Members: {p.members?.length || 0}</span>
+                </div>
               </div>
               <Link
                 to={`/app/projects/${p._id}`}
@@ -58,4 +88,3 @@ export default function MyProjects() {
     </div>
   );
 }
-
