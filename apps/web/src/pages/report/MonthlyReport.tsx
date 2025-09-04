@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
+import { toast } from 'react-hot-toast';
 import { formatMinutesLabel } from "../../lib/time";
 import { getEmployee } from "../../lib/auth";
 
@@ -74,7 +75,9 @@ export default function MonthlyReport() {
       });
       setRows(res.data.days || []);
     } catch (e: any) {
-      setErr(e?.response?.data?.error || "Failed to load report");
+      const msg = e?.response?.data?.error || "Failed to load report";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -158,7 +161,7 @@ export default function MonthlyReport() {
               } catch (e) {
                 // eslint-disable-next-line no-console
                 console.error(e);
-                alert("Failed to download Excel");
+                toast.error("Failed to download Excel");
               }
             }}
           >
@@ -268,7 +271,7 @@ export default function MonthlyReport() {
                                       });
                                       await load();
                                     } catch {
-                                      alert('Failed to save override');
+                                      toast.error('Failed to save override');
                                     } finally {
                                       setSaving(null);
                                     }
@@ -292,7 +295,7 @@ export default function MonthlyReport() {
                                       });
                                       await load();
                                     } catch {
-                                      alert('Failed to save override');
+                                      toast.error('Failed to save override');
                                     } finally {
                                       setSaving(null);
                                     }
@@ -316,7 +319,7 @@ export default function MonthlyReport() {
                                       });
                                       await load();
                                     } catch {
-                                      alert('Failed to save override');
+                                      toast.error('Failed to save override');
                                     } finally {
                                       setSaving(null);
                                     }

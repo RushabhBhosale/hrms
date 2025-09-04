@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
+import { toast } from 'react-hot-toast';
 
 type EmployeeLite = {
   id: string;
@@ -125,7 +126,9 @@ export default function ProjectTasks() {
         setEmployees(mem.data.members || []);
       }
     } catch (e: any) {
-      setErr(e?.response?.data?.error || "Failed to load tasks");
+      const msg = e?.response?.data?.error || "Failed to load tasks";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -240,7 +243,7 @@ export default function ProjectTasks() {
       setEditing(null);
       setEditForm(null);
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to save task');
+      toast.error(e?.response?.data?.error || 'Failed to save task');
     } finally {
       setSavingEdit(false);
     }
@@ -253,7 +256,7 @@ export default function ProjectTasks() {
       await api.delete(`/projects/${id}/tasks/${taskId}`);
       await load();
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to delete task');
+      toast.error(e?.response?.data?.error || 'Failed to delete task');
     }
   }
 

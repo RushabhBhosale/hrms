@@ -22,30 +22,44 @@ function canViewProject(emp, project) {
   const member =
     String(project.teamLead) === String(emp.id) ||
     (project.members || []).map((m) => String(m)).includes(String(emp.id));
-  return isAdmin(emp) || hr || member;
+  // Company-wide personal projects: visible to any employee in the same company
+  const personal =
+    project.isPersonal && String(project.company) === String(emp.company);
+  return isAdmin(emp) || hr || member || personal;
 }
 
 function isProjectMember(emp, project) {
+  // Company-wide personal projects: treat every employee in the company as a member
+  if (project.isPersonal && String(project.company) === String(emp.company)) {
+    return true;
+  }
   return (
     String(project.teamLead) === String(emp.id) ||
     (project.members || []).map((m) => String(m)).includes(String(emp.id))
   );
 }
 
-// Get or create a personal project for the current user within their company
+// Get or create a single personal project for the company (company-wide)
 router.get("/personal", auth, async (req, res) => {
   try {
     let project = await Project.findOne({
       company: req.employee.company,
-      teamLead: req.employee.id,
       isPersonal: true,
     });
     if (!project) {
+      // Prefer assigning the company-wide personal project to an admin
+      let lead = await Employee.findOne({
+        company: req.employee.company,
+        primaryRole: { $in: ["ADMIN", "SUPERADMIN"] },
+      })
+        .select("_id")
+        .lean();
+      const teamLeadId = lead?._id || req.employee.id;
       project = await Project.create({
         title: "Personal Tasks",
         description: "Personal tasks not linked to any project",
         techStack: [],
-        teamLead: req.employee.id,
+        teamLead: teamLeadId,
         members: [],
         company: req.employee.company,
         isPersonal: true,
@@ -396,12 +410,15 @@ router.post("/:id/tasks", auth, async (req, res) => {
   if (!isProjectMember(req.employee, project) && !isAdmin(req.employee))
     return res.status(403).json({ error: "Forbidden" });
   const { title, description, assignedTo, priority } = req.body;
-  const allowed = [
-    String(project.teamLead),
-    ...(project.members || []).map((m) => String(m)),
-  ];
-  if (!allowed.includes(String(assignedTo)))
-    return res.status(400).json({ error: "Assignee not in project" });
+  // For personal company-wide project, allow assigning any employee in the same company
+  if (!project.isPersonal) {
+    const allowed = [
+      String(project.teamLead),
+      ...(project.members || []).map((m) => String(m)),
+    ];
+    if (!allowed.includes(String(assignedTo)))
+      return res.status(400).json({ error: "Assignee not in project" });
+  }
   // Parse optional estimate: accept minutes or hours
   let estimatedTimeMinutes = 0;
   if (req.body.estimatedTimeMinutes !== undefined) {

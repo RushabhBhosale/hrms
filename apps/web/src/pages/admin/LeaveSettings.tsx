@@ -1,5 +1,6 @@
 import { useState, useEffect, FormEvent } from "react";
 import { api } from "../../lib/api";
+import { toast } from 'react-hot-toast';
 
 type FormState = {
   totalAnnual: string;
@@ -349,7 +350,7 @@ export default function LeaveSettings() {
                       await api.delete(`/companies/day-overrides/${o.date}`);
                       await loadOverrides(ovMonth);
                     } catch {
-                      alert('Failed to delete override');
+                      toast.error('Failed to delete override');
                     }
                   }}
                 >

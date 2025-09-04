@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
+import { toast } from 'react-hot-toast';
 import { getEmployee } from "../../lib/auth";
 
 type Announcement = {
@@ -30,7 +31,9 @@ export default function Announcements() {
         const res = await api.get("/announcements");
         setList(res.data.announcements || []);
       } catch (e: any) {
-        setError(e?.response?.data?.error || "Failed to load announcements");
+        const msg = e?.response?.data?.error || "Failed to load announcements";
+        setError(msg);
+        toast.error(msg);
       } finally {
         setLoading(false);
       }
@@ -54,7 +57,9 @@ export default function Announcements() {
       const res = await api.get("/announcements");
       setList(res.data.announcements || []);
     } catch (e: any) {
-      setError(e?.response?.data?.error || "Failed to create announcement");
+      const msg = e?.response?.data?.error || "Failed to create announcement";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
 import { Th, Td } from '../../components/ui/Table';
+import { toast } from 'react-hot-toast';
 import { getEmployee } from '../../lib/auth';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -275,7 +276,7 @@ export default function ProjectsAdmin() {
                             await load();
                           } catch (e) {
                             console.error(e);
-                            alert('Failed to delete project');
+                            toast.error('Failed to delete project');
                           }
                         }}
                         className="h-8 px-3 rounded-md border border-error/30 text-error hover:bg-error/10 inline-flex items-center"

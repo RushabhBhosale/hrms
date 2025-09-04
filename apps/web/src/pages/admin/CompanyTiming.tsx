@@ -1,5 +1,6 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
+import { toast } from 'react-hot-toast';
 
 type WorkHours = {
   start: string; // HH:mm
@@ -27,6 +28,7 @@ export default function CompanyTiming() {
       } catch (e: any) {
         // eslint-disable-next-line no-console
         console.warn(e?.response?.data?.error || e?.message || e);
+        toast.error(e?.response?.data?.error || "Failed to load work hours");
       } finally {
         setLoading(false);
       }
@@ -50,7 +52,9 @@ export default function CompanyTiming() {
       });
       setOk("Company work hours updated");
     } catch (e: any) {
-      setErr(e?.response?.data?.error || "Failed to update work hours");
+      const msg = e?.response?.data?.error || "Failed to update work hours";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }

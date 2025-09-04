@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { api } from "../lib/api";
+import { toast } from 'react-hot-toast';
 import { Link } from "react-router-dom";
 
 export default function RegisterCompany() {
@@ -31,7 +32,9 @@ export default function RegisterCompany() {
       setAdminEmail("");
       setAdminPassword("");
     } catch (e: any) {
-      setError(e?.response?.data?.error || "Failed to submit registration");
+      const msg = e?.response?.data?.error || "Failed to submit registration";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }

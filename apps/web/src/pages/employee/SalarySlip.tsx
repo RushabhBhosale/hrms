@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
+import { toast } from 'react-hot-toast';
 
 type FieldType = "text" | "number" | "date";
 type FieldCategory = "earning" | "deduction" | "info";
@@ -34,7 +35,9 @@ export default function MySalarySlip() {
         const v = res.data.slip?.values || {};
         setValues({ ...Object.fromEntries(Object.entries(v)) });
       } catch (e: any) {
-        setErr(e?.response?.data?.error || "Failed to load salary slip");
+        const msg = e?.response?.data?.error || "Failed to load salary slip";
+        setErr(msg);
+        toast.error(msg);
       } finally {
         setLoading(false);
       }
@@ -52,7 +55,7 @@ export default function MySalarySlip() {
       await downloadFileBlob(blob, `SalarySlip-${month}.pdf`);
     } catch (e) {
       console.error(e);
-      alert("Failed to download PDF");
+      toast.error("Failed to download PDF");
     } finally {
       setDownloading(false);
     }

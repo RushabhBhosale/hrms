@@ -1,6 +1,7 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
 import { applyTheme, resetTheme } from "../../lib/theme";
+import { toast } from 'react-hot-toast';
 
 export default function CompanyProfile() {
   const [name, setName] = useState("");
@@ -39,7 +40,9 @@ export default function CompanyProfile() {
       } catch (e: any) {
         // eslint-disable-next-line no-console
         console.warn(e?.response?.data?.error || e?.message || e);
-        setErr(e?.response?.data?.error || "Failed to load company");
+        const msg = e?.response?.data?.error || "Failed to load company";
+        setErr(msg);
+        toast.error(msg);
       } finally {
         setLoading(false);
       }
@@ -56,7 +59,9 @@ export default function CompanyProfile() {
       await api.put("/companies/profile", payload);
       setOk("Company name updated");
     } catch (e: any) {
-      setErr(e?.response?.data?.error || "Failed to update company name");
+      const msg = e?.response?.data?.error || "Failed to update company name";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }

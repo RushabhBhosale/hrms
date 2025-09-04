@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { toast } from 'react-hot-toast';
 import { getEmployee } from "../lib/auth";
 
 type Announcement = {
@@ -41,7 +42,9 @@ export default function AnnouncementsPopup() {
         const newest = anns.length ? new Date(anns[0].createdAt).getTime() : 0;
         if (newest > lastSeen && anns.length) setOpen(true);
       } catch (e: any) {
-        setError(e?.response?.data?.error || "Failed to load announcements");
+        const msg = e?.response?.data?.error || "Failed to load announcements";
+        setError(msg);
+        toast.error(msg);
       } finally {
         setLoading(false);
       }

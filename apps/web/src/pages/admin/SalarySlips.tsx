@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
+import { toast } from 'react-hot-toast';
 
 type EmployeeLite = { id: string; name: string; email: string };
 type FieldType = "text" | "number" | "date";
@@ -96,7 +97,7 @@ export default function SalarySlipsAdmin() {
       await downloadFileBlob(blob, `SalarySlip-${namePart}-${month}.pdf`);
     } catch (e) {
       console.error(e);
-      alert('Failed to download PDF');
+      toast.error('Failed to download PDF');
     } finally {
       setDownloading(false);
     }

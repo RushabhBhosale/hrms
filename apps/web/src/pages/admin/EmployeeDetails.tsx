@@ -1,6 +1,7 @@
 import { useEffect, useState, FormEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
+import { toast } from 'react-hot-toast';
 
 type Employee = {
   id: string;
@@ -84,7 +85,9 @@ export default function EmployeeDetails() {
         setBankName(res.data.employee?.bankDetails?.bankName || "");
         setIfsc(res.data.employee?.bankDetails?.ifsc || "");
       } catch (e: any) {
-        setErr(e?.response?.data?.error || "Failed to load employee");
+        const msg = e?.response?.data?.error || "Failed to load employee";
+        setErr(msg);
+        toast.error(msg);
       } finally {
         setLoading(false);
       }
@@ -143,7 +146,9 @@ export default function EmployeeDetails() {
       });
       setUOk("Reporting person updated");
     } catch (e: any) {
-      setUErr(e?.response?.data?.error || "Failed to update");
+      const msg = e?.response?.data?.error || "Failed to update";
+      setUErr(msg);
+      toast.error(msg);
     } finally {
       setULoading(false);
     }
@@ -160,7 +165,9 @@ export default function EmployeeDetails() {
       setRoleOk("Role updated");
       setEmployee((prev) => (prev ? { ...prev, subRoles: [role] } : prev));
     } catch (e: any) {
-      setRoleErr(e?.response?.data?.error || "Failed to update role");
+      const msg = e?.response?.data?.error || "Failed to update role";
+      setRoleErr(msg);
+      toast.error(msg);
     } finally {
       setRoleLoading(false);
     }
@@ -200,7 +207,9 @@ export default function EmployeeDetails() {
           : prev
       );
     } catch (e: any) {
-      setSaveErr(e?.response?.data?.error || "Failed to save details");
+      const msg = e?.response?.data?.error || "Failed to save details";
+      setSaveErr(msg);
+      toast.error(msg);
     } finally {
       setSaveLoading(false);
     }
@@ -216,7 +225,7 @@ export default function EmployeeDetails() {
       await api.delete(`/companies/employees/${id}`);
       nav("/admin/employees");
     } catch (e: any) {
-      alert(e?.response?.data?.error || "Failed to delete employee");
+      toast.error(e?.response?.data?.error || "Failed to delete employee");
     }
   }
 

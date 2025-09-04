@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
+import { toast } from 'react-hot-toast';
 import { getEmployee } from '../../lib/auth';
 
 type EmployeeLite = { id: string; name: string; email: string; subRoles: string[] };
@@ -274,7 +275,7 @@ export default function ProjectDetails() {
       const base = me?.primaryRole === 'ADMIN' || me?.primaryRole === 'SUPERADMIN' ? '/admin/projects' : '/app/projects';
       nav(base, { replace: true });
     } catch (e) {
-      alert('Failed to delete project');
+      toast.error('Failed to delete project');
     }
   }
 
@@ -310,7 +311,7 @@ export default function ProjectDetails() {
       setEditTask(null);
       setTaskEditForm(null);
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to save task');
+      toast.error(e?.response?.data?.error || 'Failed to save task');
     } finally {
       setSavingTaskEdit(false);
     }
@@ -325,7 +326,7 @@ export default function ProjectDetails() {
       setTasks(tlist.data.tasks || []);
       setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to delete task');
+      toast.error(e?.response?.data?.error || 'Failed to delete task');
     }
   }
 
