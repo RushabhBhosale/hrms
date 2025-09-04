@@ -10,11 +10,20 @@ const LeaveSchema = new mongoose.Schema(
       enum: ['CASUAL', 'PAID', 'UNPAID', 'SICK'],
       required: true,
     },
+    // Optional fallback type to use when selected type balance is insufficient
+    fallbackType: { type: String, enum: ['PAID', 'SICK', 'UNPAID', null], default: null },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
     reason: { type: String },
     status: { type: String, enum: ['PENDING', 'APPROVED', 'REJECTED'], default: 'PENDING' },
-    adminMessage: { type: String }
+    adminMessage: { type: String },
+    // Allocation snapshot applied at approval time
+    allocations: {
+      paid: { type: Number, default: 0 },
+      casual: { type: Number, default: 0 },
+      sick: { type: Number, default: 0 },
+      unpaid: { type: Number, default: 0 },
+    },
   },
   { timestamps: true }
 );

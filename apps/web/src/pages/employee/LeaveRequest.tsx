@@ -18,6 +18,7 @@ type FormState = {
   endDate: string;
   reason: string;
   type: "CASUAL" | "PAID" | "UNPAID" | "SICK";
+  fallbackType?: "PAID" | "SICK" | "UNPAID";
 };
 
 type EmployeeLite = { id: string; name: string; email: string };
@@ -51,16 +52,25 @@ export default function LeaveRequest() {
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-  const [balances, setBalances] = useState<LeaveBalances | null>(() => getEmployee()?.leaveBalances || null);
+  const [balances, setBalances] = useState<LeaveBalances | null>(
+    () => getEmployee()?.leaveBalances || null
+  );
+  const [totalAvail, setTotalAvail] = useState<number>(
+    () => getEmployee()?.totalLeaveAvailable || 0
+  );
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [notifyIds, setNotifyIds] = useState<string[]>([]);
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<'ALL' | Leave['status']>('ALL');
-  const [typeFilter, setTypeFilter] = useState<'ALL' | Leave['type']>('ALL');
+  const [statusFilter, setStatusFilter] = useState<"ALL" | Leave["status"]>(
+    "ALL"
+  );
+  const [typeFilter, setTypeFilter] = useState<"ALL" | Leave["type"]>("ALL");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
-  const [sortKey, setSortKey] = useState<'start'|'end'|'days'|'type'|'status'>('start');
-  const [sortDir, setSortDir] = useState<'asc'|'desc'>('desc');
+  const [sortKey, setSortKey] = useState<
+    "start" | "end" | "days" | "type" | "status"
+  >("start");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   async function load() {
     try {
@@ -84,6 +94,7 @@ export default function LeaveRequest() {
       try {
         const res = await api.get("/auth/me");
         setBalances(res.data.employee.leaveBalances);
+        setTotalAvail(res.data.employee.totalLeaveAvailable || 0);
         const token = localStorage.getItem("token");
         if (token) setAuth(token, res.data.employee);
       } catch (e) {
@@ -99,7 +110,11 @@ export default function LeaveRequest() {
       try {
         const res = await api.get("/companies/employees");
         const me = getEmployee();
-        let list: EmployeeLite[] = (res.data.employees || []).map((e: any) => ({ id: e.id, name: e.name, email: e.email }));
+        let list: EmployeeLite[] = (res.data.employees || []).map((e: any) => ({
+          id: e.id,
+          name: e.name,
+          email: e.email,
+        }));
         // Exclude self from list
         if (me) list = list.filter((e) => e.id !== me.id);
         // Sort by name
@@ -121,32 +136,48 @@ export default function LeaveRequest() {
   // Derived lists for table: search, filters, sorting, pagination (client-side)
   const leavesFiltered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return leaves.filter((l) =>
-      (statusFilter === 'ALL' || l.status === statusFilter) &&
-      (typeFilter === 'ALL' || l.type === typeFilter) &&
-      (!term || (l.adminMessage || '').toLowerCase().includes(term))
+    return leaves.filter(
+      (l) =>
+        (statusFilter === "ALL" || l.status === statusFilter) &&
+        (typeFilter === "ALL" || l.type === typeFilter) &&
+        (!term || (l.adminMessage || "").toLowerCase().includes(term))
     );
   }, [leaves, q, statusFilter, typeFilter]);
 
   const leavesSorted = useMemo(() => {
     const arr = [...leavesFiltered];
-    const dir = sortDir === 'asc' ? 1 : -1;
-    arr.sort((a,b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
       switch (sortKey) {
-        case 'end': return dir * (+new Date(a.endDate) - +new Date(b.endDate));
-        case 'days': return dir * (daysBetween(a.startDate,a.endDate) - daysBetween(b.startDate,b.endDate));
-        case 'type': return dir * a.type.localeCompare(b.type);
-        case 'status': return dir * a.status.localeCompare(b.status);
-        case 'start':
-        default: return dir * (+new Date(a.startDate) - +new Date(b.startDate));
+        case "end":
+          return dir * (+new Date(a.endDate) - +new Date(b.endDate));
+        case "days":
+          return (
+            dir *
+            (daysBetween(a.startDate, a.endDate) -
+              daysBetween(b.startDate, b.endDate))
+          );
+        case "type":
+          return dir * a.type.localeCompare(b.type);
+        case "status":
+          return dir * a.status.localeCompare(b.status);
+        case "start":
+        default:
+          return dir * (+new Date(a.startDate) - +new Date(b.startDate));
       }
     });
     return arr;
   }, [leavesFiltered, sortKey, sortDir]);
 
   const totalFiltered = leavesSorted.length;
-  const pages = useMemo(() => Math.max(1, Math.ceil(totalFiltered / Math.max(1, limit))), [totalFiltered, limit]);
-  const pageRows = useMemo(() => leavesSorted.slice((page-1)*limit, (page-1)*limit + limit), [leavesSorted, page, limit]);
+  const pages = useMemo(
+    () => Math.max(1, Math.ceil(totalFiltered / Math.max(1, limit))),
+    [totalFiltered, limit]
+  );
+  const pageRows = useMemo(
+    () => leavesSorted.slice((page - 1) * limit, (page - 1) * limit + limit),
+    [leavesSorted, page, limit]
+  );
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -168,6 +199,22 @@ export default function LeaveRequest() {
   }
 
   const days = daysBetween(form.startDate, form.endDate);
+  const selectedAvail = useMemo(() => {
+    if (!balances) return 0;
+    const capRemain: Record<FormState["type"], number> = {
+      CASUAL: balances.casual || 0,
+      PAID: balances.paid || 0,
+      SICK: balances.sick || 0,
+      UNPAID: Infinity,
+    };
+    if (form.type === "UNPAID") return Infinity;
+    return Math.max(0, Math.min(capRemain[form.type], totalAvail));
+  }, [balances, form.type, totalAvail]);
+  const needsFallback =
+    form.type !== "UNPAID" &&
+    days > 0 &&
+    selectedAvail < days &&
+    (form.fallbackType = "UNPAID");
 
   return (
     <div className="space-y-8">
@@ -197,6 +244,9 @@ export default function LeaveRequest() {
             <div>Paid: {balances.paid}</div>
             <div>Sick: {balances.sick}</div>
             <div>Unpaid: {balances.unpaid}</div>
+            <div className="col-span-2 text-muted">
+              Total Available leaves this month: {totalAvail}
+            </div>
           </div>
         </section>
       )}
@@ -214,7 +264,10 @@ export default function LeaveRequest() {
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={form.type}
                 onChange={(e) =>
-                  setForm({ ...form, type: e.target.value as FormState["type"] })
+                  setForm({
+                    ...form,
+                    type: e.target.value as FormState["type"],
+                  })
                 }
               >
                 <option value="CASUAL">Casual</option>
@@ -263,17 +316,32 @@ export default function LeaveRequest() {
             </div>
           </div>
 
+          {needsFallback && (
+            <div className="text-xs text-muted">
+              You have only {selectedAvail} {form.type.toLowerCase()} leave(s).
+              The remaining {Math.max(0, days - selectedAvail)} day(s) will be
+              marked as Unpaid.
+            </div>
+          )}
+
           {/* Notify recipients */}
           {employees.length > 0 && (
             <div className="space-y-2">
-              <label className="text-sm font-medium">Notify Others (optional)</label>
-              <div className="text-xs text-muted">Default recipients: Company Admin and your Reporting Person</div>
+              <label className="text-sm font-medium">
+                Notify Others (optional)
+              </label>
+              <div className="text-xs text-muted">
+                Default recipients: Company Admin and your Reporting Person
+              </div>
               <div className="rounded-md border border-border p-3 bg-bg">
                 <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2">
                   {employees.map((emp) => {
                     const checked = notifyIds.includes(emp.id);
                     return (
-                      <label key={emp.id} className="flex items-center gap-2 text-sm">
+                      <label
+                        key={emp.id}
+                        className="flex items-center gap-2 text-sm"
+                      >
                         <input
                           type="checkbox"
                           className="h-4 w-4"
@@ -287,7 +355,8 @@ export default function LeaveRequest() {
                           }}
                         />
                         <span className="truncate">
-                          {emp.name} <span className="text-muted">({emp.email})</span>
+                          {emp.name}{" "}
+                          <span className="text-muted">({emp.email})</span>
                         </span>
                       </label>
                     );
@@ -308,9 +377,15 @@ export default function LeaveRequest() {
             <button
               type="button"
               className="rounded-md border border-border px-3 py-2"
-              onClick={() =>
-                { setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" }); setNotifyIds([]); }
-              }
+              onClick={() => {
+                setForm({
+                  startDate: "",
+                  endDate: "",
+                  reason: "",
+                  type: "CASUAL",
+                });
+                setNotifyIds([]);
+              }}
               disabled={sending}
             >
               Reset
@@ -329,31 +404,71 @@ export default function LeaveRequest() {
       <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
         <div className="border-b border-border px-4 py-3 flex items-center justify-between">
           <div className="text-sm text-muted">
-            {loading ? 'Loading…' : `Showing ${totalFiltered === 0 ? 0 : (page-1)*limit + 1}-${Math.min(totalFiltered, page*limit)} of ${totalFiltered} requests`}
+            {loading
+              ? "Loading…"
+              : `Showing ${
+                  totalFiltered === 0 ? 0 : (page - 1) * limit + 1
+                }-${Math.min(
+                  totalFiltered,
+                  page * limit
+                )} of ${totalFiltered} requests`}
           </div>
-        <div className="flex items-center gap-2">
-          <select className="h-9 rounded-md border border-border bg-surface px-2 text-sm" value={limit} onChange={(e)=>{ setPage(1); setLimit(parseInt(e.target.value,10)); }}>
-            {[10,20,50,100].map(n=> <option key={n} value={n}>{n} / page</option>)}
-          </select>
-        </div>
+          <div className="flex items-center gap-2">
+            <select
+              className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
+              value={limit}
+              onChange={(e) => {
+                setPage(1);
+                setLimit(parseInt(e.target.value, 10));
+              }}
+            >
+              {[10, 20, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n} / page
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Controls */}
         <div className="px-4 py-3 flex flex-wrap gap-2">
-          <select className="h-9 rounded-md border border-border bg-surface px-3" value={statusFilter} onChange={e=>{ setPage(1); setStatusFilter(e.target.value as any); }}>
+          <select
+            className="h-9 rounded-md border border-border bg-surface px-3"
+            value={statusFilter}
+            onChange={(e) => {
+              setPage(1);
+              setStatusFilter(e.target.value as any);
+            }}
+          >
             <option value="ALL">All Status</option>
             <option value="PENDING">Pending</option>
             <option value="APPROVED">Approved</option>
             <option value="REJECTED">Rejected</option>
           </select>
-          <select className="h-9 rounded-md border border-border bg-surface px-3" value={typeFilter} onChange={e=>{ setPage(1); setTypeFilter(e.target.value as any); }}>
+          <select
+            className="h-9 rounded-md border border-border bg-surface px-3"
+            value={typeFilter}
+            onChange={(e) => {
+              setPage(1);
+              setTypeFilter(e.target.value as any);
+            }}
+          >
             <option value="ALL">All Types</option>
             <option value="CASUAL">Casual</option>
             <option value="PAID">Paid</option>
             <option value="UNPAID">Unpaid</option>
             <option value="SICK">Sick</option>
           </select>
-          <input value={q} onChange={(e)=>{ setPage(1); setQ(e.target.value); }} placeholder="Search message…" className="h-9 w-64 rounded-md border border-border bg-surface px-3" />
+          <input
+            value={q}
+            onChange={(e) => {
+              setPage(1);
+              setQ(e.target.value);
+            }}
+            placeholder="Search message…"
+            className="h-9 w-64 rounded-md border border-border bg-surface px-3"
+          />
         </div>
 
         {/* Desktop table */}
@@ -361,11 +476,56 @@ export default function LeaveRequest() {
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <Th sortable onSort={()=> { setSortKey('start'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='start'?sortDir:null}>Start</Th>
-                <Th sortable onSort={()=> { setSortKey('end'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='end'?sortDir:null}>End</Th>
-                <Th sortable onSort={()=> { setSortKey('days'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='days'?sortDir:null}>Days</Th>
-                <Th sortable onSort={()=> { setSortKey('type'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='type'?sortDir:null}>Type</Th>
-                <Th sortable onSort={()=> { setSortKey('status'); setSortDir(d=> d==='asc'?'desc':'asc'); }} dir={sortKey==='status'?sortDir:null}>Status</Th>
+                <Th
+                  sortable
+                  onSort={() => {
+                    setSortKey("start");
+                    setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                  }}
+                  dir={sortKey === "start" ? sortDir : null}
+                >
+                  Start
+                </Th>
+                <Th
+                  sortable
+                  onSort={() => {
+                    setSortKey("end");
+                    setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                  }}
+                  dir={sortKey === "end" ? sortDir : null}
+                >
+                  End
+                </Th>
+                <Th
+                  sortable
+                  onSort={() => {
+                    setSortKey("days");
+                    setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                  }}
+                  dir={sortKey === "days" ? sortDir : null}
+                >
+                  Days
+                </Th>
+                <Th
+                  sortable
+                  onSort={() => {
+                    setSortKey("type");
+                    setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                  }}
+                  dir={sortKey === "type" ? sortDir : null}
+                >
+                  Type
+                </Th>
+                <Th
+                  sortable
+                  onSort={() => {
+                    setSortKey("status");
+                    setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                  }}
+                  dir={sortKey === "status" ? sortDir : null}
+                >
+                  Status
+                </Th>
                 <Th>Message</Th>
               </tr>
             </thead>
@@ -380,24 +540,24 @@ export default function LeaveRequest() {
                 </tr>
               ) : (
                 pageRows.map((l) => (
-                    <tr key={l._id} className="border-t border-border/70">
-                      <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
-                      <Td>{new Date(l.endDate).toLocaleDateString()}</Td>
-                      <Td>{daysBetween(l.startDate, l.endDate)}</Td>
-                      <Td>{l.type}</Td>
-                      <Td>
-                        <StatusBadge status={l.status as Leave["status"]} />
-                      </Td>
-                      <Td>
-                        <span
-                          title={l.adminMessage || ""}
-                          className="line-clamp-1 max-w-[28rem] inline-block align-middle"
-                        >
-                          {l.adminMessage || "-"}
-                        </span>
-                      </Td>
-                    </tr>
-                  ))
+                  <tr key={l._id} className="border-t border-border/70">
+                    <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
+                    <Td>{new Date(l.endDate).toLocaleDateString()}</Td>
+                    <Td>{daysBetween(l.startDate, l.endDate)}</Td>
+                    <Td>{l.type}</Td>
+                    <Td>
+                      <StatusBadge status={l.status as Leave["status"]} />
+                    </Td>
+                    <Td>
+                      <span
+                        title={l.adminMessage || ""}
+                        className="line-clamp-1 max-w-[28rem] inline-block align-middle"
+                      >
+                        {l.adminMessage || "-"}
+                      </span>
+                    </Td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
@@ -424,24 +584,24 @@ export default function LeaveRequest() {
             </div>
           ) : (
             pageRows.map((l) => (
-                <div key={l._id} className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="font-medium">
-                      {new Date(l.startDate).toLocaleDateString()} →{" "}
-                      {new Date(l.endDate).toLocaleDateString()}
-                    </div>
-                    <StatusBadge status={l.status as Leave["status"]} />
+              <div key={l._id} className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">
+                    {new Date(l.startDate).toLocaleDateString()} →{" "}
+                    {new Date(l.endDate).toLocaleDateString()}
                   </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                    <div className="text-muted">Days</div>
-                    <div>{daysBetween(l.startDate, l.endDate)}</div>
-                    <div className="text-muted">Type</div>
-                    <div>{l.type}</div>
-                    <div className="text-muted">Message</div>
-                    <div className="col-span-1">{l.adminMessage || "-"}</div>
-                  </div>
+                  <StatusBadge status={l.status as Leave["status"]} />
                 </div>
-              ))
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                  <div className="text-muted">Days</div>
+                  <div>{daysBetween(l.startDate, l.endDate)}</div>
+                  <div className="text-muted">Type</div>
+                  <div>{l.type}</div>
+                  <div className="text-muted">Message</div>
+                  <div className="col-span-1">{l.adminMessage || "-"}</div>
+                </div>
+              </div>
+            ))
           )}
         </div>
       </section>
@@ -450,10 +610,10 @@ export default function LeaveRequest() {
         <Pagination
           page={page}
           pages={pages}
-          onFirst={()=>setPage(1)}
-          onPrev={()=>setPage(p=>Math.max(1,p-1))}
-          onNext={()=>setPage(p=>Math.min(pages,p+1))}
-          onLast={()=>setPage(pages)}
+          onFirst={() => setPage(1)}
+          onPrev={() => setPage((p) => Math.max(1, p - 1))}
+          onNext={() => setPage((p) => Math.min(pages, p + 1))}
+          onLast={() => setPage(pages)}
           disabled={loading}
         />
       </div>

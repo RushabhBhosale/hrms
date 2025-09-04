@@ -23,11 +23,24 @@ const EmployeeSchema = new mongoose.Schema(
     ctc: { type: Number, default: 0 },
     documents: { type: [String], default: [] },
     reportingPerson: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    // Derived/display leave balances (kept for backward-compatible API payloads)
     leaveBalances: {
       casual: { type: Number, default: 0 },
       paid: { type: Number, default: 0 },
       unpaid: { type: Number, default: 0 },
       sick: { type: Number, default: 0 }
+    },
+    // New simplified leave tracking
+    totalLeaveAvailable: { type: Number, default: 0 }, // total untyped leaves available
+    leaveUsage: {
+      paid: { type: Number, default: 0 },
+      casual: { type: Number, default: 0 },
+      sick: { type: Number, default: 0 },
+      unpaid: { type: Number, default: 0 },
+    },
+    // Leave accrual tracking
+    leaveAccrual: {
+      lastAccruedYearMonth: { type: String }, // format: YYYY-MM (month we last accrued up to)
     },
     // Password reset (OTP) fields
     resetOtpHash: { type: String },

@@ -79,6 +79,7 @@ export default function EmployeeDash() {
     projectTitle: string;
     checked?: boolean;
     hours?: string; // user input hours, e.g. 1.5
+    minutes?: string; // user input minutes, e.g. 30
   };
   const [assigned, setAssigned] = useState<Assigned[]>([]);
   const [assignedLoading, setAssignedLoading] = useState(false);
@@ -233,6 +234,7 @@ export default function EmployeeDash() {
           typeof t.project === "string" ? "" : t.project?.title || "",
         checked: false,
         hours: "",
+        minutes: "",
       }));
       setAssigned(normalized);
       const tasksToday: {
@@ -293,6 +295,7 @@ export default function EmployeeDash() {
           typeof t.project === "string" ? "" : t.project?.title || "",
         checked: false,
         hours: "",
+        minutes: "",
       }));
       setAssigned(normalized);
       const tasksDay: { tasks: { _id: string; minutes: number }[] } =
@@ -388,11 +391,12 @@ export default function EmployeeDash() {
       setSubmittingPunchOut(true);
       // Pre-validate total requested minutes against remaining cap
       const selected = assigned.filter((t) => t.checked);
-      const requested = selected.reduce(
-        (acc, t) =>
-          acc + Math.max(0, Math.round(parseFloat(t.hours || "0") * 60)),
-        0
-      );
+      const requested = selected.reduce((acc, t) => {
+        const h = parseFloat(t.hours || "0");
+        const m = parseInt(t.minutes || "0", 10);
+        const add = Math.max(0, Math.round((isNaN(h) ? 0 : h) * 60) + (Number.isFinite(m) ? m : 0));
+        return acc + add;
+      }, 0);
       if (requested > remainingMinutes) {
         const over = requested - remainingMinutes;
         setPunchOutErr(
@@ -401,10 +405,11 @@ export default function EmployeeDash() {
         setSubmittingPunchOut(false);
         return;
       }
-      // For each selected task, log time if hours > 0
+      // For each selected task, log time if any minutes > 0
       for (const t of selected) {
         const h = parseFloat(t.hours || "0");
-        const minutes = Math.round(h * 60);
+        const m = parseInt(t.minutes || "0", 10);
+        const minutes = Math.max(0, Math.round((isNaN(h) ? 0 : h) * 60) + (Number.isFinite(m) ? m : 0));
         if (!minutes || minutes <= 0) continue; // skip empty entries
         await api.post(`/projects/${t.projectId}/tasks/${t._id}/time`, {
           minutes,
@@ -446,11 +451,12 @@ export default function EmployeeDash() {
 
       // Pre-validate selected minutes against remaining cap
       const selected = assigned.filter((t) => t.checked);
-      const requested = selected.reduce(
-        (acc, t) =>
-          acc + Math.max(0, Math.round(parseFloat(t.hours || "0") * 60)),
-        0
-      );
+      const requested = selected.reduce((acc, t) => {
+        const h = parseFloat(t.hours || "0");
+        const m = parseInt(t.minutes || "0", 10);
+        const add = Math.max(0, Math.round((isNaN(h) ? 0 : h) * 60) + (Number.isFinite(m) ? m : 0));
+        return acc + add;
+      }, 0);
       if (requested > remainingForDay) {
         const over = requested - remainingForDay;
         setBackfillErr(
@@ -462,12 +468,10 @@ export default function EmployeeDash() {
       setBackfillSubmitting(true);
       for (const t of selected) {
         const h = parseFloat(t.hours || "0");
-        const minutes = Math.round(h * 60);
+        const m = parseInt(t.minutes || "0", 10);
+        const minutes = Math.max(0, Math.round((isNaN(h) ? 0 : h) * 60) + (Number.isFinite(m) ? m : 0));
         if (!minutes || minutes <= 0) continue;
-        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time-at`, {
-          minutes,
-          date: backfillDate,
-        });
+        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time-at`, { minutes, date: backfillDate });
       }
       setShowBackfill(false);
       // Refresh worked summary for that bucket and missing list
@@ -987,9 +991,7 @@ export default function EmployeeDash() {
                                 <span className="text-sm">{t.title}</span>
                               </label>
                               <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted">
-                                  Hours
-                                </span>
+                                <span className="text-xs text-muted">H</span>
                                 <input
                                   type="number"
                                   step="0.25"
@@ -1001,6 +1003,25 @@ export default function EmployeeDash() {
                                       prev.map((x) =>
                                         x._id === t._id
                                           ? { ...x, hours: e.target.value }
+                                          : x
+                                      )
+                                    )
+                                  }
+                                  placeholder="0"
+                                  disabled={!t.checked}
+                                />
+                                <span className="text-xs text-muted">M</span>
+                                <input
+                                  type="number"
+                                  step="5"
+                                  min="0"
+                                  className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm"
+                                  value={t.minutes || ""}
+                                  onChange={(e) =>
+                                    setAssigned((prev) =>
+                                      prev.map((x) =>
+                                        x._id === t._id
+                                          ? { ...x, minutes: e.target.value }
                                           : x
                                       )
                                     )
@@ -1267,29 +1288,48 @@ export default function EmployeeDash() {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-muted">Hours</span>
-                          <input
-                            type="number"
-                            step="0.25"
-                            min="0"
-                            className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm"
-                            value={t.hours || ""}
-                            onChange={(e) =>
-                              setAssigned((prev) =>
-                                prev.map((x) =>
-                                  x._id === t._id
-                                    ? { ...x, hours: e.target.value }
-                                    : x
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted">H</span>
+                            <input
+                              type="number"
+                              step="0.25"
+                              min="0"
+                              className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm"
+                              value={t.hours || ""}
+                              onChange={(e) =>
+                                setAssigned((prev) =>
+                                  prev.map((x) =>
+                                    x._id === t._id
+                                      ? { ...x, hours: e.target.value }
+                                      : x
+                                  )
                                 )
-                              )
-                            }
-                            placeholder="0"
-                            disabled={!t.checked || !backfillAttendance}
-                            title={
-                              !backfillAttendance && t.checked
-                                ? "Set punch-out time first"
-                                : undefined
-                            }
-                          />
+                              }
+                              placeholder="0"
+                              disabled={!t.checked || !backfillAttendance}
+                              title={!backfillAttendance && t.checked ? "Set punch-out time first" : undefined}
+                            />
+                            <span className="text-xs text-muted">M</span>
+                            <input
+                              type="number"
+                              step="5"
+                              min="0"
+                              className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm"
+                              value={t.minutes || ""}
+                              onChange={(e) =>
+                                setAssigned((prev) =>
+                                  prev.map((x) =>
+                                    x._id === t._id
+                                      ? { ...x, minutes: e.target.value }
+                                      : x
+                                  )
+                                )
+                              }
+                              placeholder="0"
+                              disabled={!t.checked || !backfillAttendance}
+                              title={!backfillAttendance && t.checked ? "Set punch-out time first" : undefined}
+                            />
+                          </div>
                         </div>
                       </div>
                     </li>

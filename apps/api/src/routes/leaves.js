@@ -5,7 +5,7 @@ const Company = require("../models/Company");
 const { auth } = require("../middleware/auth");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
 const { requirePrimary } = require("../middleware/roles");
-const { syncLeaveBalances } = require("../utils/leaveBalances");
+const { syncLeaveBalances, accrueTotalIfNeeded } = require("../utils/leaveBalances");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
 
 function startOfDay(d) {
@@ -16,16 +16,19 @@ function startOfDay(d) {
 
 // Employee creates a leave request
 router.post("/", auth, async (req, res) => {
-  const { startDate, endDate, reason, type, notify } = req.body;
+  const { startDate, endDate, reason, type, fallbackType, notify } = req.body;
   try {
     const emp = await Employee.findById(req.employee.id);
     if (!emp) return res.status(400).json({ error: "Employee not found" });
     if (!type) return res.status(400).json({ error: "Missing type" });
+    if (fallbackType && !['PAID','SICK','UNPAID'].includes(fallbackType))
+      return res.status(400).json({ error: "Invalid fallback type" });
     const leave = await Leave.create({
       employee: emp._id,
       company: emp.company,
       approver: emp.reportingPerson,
       type,
+      fallbackType: fallbackType || null,
       startDate,
       endDate,
       reason,
@@ -146,7 +149,9 @@ router.post("/:id/approve", auth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   const employee = await Employee.findById(leave.employee);
   await syncLeaveBalances(employee);
-  const company = await Company.findById(leave.company).select("bankHolidays");
+  const company = await Company.findById(leave.company).select("bankHolidays leavePolicy");
+  // Accrue total pool up to leave start month
+  try { await accrueTotalIfNeeded(employee, company, new Date(leave.startDate)); } catch (_) {}
   const start = new Date(leave.startDate);
   const end = new Date(leave.endDate);
   const total = Math.round((end - start) / 86400000) + 1;
@@ -167,13 +172,64 @@ router.post("/:id/approve", auth, async (req, res) => {
   const holidays = bankHolidayKeys.size;
   const days = Math.max(total - holidays, 0);
   const key = leave.type.toLowerCase();
-  const remaining = employee.leaveBalances?.[key] || 0;
-  if (remaining < days)
-    return res.status(400).json({ error: "Insufficient leave balance" });
-  employee.leaveBalances[key] = remaining - days;
-  await employee.save();
+  const policy = company.leavePolicy || {};
+  const caps = policy.typeCaps || {};
+  employee.leaveUsage = employee.leaveUsage || { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+  const allocations = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+
+  if (key === 'unpaid') {
+    // Unpaid consumes nothing from the pool
+    employee.leaveUsage.unpaid = (employee.leaveUsage.unpaid || 0) + days;
+    allocations.unpaid = days;
+  } else {
+    const capForType = Math.max(0, Number(caps[key]) || 0);
+    const usedForType = Math.max(0, Number(employee.leaveUsage[key]) || 0);
+    const remainType = Math.max(0, capForType - usedForType);
+    let totalAvail = Math.max(0, Number(employee.totalLeaveAvailable) || 0);
+    const firstPart = Math.max(0, Math.min(days, Math.min(remainType, totalAvail)));
+    if (firstPart > 0) {
+      employee.leaveUsage[key] = usedForType + firstPart;
+      totalAvail -= firstPart;
+      employee.totalLeaveAvailable = Math.max(0, totalAvail);
+      allocations[key] = firstPart;
+    }
+    let remaining = Math.max(0, days - firstPart);
+    if (remaining > 0) {
+      const fb = (leave.fallbackType || '').toLowerCase();
+      if (!fb) {
+        return res.status(400).json({ error: `Insufficient ${key} leaves. Please choose a fallback type (Paid/Sick/Unpaid).` });
+      }
+      if (fb === 'unpaid') {
+        employee.leaveUsage.unpaid = (employee.leaveUsage.unpaid || 0) + remaining;
+        allocations.unpaid += remaining;
+        remaining = 0;
+      } else if (['paid','sick'].includes(fb)) {
+        const capFb = Math.max(0, Number(caps[fb]) || 0);
+        const usedFb = Math.max(0, Number(employee.leaveUsage[fb]) || 0);
+        const remainFb = Math.max(0, capFb - usedFb);
+        const useFb = Math.max(0, Math.min(remaining, Math.min(remainFb, totalAvail)));
+        if (useFb > 0) {
+          employee.leaveUsage[fb] = usedFb + useFb;
+          totalAvail = Math.max(0, totalAvail - useFb);
+          employee.totalLeaveAvailable = totalAvail;
+          allocations[fb] += useFb;
+          remaining -= useFb;
+        }
+        if (remaining > 0) {
+          employee.leaveUsage.unpaid = (employee.leaveUsage.unpaid || 0) + remaining;
+          allocations.unpaid += remaining;
+          remaining = 0;
+        }
+      } else {
+        return res.status(400).json({ error: "Invalid fallback type on leave" });
+      }
+    }
+  }
+  // Refresh derived balances for UI
+  await syncLeaveBalances(employee);
   leave.status = "APPROVED";
   leave.adminMessage = req.body.message;
+  leave.allocations = allocations;
   await leave.save();
   res.json({ leave });
 });

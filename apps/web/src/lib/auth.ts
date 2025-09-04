@@ -25,6 +25,7 @@ export type Employee = {
   subRoles: SubRole[];
   company?: string;
   leaveBalances: LeaveBalances;
+  totalLeaveAvailable?: number;
   employeeId?: string;
   aadharNumber?: string;
   panNumber?: string;

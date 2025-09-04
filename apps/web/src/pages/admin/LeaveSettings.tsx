@@ -2,9 +2,11 @@ import { useState, useEffect, FormEvent } from "react";
 import { api } from "../../lib/api";
 
 type FormState = {
-  casual: string;
-  paid: string;
-  sick: string;
+  totalAnnual: string;
+  ratePerMonth: string;
+  capsPaid: string;
+  capsCasual: string;
+  capsSick: string;
 };
 
 type Holiday = {
@@ -19,11 +21,7 @@ type DayOverride = {
 };
 
 export default function LeaveSettings() {
-  const [form, setForm] = useState<FormState>({
-    casual: "0",
-    paid: "0",
-    sick: "0",
-  });
+  const [form, setForm] = useState<FormState>({ totalAnnual: "0", ratePerMonth: "0", capsPaid: "0", capsCasual: "0", capsSick: "0" });
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -31,6 +29,8 @@ export default function LeaveSettings() {
   const [hForm, setHForm] = useState<Holiday>({ date: "", name: "" });
   const [hSubmitting, setHSubmitting] = useState(false);
   const [hErr, setHErr] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
 
   // Company Day Overrides
   const [ovMonth, setOvMonth] = useState<string>(new Date().toISOString().slice(0,7));
@@ -45,9 +45,11 @@ export default function LeaveSettings() {
         const res = await api.get("/companies/leave-policy");
         const p = res.data.leavePolicy || {};
         setForm({
-          casual: String(p.casual ?? 0),
-          paid: String(p.paid ?? 0),
-          sick: String(p.sick ?? 0),
+          totalAnnual: String(p.totalAnnual ?? 0),
+          ratePerMonth: String(p.ratePerMonth ?? 0),
+          capsPaid: String(p.typeCaps?.paid ?? 0),
+          capsCasual: String(p.typeCaps?.casual ?? 0),
+          capsSick: String(p.typeCaps?.sick ?? 0),
         });
       } catch {
         // ignore
@@ -80,9 +82,13 @@ export default function LeaveSettings() {
     try {
       setSubmitting(true);
       await api.put("/companies/leave-policy", {
-        casual: parseInt(form.casual, 10) || 0,
-        paid: parseInt(form.paid, 10) || 0,
-        sick: parseInt(form.sick, 10) || 0,
+        totalAnnual: parseInt(form.totalAnnual, 10) || 0,
+        ratePerMonth: parseFloat(form.ratePerMonth) || 0,
+        typeCaps: {
+          paid: parseInt(form.capsPaid, 10) || 0,
+          casual: parseInt(form.capsCasual, 10) || 0,
+          sick: parseInt(form.capsSick, 10) || 0,
+        },
       });
       setOk("Leave policy updated");
     } catch (e: any) {
@@ -171,28 +177,48 @@ export default function LeaveSettings() {
 
         <form onSubmit={submit} className="px-6 py-5 space-y-5">
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Casual Leaves">
+            <Field label="Total Annual Leaves">
               <input
                 type="number"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.casual}
-                onChange={(e) => onChange("casual", e.target.value)}
+                value={form.totalAnnual}
+                onChange={(e) => onChange("totalAnnual", e.target.value)}
               />
             </Field>
-            <Field label="Paid Leaves">
+            <Field label="Accrual Per Month">
               <input
-                type="number"
+                type="number" step="0.5"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.paid}
-                onChange={(e) => onChange("paid", e.target.value)}
+                value={form.ratePerMonth}
+                onChange={(e) => onChange("ratePerMonth", e.target.value)}
               />
             </Field>
-            <Field label="Sick Leaves">
+            <div />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3 border-t border-border pt-5 mt-2">
+            <Field label="Paid Cap (from total)">
               <input
                 type="number"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.sick}
-                onChange={(e) => onChange("sick", e.target.value)}
+                value={form.capsPaid}
+                onChange={(e) => onChange("capsPaid", e.target.value)}
+              />
+            </Field>
+            <Field label="Casual Cap (from total)">
+              <input
+                type="number"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.capsCasual}
+                onChange={(e) => onChange("capsCasual", e.target.value)}
+              />
+            </Field>
+            <Field label="Sick Cap (from total)">
+              <input
+                type="number"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={form.capsSick}
+                onChange={(e) => onChange("capsSick", e.target.value)}
               />
             </Field>
           </div>
@@ -204,6 +230,29 @@ export default function LeaveSettings() {
             >
               {submitting ? "Saving..." : "Save"}
             </button>
+            <button
+              type="button"
+              disabled={resetting}
+              onClick={async () => {
+                setResetMsg(null);
+                if (!window.confirm('Reset all employees\' leave balances? This will zero out usage and pool, then re-accrue to current month.')) return;
+                try {
+                  setResetting(true);
+                  const res = await api.post('/companies/leave-balances/reset', { reaccrue: true });
+                  setResetMsg(`Reset completed for ${res.data.count || 0} employees.`);
+                } catch (e: any) {
+                  setResetMsg(e?.response?.data?.error || 'Failed to reset leave balances');
+                } finally {
+                  setResetting(false);
+                }
+              }}
+              className="ml-3 inline-flex items-center justify-center rounded-md border border-error/30 bg-error/10 px-4 py-2 text-error hover:bg-error/15 disabled:opacity-60"
+            >
+              {resetting ? 'Resetting…' : 'Reset Leave Balances'}
+            </button>
+            {resetMsg && (
+              <span className="ml-3 text-sm text-muted">{resetMsg}</span>
+            )}
           </div>
         </form>
       </section>

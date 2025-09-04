@@ -11,6 +11,7 @@ const SalarySlip = require("../models/SalarySlip");
 const multer = require("multer");
 const path = require("path");
 const upload = multer({ dest: path.join(__dirname, "../../uploads") });
+const { syncLeaveBalances } = require("../utils/leaveBalances");
 
 // Utility: simple hex validation
 function isHexColor(v) {
@@ -465,11 +466,16 @@ router.get("/leave-policy", auth, async (req, res) => {
     "leavePolicy"
   );
   if (!company) return res.status(400).json({ error: "Company not found" });
+  const lp = company.leavePolicy || {};
   res.json({
     leavePolicy: {
-      casual: company.leavePolicy?.casual || 0,
-      paid: company.leavePolicy?.paid || 0,
-      sick: company.leavePolicy?.sick || 0,
+      totalAnnual: lp.totalAnnual || 0,
+      ratePerMonth: lp.ratePerMonth || 0,
+      typeCaps: {
+        paid: lp.typeCaps?.paid || 0,
+        casual: lp.typeCaps?.casual || 0,
+        sick: lp.typeCaps?.sick || 0,
+      },
     },
   });
 });
@@ -516,13 +522,23 @@ router.put("/work-hours", auth, async (req, res) => {
 router.put("/leave-policy", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { casual, paid, sick } = req.body;
+  const { totalAnnual, ratePerMonth, typeCaps } = req.body || {};
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
+  const total = Number(totalAnnual) || 0;
+  const rpm = Number(ratePerMonth) || 0;
+  const caps = {
+    paid: Number(typeCaps?.paid) || 0,
+    casual: Number(typeCaps?.casual) || 0,
+    sick: Number(typeCaps?.sick) || 0,
+  };
+  if (total < 0 || rpm < 0) return res.status(400).json({ error: "Invalid totals" });
+  const sumCaps = caps.paid + caps.casual + caps.sick;
+  if (sumCaps > total) return res.status(400).json({ error: "Type caps cannot exceed total annual leaves" });
   company.leavePolicy = {
-    casual: parseInt(casual, 10) || 0,
-    paid: parseInt(paid, 10) || 0,
-    sick: parseInt(sick, 10) || 0,
+    totalAnnual: total,
+    ratePerMonth: rpm,
+    typeCaps: caps,
   };
   await company.save();
   res.json({ leavePolicy: company.leavePolicy });
@@ -622,6 +638,34 @@ router.delete("/day-overrides/:date", auth, async (req, res) => {
   if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
   await CompanyDayOverride.deleteOne({ company: company._id, date: day });
   res.json({ ok: true });
+});
+
+// Admin: reset leave balances for all employees in the company
+// Body: { reaccrue?: boolean } (default true)
+router.post("/leave-balances/reset", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { reaccrue } = req.body || {};
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  const emps = await Employee.find({ company: company._id });
+  let count = 0;
+  for (const e of emps) {
+    try {
+      e.totalLeaveAvailable = 0;
+      e.leaveUsage = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+      e.leaveBalances = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+      e.leaveAccrual = {}; // clear lastAccruedYearMonth so accrual can recompute
+      await e.save();
+      if (reaccrue !== false) {
+        await syncLeaveBalances(e);
+      }
+      count++;
+    } catch (err) {
+      console.warn('[leave-reset] failed for employee', String(e._id), err?.message || err);
+    }
+  }
+  res.json({ ok: true, count });
 });
 
 // Admin: update reporting person of an employee

@@ -22,10 +22,15 @@ const CompanySchema = new mongoose.Schema(
       requestedAt: { type: Date },
     },
     roles: { type: [String], default: ['hr', 'manager', 'developer'] },
+    // Leave policy (simplified): total annual leaves, monthly accrual, and per-type caps from the total
     leavePolicy: {
-      casual: { type: Number, default: 0 },
-      paid: { type: Number, default: 0 },
-      sick: { type: Number, default: 0 }
+      totalAnnual: { type: Number, default: 0 },
+      ratePerMonth: { type: Number, default: 0 },
+      typeCaps: {
+        paid: { type: Number, default: 0 },
+        casual: { type: Number, default: 0 },
+        sick: { type: Number, default: 0 },
+      },
     },
     // Optional company-wide working hours configuration
     workHours: {

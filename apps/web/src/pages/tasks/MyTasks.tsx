@@ -20,7 +20,7 @@ export default function MyTasks() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Track hours to add to a task (adds a log entry; does not replace total)
-  const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string }>>({});
+  const [timeEntry, setTimeEntry] = useState<Record<string, { hours?: string; minutes?: string }>>({});
   const [statusFilter, setStatusFilter] = useState<'ALL' | Task['status']>('ALL');
   const [projectFilter, setProjectFilter] = useState<'ALL' | string>('ALL');
   const [view, setView] = useState<'CARD' | 'TABLE'>('TABLE');
@@ -76,16 +76,17 @@ export default function MyTasks() {
   async function saveTime(t: Task) {
     const entry = timeEntry[t._id];
     const hours = parseFloat(entry?.hours || '0');
-    if (isNaN(hours) || hours <= 0) {
-      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter hours to add (> 0)' } }));
+    const minsOnly = parseInt(entry?.minutes || '0', 10);
+    const addMinutes = Math.max(0, Math.round((isNaN(hours) ? 0 : hours) * 60) + (Number.isFinite(minsOnly) ? minsOnly : 0));
+    if (!addMinutes || addMinutes <= 0) {
+      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter time to add (hours and/or minutes)' } }));
       return;
     }
     const projectId = typeof t.project === 'string' ? t.project : t.project._id;
     try {
       // Add time to this task for today (validated against attendance cap server-side)
-      const minutes = Math.round(hours * 60);
-      await api.post(`/projects/${projectId}/tasks/${t._id}/time`, { minutes });
-      setTimeEntry((s) => ({ ...s, [t._id]: { hours: '' } }));
+      await api.post(`/projects/${projectId}/tasks/${t._id}/time`, { minutes: addMinutes });
+      setTimeEntry((s) => ({ ...s, [t._id]: { hours: '', minutes: '' } }));
       setMsg((m) => ({ ...m, [t._id]: { ok: 'Time added' } }));
       await load();
     } catch (e: any) {
@@ -192,23 +193,37 @@ export default function MyTasks() {
                 </select>
               </div>
 
-                  <div className="mt-3 grid sm:grid-cols-[140px_120px] gap-2 items-center">
-                    <input
-                      className="h-9 rounded border border-border bg-bg px-3 text-sm"
-                      type="number"
-                      min={0}
-                      step={0.1}
-                      placeholder="Add hours (today)"
-                      value={timeEntry[t._id]?.hours || ''}
-                      onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value } }))}
-                    />
+                  <div className="mt-3 grid sm:grid-cols-[160px_120px_120px] gap-2 items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted">Hours</span>
+                      <input
+                        className="h-9 w-24 rounded border border-border bg-bg px-3 text-sm"
+                        type="number"
+                        min={0}
+                        step={0.25}
+                        placeholder="0"
+                        value={timeEntry[t._id]?.hours || ''}
+                        onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { ...s[t._id], hours: e.target.value } }))}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted">Minutes</span>
+                      <input
+                        className="h-9 w-24 rounded border border-border bg-bg px-3 text-sm"
+                        type="number"
+                        min={0}
+                        step={5}
+                        placeholder="0"
+                        value={timeEntry[t._id]?.minutes || ''}
+                        onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { ...s[t._id], minutes: e.target.value } }))}
+                      />
+                    </div>
                     <button
                       onClick={() => saveTime(t)}
                       className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg disabled:opacity-50"
                       disabled={
-                        timeEntry[t._id]?.hours === undefined ||
-                        timeEntry[t._id]?.hours === '' ||
-                        parseFloat(timeEntry[t._id]?.hours || '0') <= 0
+                        (!timeEntry[t._id]?.hours && !timeEntry[t._id]?.minutes) ||
+                        (parseFloat(timeEntry[t._id]?.hours || '0') <= 0 && parseInt(timeEntry[t._id]?.minutes || '0', 10) <= 0)
                       }
                     >
                       Add Time
@@ -290,22 +305,34 @@ export default function MyTasks() {
                         <Td>{totalHours} h</Td>
                         <Td>
                           <div className="flex items-center gap-2">
-                            <input
-                              className="h-8 w-28 rounded border border-border bg-bg px-2 text-xs"
-                              type="number"
-                              min={0}
-                              step={0.1}
-                              placeholder="Add hours (today)"
-                              value={timeEntry[t._id]?.hours || ''}
-                              onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value } }))}
-                            />
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-muted">H</span>
+                              <input
+                                className="h-8 w-20 rounded border border-border bg-bg px-2 text-xs"
+                                type="number"
+                                min={0}
+                                step={0.25}
+                                placeholder="0"
+                                value={timeEntry[t._id]?.hours || ''}
+                                onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { ...s[t._id], hours: e.target.value } }))}
+                              />
+                              <span className="text-[11px] text-muted">M</span>
+                              <input
+                                className="h-8 w-20 rounded border border-border bg-bg px-2 text-xs"
+                                type="number"
+                                min={0}
+                                step={5}
+                                placeholder="0"
+                                value={timeEntry[t._id]?.minutes || ''}
+                                onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { ...s[t._id], minutes: e.target.value } }))}
+                              />
+                            </div>
                             <button
                               onClick={() => saveTime(t)}
                               className="h-8 rounded-md border border-border px-2 text-xs hover:bg-bg disabled:opacity-50"
                               disabled={
-                                timeEntry[t._id]?.hours === undefined ||
-                                timeEntry[t._id]?.hours === '' ||
-                                parseFloat(timeEntry[t._id]?.hours || '0') <= 0
+                                (!timeEntry[t._id]?.hours && !timeEntry[t._id]?.minutes) ||
+                                (parseFloat(timeEntry[t._id]?.hours || '0') <= 0 && parseInt(timeEntry[t._id]?.minutes || '0', 10) <= 0)
                               }
                             >
                               Add

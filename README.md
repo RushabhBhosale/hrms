@@ -133,6 +133,12 @@ Auto punch‑out job: at `AUTO_PUNCH_OUT_TIME` (default 08:30) the server closes
 - Balances are initialized/synced from company policy on login (`apps/api/src/utils/leaveBalances.js:1`)
 - Admin manages leave policy and bank holidays under Companies routes
 
+Simplified Policy (Total + Type Caps):
+
+- Admin sets a total annual leave pool and a global monthly accrual rate.
+- Admin divides the total into caps for Paid, Casual, and Sick; leave is untyped until consumed.
+- When an employee requests a leave, they select the type; approval checks the selected type's remaining cap and the employee’s total available pool.
+
 ### Projects & Tasks
 
 - Admin creates projects, assigns team lead/members
