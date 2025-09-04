@@ -181,36 +181,31 @@ export default function AdminDash() {
   const filteredAssignments = useMemo(() => {
     const term = assignQ.trim().toLowerCase();
     if (!term) return assignments;
-    return assignments.filter(({ emp }) =>
-      emp.name.toLowerCase().includes(term) || emp.email.toLowerCase().includes(term)
+    return assignments.filter(
+      ({ emp }) =>
+        emp.name.toLowerCase().includes(term) ||
+        emp.email.toLowerCase().includes(term)
     );
   }, [assignments, assignQ]);
   const assignTotal = filteredAssignments.length;
-  const assignPages = Math.max(1, Math.ceil(assignTotal / Math.max(1, assignLimit)));
-  const assignStart = assignTotal === 0 ? 0 : (assignPage - 1) * assignLimit + 1;
+  const assignPages = Math.max(
+    1,
+    Math.ceil(assignTotal / Math.max(1, assignLimit))
+  );
+  const assignStart =
+    assignTotal === 0 ? 0 : (assignPage - 1) * assignLimit + 1;
   const assignEnd = Math.min(assignTotal, assignPage * assignLimit);
-  const assignRows = useMemo(() => filteredAssignments.slice((assignPage-1)*assignLimit, (assignPage-1)*assignLimit + assignLimit), [filteredAssignments, assignPage, assignLimit]);
+  const assignRows = useMemo(
+    () =>
+      filteredAssignments.slice(
+        (assignPage - 1) * assignLimit,
+        (assignPage - 1) * assignLimit + assignLimit
+      ),
+    [filteredAssignments, assignPage, assignLimit]
+  );
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-3xl font-bold">Admin Dashboard</h2>
-        <p className="text-sm text-muted">
-          Overview of company workforce and attendance today.
-        </p>
-      </div>
-
-      {/* Project time analytics at top */}
-      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
-        <ProjectTime />
-      </section>
-
-      {err && (
-        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
-          {err}
-        </div>
-      )}
-
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
         <div className="flex items-center justify-between">
           <div className="space-y-1">
@@ -280,6 +275,16 @@ export default function AdminDash() {
           tone="secondary"
         />
       </div>
+      {/* Project time analytics at top */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
+        <ProjectTime />
+      </section>
+
+      {err && (
+        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
+          {err}
+        </div>
+      )}
 
       {/* Project assignments */}
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
@@ -293,55 +298,69 @@ export default function AdminDash() {
           <div className="flex items-center gap-2">
             <input
               value={assignQ}
-              onChange={(e) => { setAssignPage(1); setAssignQ(e.target.value); }}
+              onChange={(e) => {
+                setAssignPage(1);
+                setAssignQ(e.target.value);
+              }}
               placeholder="Search name or email…"
               className="h-10 w-64 rounded-md border border-border bg-surface px-3"
             />
             <select
               className="h-10 rounded-md border border-border bg-surface px-2 text-sm"
               value={assignLimit}
-              onChange={(e)=>{ setAssignPage(1); setAssignLimit(parseInt(e.target.value,10)); }}
+              onChange={(e) => {
+                setAssignPage(1);
+                setAssignLimit(parseInt(e.target.value, 10));
+              }}
             >
-              {[10,20,50,100].map(n=> <option key={n} value={n}>{n} / page</option>)}
+              {[10, 20, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n} / page
+                </option>
+              ))}
             </select>
             <button
-            onClick={() => {
-              // quick refresh of employees and projects
-              (async () => {
-                try {
-                  setLoadingProjects(true);
-                  const [empRes, projRes, leavesRes] = await Promise.all([
-                    api.get("/companies/employees"),
-                    api.get("/projects"),
-                    api.get("/leaves/company/today"),
-                  ]);
-                  const empList: EmployeeLite[] = empRes.data.employees || [];
-                  const projList: ProjectLite[] = (
-                    projRes.data.projects || []
-                  ).filter((p: ProjectLite) => !p.isPersonal);
-                  setEmployees(empList);
-                  setProjects(projList);
-                  const lmap: Record<string, boolean> = {};
-                  (leavesRes.data.leaves || []).forEach((l: any) => {
-                    const id = l.employee.id || l.employee._id;
-                    lmap[id] = true;
-                  });
-                  setLeaveMap(lmap);
-                  setStats((s) => ({ ...s, employees: empList.length }));
-                } finally {
-                  setLoadingProjects(false);
-                }
-              })();
-            }}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-bg disabled:opacity-60"
-            disabled={loadingProjects}
-          >
-            {loadingProjects ? "Refreshing…" : "Refresh"}
-          </button>
+              onClick={() => {
+                // quick refresh of employees and projects
+                (async () => {
+                  try {
+                    setLoadingProjects(true);
+                    const [empRes, projRes, leavesRes] = await Promise.all([
+                      api.get("/companies/employees"),
+                      api.get("/projects"),
+                      api.get("/leaves/company/today"),
+                    ]);
+                    const empList: EmployeeLite[] = empRes.data.employees || [];
+                    const projList: ProjectLite[] = (
+                      projRes.data.projects || []
+                    ).filter((p: ProjectLite) => !p.isPersonal);
+                    setEmployees(empList);
+                    setProjects(projList);
+                    const lmap: Record<string, boolean> = {};
+                    (leavesRes.data.leaves || []).forEach((l: any) => {
+                      const id = l.employee.id || l.employee._id;
+                      lmap[id] = true;
+                    });
+                    setLeaveMap(lmap);
+                    setStats((s) => ({ ...s, employees: empList.length }));
+                  } finally {
+                    setLoadingProjects(false);
+                  }
+                })();
+              }}
+              className="rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-bg disabled:opacity-60"
+              disabled={loadingProjects}
+            >
+              {loadingProjects ? "Refreshing…" : "Refresh"}
+            </button>
           </div>
         </div>
 
-        <div className="mt-3 text-sm text-muted">{loadingProjects ? 'Loading…' : `Showing ${assignStart}-${assignEnd} of ${assignTotal}`}</div>
+        <div className="mt-3 text-sm text-muted">
+          {loadingProjects
+            ? "Loading…"
+            : `Showing ${assignStart}-${assignEnd} of ${assignTotal}`}
+        </div>
 
         <div className="mt-2 overflow-auto">
           <table className="w-full text-sm">
@@ -410,11 +429,37 @@ export default function AdminDash() {
         </div>
 
         <div className="mt-3 flex items-center justify-end gap-2">
-          <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setAssignPage(1)} disabled={assignPage===1}>First</button>
-          <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setAssignPage(p=>Math.max(1,p-1))} disabled={assignPage===1}>Prev</button>
-          <div className="text-sm text-muted">Page {assignPage} of {assignPages}</div>
-          <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setAssignPage(p=>Math.min(assignPages,p+1))} disabled={assignPage>=assignPages}>Next</button>
-          <button className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50" onClick={()=>setAssignPage(assignPages)} disabled={assignPage>=assignPages}>Last</button>
+          <button
+            className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50"
+            onClick={() => setAssignPage(1)}
+            disabled={assignPage === 1}
+          >
+            First
+          </button>
+          <button
+            className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50"
+            onClick={() => setAssignPage((p) => Math.max(1, p - 1))}
+            disabled={assignPage === 1}
+          >
+            Prev
+          </button>
+          <div className="text-sm text-muted">
+            Page {assignPage} of {assignPages}
+          </div>
+          <button
+            className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50"
+            onClick={() => setAssignPage((p) => Math.min(assignPages, p + 1))}
+            disabled={assignPage >= assignPages}
+          >
+            Next
+          </button>
+          <button
+            className="h-9 px-3 rounded-md bg-surface border border-border text-sm disabled:opacity-50"
+            onClick={() => setAssignPage(assignPages)}
+            disabled={assignPage >= assignPages}
+          >
+            Last
+          </button>
         </div>
       </section>
     </div>

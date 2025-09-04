@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { getEmployee } from '../../lib/auth';
 
@@ -32,6 +32,7 @@ type Task = {
 
 export default function ProjectDetails() {
   const { id } = useParams();
+  const nav = useNavigate();
   const me = getEmployee();
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -53,6 +54,23 @@ export default function ProjectDetails() {
   const [savingEstimate, setSavingEstimate] = useState(false);
   const [editStartTime, setEditStartTime] = useState<string>("");
   const [savingStartTime, setSavingStartTime] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editTech, setEditTech] = useState('');
+  const [editTeamLead, setEditTeamLead] = useState('');
+  const [editMembers, setEditMembers] = useState<string[]>([]);
+  const [savingProject, setSavingProject] = useState(false);
+  const [editTask, setEditTask] = useState<Task | null>(null);
+  const [taskEditForm, setTaskEditForm] = useState<{
+    title: string;
+    description: string;
+    assignedTo: string;
+    priority: NonNullable<Task['priority']> | '';
+    estimatedHours: string;
+    status: Task['status'];
+  } | null>(null);
+  const [savingTaskEdit, setSavingTaskEdit] = useState(false);
 
   const memberIds = useMemo(() => {
     if (!project) return [] as string[];
@@ -97,6 +115,15 @@ export default function ProjectDetails() {
       } catch (e) {
         const mem = await api.get(`/projects/${id}/members`);
         setEmployees(mem.data.members || []);
+      }
+      // seed edit form
+      const P = proj?.data?.project;
+      if (P) {
+        setEditTitle(P.title || '');
+        setEditDesc(P.description || '');
+        setEditTech((P.techStack || []).join(', '));
+        setEditTeamLead(String(P.teamLead || ''));
+        setEditMembers((P.members || []).map(String));
       }
     } finally {
       setLoading(false);
@@ -180,6 +207,8 @@ export default function ProjectDetails() {
     return me?.primaryRole === 'ADMIN' || me?.primaryRole === 'SUPERADMIN';
   }, [me]);
 
+  const canAdminProject = canEditEstimate;
+
   async function saveEstimate() {
     if (!id) return;
     const h = parseFloat(editEstimatedHours || '0');
@@ -213,6 +242,91 @@ export default function ProjectDetails() {
       const tsum = await api.get(`/projects/${id}/time-summary`);
       setTimeTotalMinutes(tsum.data.totalTimeSpentMinutes || 0);
     } catch {}
+  }
+
+  async function saveProjectDetails() {
+    if (!id) return;
+    setSavingProject(true);
+    try {
+      const payload: any = {
+        title: editTitle.trim(),
+        description: editDesc.trim(),
+        techStack: editTech
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+        teamLead: editTeamLead,
+        members: editMembers,
+      };
+      const resp = await api.put(`/projects/${id}`, payload);
+      setProject(resp.data.project);
+      setEditOpen(false);
+    } finally {
+      setSavingProject(false);
+    }
+  }
+
+  async function deleteProject() {
+    if (!id) return;
+    if (!confirm('Delete this project? This cannot be undone.')) return;
+    try {
+      await api.delete(`/projects/${id}`);
+      const base = me?.primaryRole === 'ADMIN' || me?.primaryRole === 'SUPERADMIN' ? '/admin/projects' : '/app/projects';
+      nav(base, { replace: true });
+    } catch (e) {
+      alert('Failed to delete project');
+    }
+  }
+
+  function openEditTask(t: Task) {
+    setEditTask(t);
+    setTaskEditForm({
+      title: t.title || '',
+      description: t.description || '',
+      assignedTo: String(t.assignedTo || ''),
+      priority: (t.priority || '') as any,
+      estimatedHours: t.estimatedTimeMinutes ? String(Math.round(((t.estimatedTimeMinutes||0)/60)*10)/10) : '',
+      status: t.status,
+    });
+  }
+
+  async function saveTaskEdit() {
+    if (!id || !editTask || !taskEditForm) return;
+    setSavingTaskEdit(true);
+    try {
+      const payload: any = {
+        title: taskEditForm.title.trim(),
+        description: taskEditForm.description.trim(),
+        assignedTo: taskEditForm.assignedTo,
+        priority: taskEditForm.priority || undefined,
+        status: taskEditForm.status,
+      };
+      const h = parseFloat(taskEditForm.estimatedHours || '');
+      if (isFinite(h) && h >= 0) payload.estimatedHours = h;
+      await api.put(`/projects/${id}/tasks/${editTask._id}`, payload);
+      const tlist = await api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } });
+      setTasks(tlist.data.tasks || []);
+      setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
+      setEditTask(null);
+      setTaskEditForm(null);
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Failed to save task');
+    } finally {
+      setSavingTaskEdit(false);
+    }
+  }
+
+  async function deleteTask(taskId: string) {
+    if (!id) return;
+    if (!confirm('Delete this task?')) return;
+    try {
+      await api.delete(`/projects/${id}/tasks/${taskId}`);
+      const tlist = await api.get(`/projects/${id}/tasks`, { params: { page: 1, limit: 3 } });
+      setTasks(tlist.data.tasks || []);
+      setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Failed to delete task');
+    }
   }
 
   const sortedTasks = useMemo(() => {
@@ -323,9 +437,27 @@ export default function ProjectDetails() {
                 )}
               </div>
             </div>
-            <Link to=".." relative="path" className="text-sm underline text-accent">
-              Back
-            </Link>
+            <div className="flex items-center gap-2">
+              {canAdminProject && (
+                <>
+                  <button
+                    onClick={() => setEditOpen((v) => !v)}
+                    className="h-8 px-3 rounded-md border border-border text-sm hover:bg-bg"
+                  >
+                    {editOpen ? 'Close Edit' : 'Edit Project'}
+                  </button>
+                  <button
+                    onClick={deleteProject}
+                    className="h-8 px-3 rounded-md border border-error/30 text-error text-sm hover:bg-error/10"
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
+              <Link to=".." relative="path" className="text-sm underline text-accent">
+                Back
+              </Link>
+            </div>
           </div>
           <div className="mt-3 text-sm">
             <div className="font-medium">Team</div>
@@ -338,6 +470,79 @@ export default function ProjectDetails() {
               ))}
             </div>
           </div>
+
+          {editOpen && (
+            <div className="mt-4 border-t border-border pt-4">
+              <div className="text-sm font-medium mb-2">Edit Project</div>
+              <div className="grid md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs mb-1">Title</label>
+                  <input
+                    className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs mb-1">Team Lead</label>
+                  <select
+                    className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
+                    value={editTeamLead}
+                    onChange={(e) => setEditTeamLead(e.target.value)}
+                  >
+                    <option value="">Select</option>
+                    {employees.map((e) => (
+                      <option key={e.id} value={e.id}>{e.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs mb-1">Description</label>
+                  <textarea
+                    className="w-full rounded border border-border bg-bg px-2 py-2 text-sm min-h-20"
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs mb-1">Tech Stack (comma separated)</label>
+                  <input
+                    className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
+                    value={editTech}
+                    onChange={(e) => setEditTech(e.target.value)}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs mb-1">Members</label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-auto border border-border rounded p-2 bg-bg">
+                    {employees.map((e) => (
+                      <label key={e.id} className="inline-flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={editMembers.includes(e.id)}
+                          onChange={(ev) =>
+                            setEditMembers((prev) =>
+                              ev.target.checked ? [...prev, e.id] : prev.filter((id) => id !== e.id)
+                            )
+                          }
+                        />
+                        <span>{e.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={saveProjectDetails}
+                  disabled={savingProject}
+                  className="h-9 px-4 rounded-md bg-primary text-white text-sm disabled:opacity-60"
+                >
+                  {savingProject ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Time overview */}
           <div className="mt-6 grid lg:grid-cols-2 gap-6">
@@ -537,6 +742,22 @@ export default function ProjectDetails() {
                   >
                     Comments ({(t.comments || []).length || 0})
                   </button>
+                  {canCollaborate && (
+                    <>
+                      <button
+                        onClick={() => openEditTask(t)}
+                        className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteTask(t._id)}
+                        className="h-9 rounded-md border border-error/30 text-error px-3 text-sm hover:bg-error/10"
+                      >
+                        Delete
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -652,6 +873,61 @@ export default function ProjectDetails() {
                 </div>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {/* Edit task modal */}
+      {editTask && taskEditForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => { setEditTask(null); setTaskEditForm(null); }} />
+          <div className="relative z-10 w-[min(700px,92vw)] max-h-[85vh] overflow-auto rounded-md border border-border bg-surface p-4">
+            <div className="flex items-center justify-between">
+              <div className="font-semibold">Edit Task</div>
+              <button className="h-8 px-3 rounded-md border border-border text-sm" onClick={() => { setEditTask(null); setTaskEditForm(null); }}>Close</button>
+            </div>
+            <div className="mt-3 grid md:grid-cols-2 gap-3">
+              <div className="md:col-span-2">
+                <label className="block text-xs mb-1">Title</label>
+                <input className="w-full h-9 rounded border border-border bg-bg px-2 text-sm" value={taskEditForm.title} onChange={(e)=>setTaskEditForm((f)=>f?{...f,title:e.target.value}:f)} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs mb-1">Description</label>
+                <textarea className="w-full rounded border border-border bg-bg px-2 py-2 text-sm min-h-24" value={taskEditForm.description} onChange={(e)=>setTaskEditForm((f)=>f?{...f,description:e.target.value}:f)} />
+              </div>
+              <div>
+                <label className="block text-xs mb-1">Assignee</label>
+                <select className="w-full h-9 rounded border border-border bg-bg px-2 text-sm" value={taskEditForm.assignedTo} onChange={(e)=>setTaskEditForm((f)=>f?{...f,assignedTo:e.target.value}:f)}>
+                  <option value="">Select</option>
+                  {employees.map((e)=>(<option key={e.id} value={e.id}>{e.name}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs mb-1">Priority</label>
+                <select className="w-full h-9 rounded border border-border bg-bg px-2 text-sm" value={taskEditForm.priority} onChange={(e)=>setTaskEditForm((f)=>f?{...f,priority:e.target.value as any}:f)}>
+                  <option value="">None</option>
+                  <option value="URGENT">Urgent</option>
+                  <option value="FIRST">First</option>
+                  <option value="SECOND">Second</option>
+                  <option value="LEAST">Least</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs mb-1">Estimated Hours</label>
+                <input className="w-full h-9 rounded border border-border bg-bg px-2 text-sm" type="number" min={0} step={0.1} value={taskEditForm.estimatedHours} onChange={(e)=>setTaskEditForm((f)=>f?{...f,estimatedHours:e.target.value}:f)} />
+              </div>
+              <div>
+                <label className="block text-xs mb-1">Status</label>
+                <select className="w-full h-9 rounded border border-border bg-bg px-2 text-sm" value={taskEditForm.status} onChange={(e)=>setTaskEditForm((f)=>f?{...f,status:e.target.value as any}:f)}>
+                  <option value="PENDING">Pending</option>
+                  <option value="INPROGRESS">In Progress</option>
+                  <option value="DONE">Done</option>
+                </select>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button onClick={saveTaskEdit} disabled={savingTaskEdit} className="h-9 px-4 rounded-md bg-primary text-white text-sm disabled:opacity-60">{savingTaskEdit?'Saving…':'Save Changes'}</button>
+            </div>
           </div>
         </div>
       )}

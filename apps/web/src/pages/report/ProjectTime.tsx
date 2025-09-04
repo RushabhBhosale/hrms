@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { Th, Td } from "../../components/ui/Table";
 import { getEmployee } from "../../lib/auth";
@@ -9,6 +10,7 @@ type Project = {
   title: string;
   estimatedTimeMinutes?: number;
   startTime?: string;
+  isPersonal?: boolean;
 };
 type TimeLog = {
   minutes: number;
@@ -157,18 +159,21 @@ function Donut({
 function StackedBars({
   rows,
   legend,
+  basePath,
 }: {
   rows: {
+    id: string;
     label: string;
     total: number;
     segments: { key: string; value: number; color: string }[];
   }[];
   legend: { key: string; label: string; color: string }[];
+  basePath: string;
 }) {
   const max = Math.max(...rows.map((r) => r.total), 1);
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-3 text-xs">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2 text-xs max-h-52 overflow-auto pr-1">
         {legend.map((l) => (
           <div key={l.key} className="inline-flex items-center gap-2">
             <span
@@ -180,46 +185,60 @@ function StackedBars({
         ))}
       </div>
       <div className="space-y-4">
-        {rows.map((r) => (
-          <div key={r.label} className="space-y-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-medium">{r.label}</span>
-              <span className="text-muted">
-                {Math.round((r.total / 60) * 100) / 100} h
-              </span>
-            </div>
-            <div
-              className="h-7 w-full border border-border rounded overflow-hidden flex"
-              style={{
-                background:
-                  "repeating-linear-gradient(45deg, rgba(0,0,0,0.03), rgba(0,0,0,0.03) 8px, transparent 8px, transparent 16px)",
-              }}
-            >
-              {r.segments
-                .filter((s) => s.value > 0)
-                .map((s, idx) => {
-                  const pct = (s.value / max) * 100;
-                  const canLabel = pct > 10; // inline label if segment is wide enough
-                  return (
-                    <div
-                      key={idx}
-                      className="h-full relative"
-                      style={{ width: `${pct}%`, background: s.color }}
-                      title={`${s.key}: ${
-                        Math.round((s.value / 60) * 100) / 100
-                      } h`}
+        {rows.map((r) => {
+          console.log("dhsds", rows);
+          return (
+            <div key={r.label} className="space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium">
+                  {r.id === 'PERSONAL' ? (
+                    <span>{r.label}</span>
+                  ) : (
+                    <Link
+                      to={`${basePath}/projects/${r.id}`}
+                      className="text-primary hover:underline"
                     >
-                      {canLabel && (
-                        <span className="absolute inset-0 flex items-center justify-center text-[11px] font-medium text-white/95">
-                          {Math.round((s.value / 60) * 10) / 10}h
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
+                      {r.label}
+                    </Link>
+                  )}
+                </span>
+                <span className="text-muted">
+                  {Math.round((r.total / 60) * 100) / 100} h
+                </span>
+              </div>
+              <div
+                className="h-7 w-full border border-border rounded overflow-hidden flex"
+                style={{
+                  background:
+                    "repeating-linear-gradient(45deg, rgba(0,0,0,0.03), rgba(0,0,0,0.03) 8px, transparent 8px, transparent 16px)",
+                }}
+              >
+                {r.segments
+                  .filter((s) => s.value > 0)
+                  .map((s, idx) => {
+                    const pct = (s.value / max) * 100;
+                    const canLabel = pct > 10; // inline label if segment is wide enough
+                    return (
+                      <div
+                        key={idx}
+                        className="h-full relative"
+                        style={{ width: `${pct}%`, background: s.color }}
+                        title={`${s.key}: ${
+                          Math.round((s.value / 60) * 100) / 100
+                        } h`}
+                      >
+                        {canLabel && (
+                          <span className="absolute inset-0 flex items-center justify-center text-[11px] font-medium text-white/95">
+                            {Math.round((s.value / 60) * 10) / 10}h
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -266,29 +285,73 @@ export default function ProjectTime() {
         const emps = (empsRes.data.employees || []) as EmployeeLite[];
         setEmployees(emps);
         const projs = (projsRes.data.projects || []) as any[];
-        setProjects(
-          projs.map((p) => ({
+
+        // Split normal and personal projects
+        const normalProjs = projs.filter((p) => !p.isPersonal);
+        const personalProjs = projs.filter((p) => p.isPersonal);
+
+        // Aggregate personal projects into a single global project
+        const PERSONAL_ID = 'PERSONAL';
+        const aggregatedProjects: Project[] = [
+          ...normalProjs.map((p) => ({
             _id: p._id,
             title: p.title,
             estimatedTimeMinutes: p.estimatedTimeMinutes,
             startTime: p.startTime,
-          }))
-        );
+            isPersonal: !!p.isPersonal,
+          })),
+        ];
+        if (personalProjs.length) {
+          const estSum = personalProjs.reduce(
+            (s, p) => s + (p.estimatedTimeMinutes || 0),
+            0
+          );
+          const startTimes = personalProjs
+            .map((p) => p.startTime)
+            .filter(Boolean) as string[];
+          const earliestStart = startTimes.length
+            ? new Date(
+                Math.min(
+                  ...startTimes.map((d) => new Date(d).getTime())
+                )
+              ).toISOString()
+            : undefined;
+          aggregatedProjects.push({
+            _id: PERSONAL_ID,
+            title: 'Personal Tasks',
+            estimatedTimeMinutes: estSum || undefined,
+            startTime: earliestStart,
+            isPersonal: true,
+          });
+        }
+        setProjects(aggregatedProjects);
 
         // Load tasks for each project (includes timeLogs)
-        const taskMap: Record<string, Task[]> = {};
+        const rawTaskMap: Record<string, Task[]> = {};
         await Promise.all(
           projs.map(async (p) => {
             try {
               const t = await api.get(`/projects/${p._id}/tasks`);
               const list = (t.data.tasks || []) as Task[];
-              taskMap[p._id] = list;
+              rawTaskMap[p._id] = list;
             } catch {
-              taskMap[p._id] = [];
+              rawTaskMap[p._id] = [];
             }
           })
         );
-        setTasksByProject(taskMap);
+        // Re-map into aggregated task map with single PERSONAL bucket
+        const aggregatedTaskMap: Record<string, Task[]> = {};
+        for (const p of normalProjs) {
+          aggregatedTaskMap[p._id] = rawTaskMap[p._id] || [];
+        }
+        if (personalProjs.length) {
+          const allPersonal: Task[] = [];
+          for (const p of personalProjs) {
+            allPersonal.push(...(rawTaskMap[p._id] || []));
+          }
+          aggregatedTaskMap[PERSONAL_ID] = allPersonal;
+        }
+        setTasksByProject(aggregatedTaskMap);
       } catch (e: any) {
         setErr(e?.response?.data?.error || "Failed to load data");
       } finally {
@@ -376,30 +439,35 @@ export default function ProjectTime() {
 
     // Prepare stacked bars: per project segments by employee
     const empMap = new Map(employees.map((e) => [e.id, e.name]));
-    const legendKeys = new Set<string>();
-    const rows = Object.keys(byProjectByEmp).map((pid, i) => {
+    // Establish a stable color per employee based on total contribution
+    const empOrder = Object.keys(byEmpTotal).sort(
+      (a, b) => (byEmpTotal[b] || 0) - (byEmpTotal[a] || 0)
+    );
+    const empColor = new Map<string, string>(
+      empOrder.map((id, idx) => [id, palette[idx % palette.length]])
+    );
+
+    const rows = Object.keys(byProjectByEmp).map((pid) => {
       const segs = Object.entries(byProjectByEmp[pid])
         .sort((a, b) => b[1] - a[1])
-        .map(([emp, val], j) => {
+        .map(([emp, val]) => {
           const key = String(emp);
-          legendKeys.add(key);
-          return { key, value: val, color: palette[j % palette.length] };
+          return { key, value: val, color: empColor.get(key) || palette[0] };
         });
       return {
+        id: pid,
         label: projects.find((p) => p._id === pid)?.title || "Project",
         total: segs.reduce((s, x) => s + x.value, 0),
         segments: segs,
       };
     });
 
-    // Build legend from ordered employees by total contribution
-    const legend = Array.from(legendKeys)
-      .map((k, idx) => ({
-        key: k,
-        label: empMap.get(k) || "Employee",
-        color: palette[idx % palette.length],
-      }))
-      .sort((a, b) => (byEmpTotal[b.key] || 0) - (byEmpTotal[a.key] || 0));
+    // Build legend from ordered employees by total contribution with stable colors
+    const legend = empOrder.map((k) => ({
+      key: k,
+      label: empMap.get(k) || "Employee",
+      color: empColor.get(k) || palette[0],
+    }));
 
     // Summary
     const totalMinutes = Object.values(byProject).reduce((s, v) => s + v, 0);
@@ -445,6 +513,12 @@ export default function ProjectTime() {
     () => (dateMode === "MONTH" ? monthLabel : "All Dates"),
     [dateMode, monthLabel]
   );
+
+  // Determine base path for project details links
+  const basePath = useMemo(() => {
+    const role = me?.primaryRole;
+    return role === "ADMIN" || role === "SUPERADMIN" ? "/admin" : "/app";
+  }, [me?.primaryRole]);
 
   // Table data: per-project spent within current filters
   const projectTable = useMemo(() => {
@@ -615,7 +689,11 @@ export default function ProjectTime() {
                 <div className="text-xs text-muted">Stacked totals</div>
               </div>
               {agg.rows.length ? (
-                <StackedBars rows={agg.rows} legend={agg.legend} />
+                <StackedBars
+                  rows={agg.rows}
+                  legend={agg.legend}
+                  basePath={basePath}
+                />
               ) : (
                 <div className="text-sm text-muted">No data</div>
               )}

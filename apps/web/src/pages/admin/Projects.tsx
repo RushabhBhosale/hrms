@@ -260,12 +260,29 @@ export default function ProjectsAdmin() {
                     )}
                   </Td>
                   <Td>
-                    <Link
-                      to={`/admin/projects/${p._id}`}
-                      className="h-8 px-3 rounded-md border border-border hover:bg-bg inline-flex items-center"
-                    >
-                      Open
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        to={`/admin/projects/${p._id}`}
+                        className="h-8 px-3 rounded-md border border-border hover:bg-bg inline-flex items-center"
+                      >
+                        Open
+                      </Link>
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Delete this project? This cannot be undone.')) return;
+                          try {
+                            await api.delete(`/projects/${p._id}`);
+                            await load();
+                          } catch (e) {
+                            console.error(e);
+                            alert('Failed to delete project');
+                          }
+                        }}
+                        className="h-8 px-3 rounded-md border border-error/30 text-error hover:bg-error/10 inline-flex items-center"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </Td>
                 </tr>
               );

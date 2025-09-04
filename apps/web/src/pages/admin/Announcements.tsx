@@ -17,6 +17,11 @@ export default function AnnouncementsAdmin() {
   const [message, setMessage] = useState("");
   const [expiresAt, setExpiresAt] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editMessage, setEditMessage] = useState('');
+  const [editExpiresAt, setEditExpiresAt] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   async function load() {
     try {
@@ -63,6 +68,44 @@ export default function AnnouncementsAdmin() {
       await load();
     } catch (e: any) {
       setError(e?.response?.data?.error || "Failed to delete announcement");
+    }
+  }
+
+  function startEdit(a: Announcement) {
+    setEditingId(a._id);
+    setEditTitle(a.title);
+    setEditMessage(a.message);
+    setEditExpiresAt(a.expiresAt ? toInputDateTimeLocal(a.expiresAt) : '');
+  }
+
+  function toInputDateTimeLocal(s?: string | null) {
+    if (!s) return '';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const mi = pad(d.getMinutes());
+    return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  }
+
+  async function saveEdit() {
+    if (!editingId) return;
+    try {
+      setSavingEdit(true);
+      await api.put(`/announcements/${editingId}`, {
+        title: editTitle.trim(),
+        message: editMessage.trim(),
+        expiresAt: editExpiresAt ? new Date(editExpiresAt) : null,
+      });
+      setEditingId(null);
+      await load();
+    } catch (e: any) {
+      setError(e?.response?.data?.error || 'Failed to update announcement');
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -121,22 +164,50 @@ export default function AnnouncementsAdmin() {
             <ul className="space-y-3">
               {list.map((a) => (
                 <li key={a._id} className="p-4 border border-border rounded-md bg-surface">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-semibold">{a.title}</div>
-                      <div className="text-sm text-muted">
-                        {new Date(a.createdAt).toLocaleString()}
-                        {a.expiresAt ? ` • Expires ${new Date(a.expiresAt).toLocaleString()}` : ""}
+                  {editingId === a._id ? (
+                    <div className="space-y-3">
+                      <div className="grid gap-3">
+                        <div>
+                          <label className="block text-xs mb-1">Title</label>
+                          <input className="w-full h-9 rounded border border-border bg-bg px-2 text-sm" value={editTitle} onChange={(e)=>setEditTitle(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-xs mb-1">Message</label>
+                          <textarea className="w-full rounded border border-border bg-bg px-2 py-2 text-sm min-h-24" value={editMessage} onChange={(e)=>setEditMessage(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-xs mb-1">Expires At</label>
+                          <input type="datetime-local" className="h-9 rounded border border-border bg-bg px-2 text-sm" value={editExpiresAt} onChange={(e)=>setEditExpiresAt(e.target.value)} />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={saveEdit} disabled={savingEdit} className="h-9 px-4 rounded-md bg-primary text-white text-sm disabled:opacity-60">{savingEdit?'Saving…':'Save'}</button>
+                        <button onClick={()=>setEditingId(null)} className="h-9 px-4 rounded-md border border-border text-sm">Cancel</button>
                       </div>
                     </div>
-                    <button
-                      onClick={() => remove(a._id)}
-                      className="text-error hover:underline text-sm"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                  <div className="mt-2 whitespace-pre-wrap">{a.message}</div>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-semibold">{a.title}</div>
+                          <div className="text-sm text-muted">
+                            {new Date(a.createdAt).toLocaleString()}
+                            {a.expiresAt ? ` • Expires ${new Date(a.expiresAt).toLocaleString()}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => startEdit(a)} className="text-sm underline">Edit</button>
+                          <button
+                            onClick={() => remove(a._id)}
+                            className="text-error hover:underline text-sm"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-2 whitespace-pre-wrap">{a.message}</div>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>

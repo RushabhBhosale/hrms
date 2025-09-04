@@ -66,23 +66,23 @@ export default function EmployeeDetails() {
         setLoading(true);
         const res = await api.get(`/documents/${id}`);
         setEmployee(res.data.employee);
-        setReportingPerson(res.data.employee.reportingPerson?.id || "");
-        setRole(res.data.employee.subRoles?.[0] || "");
+        setReportingPerson(res.data.employee?.reportingPerson?.id || "");
+        setRole(res.data.employee?.subRoles?.[0] || "");
         // Prime edit fields
-        setAddress(res.data.employee.address || "");
-        setPhone(res.data.employee.phone || "");
+        setAddress(res.data.employee?.address || "");
+        setPhone(res.data.employee?.phone || "");
         setDobEdit(
-          res.data.employee.dob
-            ? String(res.data.employee.dob).slice(0, 10)
+          res.data.employee?.dob
+            ? String(res.data.employee?.dob).slice(0, 10)
             : ""
         );
-        setCtc(String(res.data.employee.ctc ?? 0)); // monthly from backend
+        setCtc(String(res.data.employee?.ctc ?? 0)); // monthly from backend
         setCtcMode("monthly");
-        setAadhar(res.data.employee.aadharNumber || "");
-        setPan(res.data.employee.panNumber || "");
-        setBankAcc(res.data.employee.bankDetails?.accountNumber || "");
-        setBankName(res.data.employee.bankDetails?.bankName || "");
-        setIfsc(res.data.employee.bankDetails?.ifsc || "");
+        setAadhar(res.data.employee?.aadharNumber || "");
+        setPan(res.data.employee?.panNumber || "");
+        setBankAcc(res.data.employee?.bankDetails?.accountNumber || "");
+        setBankName(res.data.employee?.bankDetails?.bankName || "");
+        setIfsc(res.data.employee?.bankDetails?.ifsc || "");
       } catch (e: any) {
         setErr(e?.response?.data?.error || "Failed to load employee");
       } finally {
@@ -231,11 +231,11 @@ export default function EmployeeDetails() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-semibold">{employee.name}</h2>
-          <div className="text-sm text-muted">{employee.email}</div>
-          {employee.employeeId && (
+          <h2 className="text-2xl font-semibold">{employee?.name}</h2>
+          <div className="text-sm text-muted">{employee?.email}</div>
+          {employee?.employeeId && (
             <div className="text-xs text-muted mt-1">
-              Employee ID: {employee.employeeId}
+              Employee ID: {employee?.employeeId}
             </div>
           )}
         </div>
@@ -454,11 +454,11 @@ export default function EmployeeDetails() {
       {/* Documents */}
       <section className="bg-surface border border-border rounded-md p-4">
         <h3 className="font-semibold mb-2">Documents</h3>
-        {employee.documents?.length === 0 ? (
+        {employee?.documents?.length === 0 ? (
           <div className="text-sm text-muted">No documents uploaded.</div>
         ) : (
           <ul className="list-disc pl-6 space-y-1">
-            {employee.documents.map((d) => (
+            {employee?.documents?.map((d) => (
               <li key={d}>
                 <a
                   href={`${base}/uploads/${d}`}
