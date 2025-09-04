@@ -416,7 +416,7 @@ router.get("/slips", auth, async (req, res) => {
         employee: employeeId,
         company: companyId,
         month,
-      }),
+      }).lean(),
     ]);
 
     const template = ensureTemplateDefaults(
@@ -476,7 +476,7 @@ router.get("/slips/mine", auth, async (req, res) => {
         employee: employeeId,
         company: companyId,
         month,
-      }),
+      }).lean(),
     ]);
     const template = ensureTemplateDefaults(
       tpl || { company: companyId, fields: [] }
@@ -949,7 +949,7 @@ async function computeYTD(employeeId, companyId, year, uptoMonth) {
     employee: employeeId,
     company: companyId,
     month: { $regex: `^${prefix}` },
-  });
+  }).lean();
   const map = {};
   for (const s of slips) {
     const [yy, mm] = String(s.month || "")
@@ -1059,7 +1059,7 @@ router.get("/slips/pdf", auth, async (req, res) => {
         employee: employeeId,
         company: companyId,
         month,
-      }),
+      }).lean(),
     ]);
     const template = ensureTemplateDefaults(templateRaw || {});
     const valuesObj = {};
@@ -1122,7 +1122,7 @@ router.get("/slips/mine/pdf", auth, async (req, res) => {
         employee: employeeId,
         company: companyId,
         month,
-      }),
+      }).lean(),
     ]);
     const template = ensureTemplateDefaults(templateRaw || {});
     const valuesObj = {};

@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const encrypt = require('mongoose-encryption');
 
   const TaskSchema = new mongoose.Schema(
     {
@@ -38,18 +37,5 @@ const encrypt = require('mongoose-encryption');
   },
   { timestamps: true }
 );
-
-// ---- Encryption plugin ----
-const encKey = process.env.ENC_KEY; // 32-byte key (base64)
-if (!encKey) {
-  console.warn('⚠️ ENC_KEY not set — Task comments/time log notes will NOT be encrypted!');
-}
-
-// Encrypt free-text fields that may contain sensitive details
-TaskSchema.plugin(encrypt, {
-  secret: encKey,
-  encryptedFields: ['timeLogs.note', 'description'],
-  requireAuthenticationCode: false,
-});
 
 module.exports = mongoose.model('Task', TaskSchema);
