@@ -81,6 +81,11 @@ curl -X POST 'http://localhost:4000/seed/dummy' \
 
 # If you set SEED_KEY=dev-seed:
 # curl -X POST 'http://localhost:4000/seed/dummy?key=dev-seed' -H 'Content-Type: application/json' -d '{"reset":true}'
+
+# Extensive dataset (3 months, 12 projects, 15 tasks each):
+curl -X POST 'http://localhost:4000/seed/dummy' \
+  -H 'Content-Type: application/json' \
+  -d '{"reset":true, "months":3, "projects":12, "tasksPerProject":15}'
 ```
 
 This creates:

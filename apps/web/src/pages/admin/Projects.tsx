@@ -23,6 +23,8 @@ type Project = {
   estimatedTimeMinutes?: number;
   createdAt?: string;
   startTime?: string;
+  isPersonal?: boolean;
+  active?: boolean;
 };
 
 export default function ProjectsAdmin() {
@@ -241,7 +243,8 @@ export default function ProjectsAdmin() {
                     }
                   />
                   <span>
-                    {e.name} <span className="text-muted">({roleLabel(e)})</span>
+                    {e.name}{" "}
+                    <span className="text-muted">({roleLabel(e)})</span>
                   </span>
                 </label>
               ))}
@@ -270,7 +273,8 @@ export default function ProjectsAdmin() {
               <Th>Start</Th>
               <Th>Est (h)</Th>
               <Th>Spent (h)</Th>
-              <Th>Status</Th>
+              <Th>Budget</Th>
+              <Th>Active</Th>
               <Th>Actions</Th>
             </tr>
           </thead>
@@ -311,6 +315,21 @@ export default function ProjectsAdmin() {
                     )}
                   </Td>
                   <Td>
+                    {p.isPersonal ? (
+                      <span className="text-xs text-muted">Personal</span>
+                    ) : (
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded border ${
+                          p.active !== false
+                            ? "border-secondary/30 text-secondary bg-secondary/10"
+                            : "border-muted/40 text-muted"
+                        }`}
+                      >
+                        {p.active !== false ? "Active" : "Inactive"}
+                      </span>
+                    )}
+                  </Td>
+                  <Td>
                     <div className="flex items-center gap-2">
                       <Link
                         to={`/admin/projects/${p._id}`}
@@ -318,21 +337,32 @@ export default function ProjectsAdmin() {
                       >
                         Open
                       </Link>
-                      {/* <button
-                        onClick={async () => {
-                          if (!confirm('Delete this project? This cannot be undone.')) return;
-                          try {
-                            await api.delete(`/projects/${p._id}`);
-                            await load();
-                          } catch (e) {
-                            console.error(e);
-                            toast.error('Failed to delete project');
+                      {!p.isPersonal && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const resp = await api.put(`/projects/${p._id}`, {
+                                active: !p.active,
+                              });
+                              const next = resp.data.project?.active;
+                              setProjects((list) =>
+                                list.map((x) =>
+                                  x._id === p._id ? { ...x, active: next } : x
+                                )
+                              );
+                            } catch (e: any) {
+                              toast.error(
+                                e?.response?.data?.error ||
+                                  "Failed to update project"
+                              );
+                            }
+                          }}
+                          className=""
+                          title={
+                            p.active !== false ? "Mark Inactive" : "Mark Active"
                           }
-                        }}
-                        className="h-8 px-3 rounded-md border border-error/30 text-error hover:bg-error/10 inline-flex items-center"
-                      >
-                        Delete
-                      </button> */}
+                        ></button>
+                      )}
                     </div>
                   </Td>
                 </tr>

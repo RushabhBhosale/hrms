@@ -39,6 +39,7 @@ import MySalarySlip from "./pages/employee/SalarySlip";
 import SalariesManage from "./pages/employee/SalariesManage";
 import EmployeeDetails from "./pages/admin/EmployeeDetails";
 import MonthlyReport from "./pages/report/MonthlyReport";
+import Reports from "./pages/report/Reports";
 import LandingPage from "./pages/LandingPage";
 import Announcements from "./pages/employee/Announcements";
 
@@ -85,7 +86,7 @@ export default function App() {
         <Route path="projects/:id" element={<ProjectDetails />} />
         <Route path="projects/:id/tasks" element={<ProjectTasks />} />
         <Route path="attendances" element={<AttendanceRecords />} />
-        <Route path="report" element={<MonthlyReport />} />
+        <Route path="report" element={<Reports />} />
         <Route path="leave-settings" element={<LeaveSettings />} />
         <Route path="company" element={<CompanyProfile />} />
         <Route path="company-timing" element={<CompanyTiming />} />

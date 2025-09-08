@@ -25,6 +25,13 @@ function minutesBetween(a, b) {
   return Math.max(0, Math.round((b.getTime() - a.getTime()) / 60000));
 }
 
+function addMonths(d, n) {
+  const x = new Date(d);
+  const m = x.getMonth();
+  x.setMonth(m + n);
+  return x;
+}
+
 router.post('/superadmin', async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !isValidEmail(email) || !isValidPassword(password)) {
@@ -55,18 +62,26 @@ router.post('/dummy', async (req, res) => {
     const reset = !!req.body?.reset;
     const companyName = 'Acme Corporation';
 
-    // If reset requested, remove previously seeded data for the company
+    // If reset requested, remove previously seeded data for the company (scoped deletions)
     if (reset) {
       const existing = await Company.findOne({ name: companyName }).lean();
       if (existing?._id) {
         const cid = existing._id;
+        const existingEmployees = await Employee.find({ company: cid })
+          .select('_id')
+          .lean();
+        const empIds = existingEmployees.map((e) => e._id);
+        const existingProjects = await Project.find({ company: cid })
+          .select('_id')
+          .lean();
+        const projIds = existingProjects.map((p) => p._id);
         await Promise.all([
-          Employee.deleteMany({ company: cid }),
-          Attendance.deleteMany({}),
+          Attendance.deleteMany({ employee: { $in: empIds } }),
+          Task.deleteMany({ project: { $in: projIds } }),
           Project.deleteMany({ company: cid }),
-          Task.deleteMany({}),
           Leave.deleteMany({ company: cid }),
           Announcement.deleteMany({ company: cid }),
+          Employee.deleteMany({ company: cid }),
         ]);
         await Company.deleteOne({ _id: cid });
       }
@@ -85,6 +100,11 @@ router.post('/dummy', async (req, res) => {
         users: people,
       });
     }
+
+    // Parse scale options
+    const months = Math.max(1, parseInt(req.query.months || req.body?.months || 1, 10) || 1);
+    const projectsTarget = Math.max(2, parseInt(req.query.projects || req.body?.projects || (months >= 3 ? 12 : 2), 10) || (months >= 3 ? 12 : 2));
+    const tasksPerProject = Math.max(1, parseInt(req.query.tasksPerProject || req.body?.tasksPerProject || (months >= 3 ? 15 : 3), 10) || (months >= 3 ? 15 : 3));
 
     // Create admin + employees
     const defaultPassword = 'password123';
@@ -157,31 +177,48 @@ router.post('/dummy', async (req, res) => {
     const qa = employees.find((e) => (e.subRoles || []).includes('qa'));
     const dsg = employees.find((e) => (e.subRoles || []).includes('designer'));
 
-    const proj1 = await Project.create({
-      title: 'NextGen HR Portal',
-      description: 'Revamp the HR portal with modern UI and workflows',
-      techStack: ['react', 'node', 'mongodb'],
-      teamLead: teamLead._id,
-      members: [
+    // Create projects (2 for light, N for extensive)
+    function projectTitle(idx) {
+      const names = [
+        'NextGen HR Portal',
+        'Mobile Attendance App',
+        'Payroll Engine',
+        'Onboarding Wizard',
+        'Leave Balancer',
+        'Timesheet Reporter',
+        'API Gateway',
+        'Design System',
+        'QA Automation Suite',
+        'Performance Dashboard',
+        'Notification Service',
+        'Document Manager',
+        'Recruitment Tracker',
+        'Company Wiki',
+        'Analytics ETL',
+      ];
+      return names[idx % names.length] + (idx >= names.length ? ` #${idx + 1}` : '');
+    }
+
+    const projects = [];
+    for (let i = 0; i < projectsTarget; i++) {
+      const lead = i % 3 === 0 ? admin : (teamLead || admin);
+      const members = [
         ...devs.map((d) => d._id),
         qa?._id,
         dsg?._id,
-      ].filter(Boolean),
-      company: company._id,
-      estimatedTimeMinutes: 60 * 400,
-      startTime: addDays(new Date(), -40),
-    });
-
-    const proj2 = await Project.create({
-      title: 'Mobile Attendance App',
-      description: 'Lightweight mobile app for punch-in/out and leave',
-      techStack: ['react-native', 'node'],
-      teamLead: admin._id,
-      members: [teamLead._id, ...devs.map((d) => d._id)].filter(Boolean),
-      company: company._id,
-      estimatedTimeMinutes: 60 * 250,
-      startTime: addDays(new Date(), -25),
-    });
+      ].filter(Boolean);
+      const p = await Project.create({
+        title: projectTitle(i),
+        description: 'Seeded project for demo/testing',
+        techStack: i % 2 === 0 ? ['react', 'node', 'mongodb'] : ['react-native', 'node'],
+        teamLead: lead._id,
+        members,
+        company: company._id,
+        estimatedTimeMinutes: 60 * (200 + (i * 20)),
+        startTime: addDays(new Date(), -Math.min(30 * months, 90) + (i * 2)),
+      });
+      projects.push(p);
+    }
 
     // Tasks + time logs
     async function makeTask(project, title, assignee, creator, opts = {}) {
@@ -210,39 +247,45 @@ router.post('/dummy', async (req, res) => {
       return task;
     }
 
-    const t1 = await makeTask(
-      proj1,
-      'Build authentication flow',
-      devs[0] || admin,
-      teamLead,
-      { priority: 'URGENT', estimatedTimeMinutes: 240 }
-    );
-    const t2 = await makeTask(
-      proj1,
-      'Design dashboard widgets',
-      dsg || admin,
-      teamLead,
-      { priority: 'FIRST', estimatedTimeMinutes: 180 }
-    );
-    const t3 = await makeTask(
-      proj2,
-      'Implement offline punch support',
-      devs[1] || admin,
-      admin,
-      { priority: 'SECOND', estimatedTimeMinutes: 300 }
-    );
+    // Create tasks for each project
+    const allTasks = [];
+    for (const [pi, project] of projects.entries()) {
+      const pool = [admin, teamLead, ...devs.filter(Boolean), qa, dsg].filter(Boolean);
+      for (let j = 0; j < tasksPerProject; j++) {
+        const assignee = pool[(j + pi) % pool.length] || admin;
+        const creator = pool[(j + 1 + pi) % pool.length] || admin;
+        const task = await makeTask(project, `Task ${j + 1} for ${project.title}`, assignee, creator, {
+          priority: ['URGENT', 'FIRST', 'SECOND', 'LEAST'][j % 4],
+          estimatedTimeMinutes: 90 + ((j % 5) * 30),
+        });
+        // Add extra time logs for extensive mode
+        const extraLogs = Math.min(5, 2 + Math.floor(months));
+        for (let k = 0; k < extraLogs; k++) {
+          const when = addDays(startOfDay(new Date()), -(pi + j + k + 1));
+          const minutes = 30 + Math.floor(Math.random() * 90);
+          task.timeLogs.push({ minutes, note: 'Additional work log', addedBy: assignee._id, createdAt: when });
+          task.timeSpentMinutes += minutes;
+        }
+        await task.save();
+        allTasks.push(task);
+      }
+    }
 
-    // Attendance for past 30 days (weekdays only)
+    // Attendance for past N complete months (weekdays only)
+    // Example for months=3 on Sept 8: generates June 1..Aug 31
     const today = startOfDay(new Date());
-    const start = addDays(today, -30);
+    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const start = new Date(currentMonthStart);
+    start.setMonth(start.getMonth() - months);
+    const endExclusive = currentMonthStart; // do not include current month days
     const workday = (d) => {
       const day = d.getDay(); // 0 Sun, 6 Sat
       return day !== 0 && day !== 6;
     };
     const attendanceDocs = [];
     for (const emp of allEmployees) {
-      for (let i = 0; i < 30; i++) {
-        const day = addDays(start, i);
+      for (let cursor = new Date(start); cursor < endExclusive; cursor = addDays(cursor, 1)) {
+        const day = startOfDay(cursor);
         if (!workday(day)) continue;
         // Randomly mark some absences (~10%)
         if (Math.random() < 0.1) continue;
@@ -270,41 +313,35 @@ router.post('/dummy', async (req, res) => {
     if (attendanceDocs.length) await Attendance.insertMany(attendanceDocs);
 
     // Leaves: create a few approved/pending/rejected
-    const sampleLeaves = [
-      {
-        who: devs[0] || admin,
-        type: 'PAID',
-        start: addDays(today, -12),
-        end: addDays(today, -11),
-        status: 'APPROVED',
-      },
-      {
-        who: qa || admin,
-        type: 'CASUAL',
-        start: addDays(today, -6),
-        end: addDays(today, -6),
-        status: 'PENDING',
-      },
-      {
-        who: dsg || admin,
-        type: 'SICK',
-        start: addDays(today, -18),
-        end: addDays(today, -17),
-        status: 'REJECTED',
-      },
-    ];
-    for (const l of sampleLeaves) {
-      await Leave.create({
-        employee: l.who._id,
-        company: company._id,
-        approver: admin._id,
-        type: l.type,
-        startDate: l.start,
-        endDate: l.end,
-        reason: 'Personal',
-        status: l.status,
-        allocations: { paid: l.type === 'PAID' ? 1 : 0, casual: l.type === 'CASUAL' ? 1 : 0, sick: l.type === 'SICK' ? 1 : 0, unpaid: 0 },
-      });
+    // Leaves: generate a handful per employee over the period
+    const leaveTypes = ['PAID', 'CASUAL', 'SICK'];
+    for (const emp of allEmployees) {
+      const count = 2 + Math.floor(Math.random() * (months + 1));
+      for (let i = 0; i < count; i++) {
+        const offset = 5 + Math.floor(Math.random() * Math.max(10, months * 30));
+        const startAt = addDays(today, -offset);
+        const len = 1 + Math.floor(Math.random() * 2);
+        const endAt = addDays(startAt, len - 1);
+        const type = leaveTypes[(i + emp.name.length) % leaveTypes.length];
+        const statuses = ['APPROVED', 'PENDING', 'REJECTED'];
+        const status = statuses[(i + emp.email.length) % statuses.length];
+        await Leave.create({
+          employee: emp._id,
+          company: company._id,
+          approver: admin._id,
+          type,
+          startDate: startAt,
+          endDate: endAt,
+          reason: 'Seeded leave',
+          status,
+          allocations: {
+            paid: type === 'PAID' ? len : 0,
+            casual: type === 'CASUAL' ? len : 0,
+            sick: type === 'SICK' ? len : 0,
+            unpaid: 0,
+          },
+        });
+      }
     }
 
     // Announcements
@@ -322,6 +359,15 @@ router.post('/dummy', async (req, res) => {
       createdBy: admin._id,
       expiresAt: addDays(today, 7),
     });
+    if (months >= 3) {
+      await Announcement.create({
+        company: company._id,
+        title: 'New Projects Launched',
+        message: 'Multiple new initiatives kicked off for this quarter.',
+        createdBy: admin._id,
+        expiresAt: addDays(today, 60),
+      });
+    }
 
     // Respond with a helpful summary
     res.json({
@@ -330,11 +376,8 @@ router.post('/dummy', async (req, res) => {
       company: { id: company._id, name: company.name },
       users: allEmployees.map((u) => ({ name: u.name, email: u.email, primaryRole: u.primaryRole, subRoles: u.subRoles })),
       credentials: { password: defaultPassword },
-      projects: [
-        { id: proj1._id, title: proj1.title },
-        { id: proj2._id, title: proj2.title },
-      ],
-      tasks: [t1.title, t2.title, t3.title],
+      projects: projects.map((p) => ({ id: p._id, title: p.title })),
+      tasks: allTasks.slice(0, 10).map((t) => t.title),
       notes: 'Login with any seeded email + the password above.'
     });
   } catch (e) {

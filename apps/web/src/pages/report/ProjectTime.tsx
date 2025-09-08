@@ -244,7 +244,7 @@ function StackedBars({
   );
 }
 
-export default function ProjectTime() {
+export default function ProjectTime({ onlyActive = false }: { onlyActive?: boolean }) {
   const me = getEmployee();
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // yyyy-mm
   const [dateMode, setDateMode] = useState<"ALL" | "MONTH">("ALL");
@@ -260,16 +260,47 @@ export default function ProjectTime() {
 
   // Color palettes
   const palette = [
-    "#2563eb",
-    "#10b981",
-    "#f59e0b",
-    "#ef4444",
-    "#8b5cf6",
-    "#14b8a6",
-    "#f43f5e",
-    "#22c55e",
-    "#eab308",
-    "#0ea5e9",
+    "#2563eb", // blue
+    "#10b981", // emerald
+    "#f59e0b", // amber
+    "#ef4444", // red
+    "#8b5cf6", // violet
+    "#14b8a6", // teal
+    "#f43f5e", // rose
+    "#22c55e", // green
+    "#eab308", // yellow
+    "#0ea5e9", // sky
+    "#d946ef", // fuchsia
+    "#9333ea", // purple
+    "#db2777", // pink
+    "#059669", // emerald dark
+    "#0f766e", // teal dark
+    "#047857", // green dark
+    "#1d4ed8", // blue dark
+    "#7c3aed", // indigo
+    "#b91c1c", // red dark
+    "#c2410c", // orange dark
+    "#ea580c", // orange
+    "#f97316", // orange bright
+    "#a16207", // yellow dark
+    "#4d7c0f", // lime dark
+    "#65a30d", // lime
+    "#16a34a", // green bright
+    "#15803d", // green deep
+    "#047857", // teal rich
+    "#0891b2", // cyan
+    "#0d9488", // teal mid
+    "#0891b2", // cyan
+    "#0284c7", // sky deep
+    "#0369a1", // blue cyan
+    "#075985", // blue slate
+    "#334155", // slate
+    "#475569", // slate mid
+    "#64748b", // gray blue
+    "#737373", // neutral
+    "#94a3b8", // slate light
+    "#a3e635", // lime bright
+    "#84cc16", // lime neon
   ];
 
   useEffect(() => {
@@ -280,7 +311,7 @@ export default function ProjectTime() {
         // Load employees and projects
         const [empsRes, projsRes] = await Promise.all([
           api.get("/companies/employees"),
-          api.get("/projects"),
+          api.get(`/projects${onlyActive ? "?active=true" : ""}`),
         ]);
         const emps = (empsRes.data.employees || []) as EmployeeLite[];
         setEmployees(emps);
@@ -445,8 +476,12 @@ export default function ProjectTime() {
       empOrder.map((id, idx) => [id, palette[idx % palette.length]])
     );
 
-    const rows = Object.keys(byProjectByEmp).map((pid) => {
-      const segs = Object.entries(byProjectByEmp[pid])
+    // Build rows for all visible projects (include 0-minute projects)
+    const wantedProjectIds =
+      projectId === "ALL" ? projects.map((p) => p._id) : [projectId];
+    const rows = wantedProjectIds.map((pid) => {
+      const segObj = byProjectByEmp[pid] || {};
+      const segs = Object.entries(segObj)
         .sort((a, b) => b[1] - a[1])
         .map(([emp, val]) => {
           const key = String(emp);
@@ -454,7 +489,9 @@ export default function ProjectTime() {
         });
       return {
         id: pid,
-        label: projects.find((p) => p._id === pid)?.title || "Project",
+        label:
+          projects.find((p) => p._id === pid)?.title ||
+          (pid === "PERSONAL" ? "Personal Tasks" : "Project"),
         total: segs.reduce((s, x) => s + x.value, 0),
         segments: segs,
       };
@@ -551,6 +588,75 @@ export default function ProjectTime() {
     return rows;
   }, [projects, tasksByProject, start, end, employeeId, projectId]);
 
+  function downloadCsv() {
+    // Build CSV of per-project per-employee totals using current filters (agg.rows)
+    const lines: string[] = [];
+    const esc = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
+    const rangeLabel = dateMode === "MONTH" ? month : "All-Time";
+    const projLabel =
+      projectId === "ALL"
+        ? "All Projects"
+        : projects.find((p) => p._id === projectId)?.title ||
+          "Selected Project";
+    const empLabel =
+      employeeId === "ALL"
+        ? "All Employees"
+        : employees.find((e) => e.id === employeeId)?.name ||
+          "Selected Employee";
+    lines.push(`Report,${esc("Project Time")}`);
+    lines.push(`Range,${esc(rangeLabel)}`);
+    lines.push(`Project,${esc(projLabel)}`);
+    lines.push(`Employees,${esc(empLabel)}`);
+    lines.push("");
+
+    const header = ["Project", "Employee", "Minutes", "Hours"];
+    lines.push(header.join(","));
+
+    const empName = (id: string) =>
+      employees.find((e) => e.id === id)?.name || id;
+    for (const row of agg.rows) {
+      // segments: { key: employeeId, value: minutes }
+      for (const seg of row.segments) {
+        const minutes = seg.value || 0;
+        const hours = Math.round((minutes / 60) * 100) / 100;
+        lines.push(
+          [
+            esc(row.label),
+            esc(empName(seg.key)),
+            String(minutes),
+            String(hours),
+          ].join(",")
+        );
+      }
+      // total row
+      if (row.segments.length > 1) {
+        const totalMin = row.segments.reduce((s, x) => s + (x.value || 0), 0);
+        const totalHr = Math.round((totalMin / 60) * 100) / 100;
+        lines.push(
+          [
+            esc(row.label),
+            esc("Total"),
+            String(totalMin),
+            String(totalHr),
+          ].join(",")
+        );
+      }
+    }
+
+    const blob = new Blob([lines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const fileSafe = `${rangeLabel.replace(/\s+/g, "_")}`;
+    a.href = url;
+    a.download = `project-time-${fileSafe}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -596,6 +702,14 @@ export default function ProjectTime() {
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={downloadCsv}
+            className="h-10 rounded-md border border-border bg-white px-3 text-sm"
+            title="Download CSV for current filters"
+          >
+            Download CSV
+          </button>
         </div>
       </div>
 

@@ -50,13 +50,6 @@ export default function AdminDash() {
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
-  const [runLoading, setRunLoading] = useState(false);
-  const [runErr, setRunErr] = useState<string | null>(null);
-  const [runResult, setRunResult] = useState<{
-    candidates: number;
-    closed: number;
-  } | null>(null);
-  const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [leaveMap, setLeaveMap] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -67,7 +60,7 @@ export default function AdminDash() {
         const [empRes, att, projRes, leavesRes] = await Promise.all([
           api.get("/companies/employees"),
           api.get("/attendance/company/today"),
-          api.get("/projects"),
+          api.get("/projects", { params: { active: true } }),
           api.get("/leaves/company/today"),
         ]);
         const empList: EmployeeLite[] = empRes.data.employees || [];
@@ -188,6 +181,7 @@ export default function AdminDash() {
         emp.email.toLowerCase().includes(term)
     );
   }, [assignments, assignQ]);
+  console.log("dfkld", filteredAssignments);
   const assignTotal = filteredAssignments.length;
   const assignPages = Math.max(
     1,
@@ -204,6 +198,8 @@ export default function AdminDash() {
       ),
     [filteredAssignments, assignPage, assignLimit]
   );
+
+  console.log("desjkhde", assignRows);
 
   return (
     <div className="space-y-8">
@@ -278,7 +274,7 @@ export default function AdminDash() {
       </div>
       {/* Project time analytics at top */}
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
-        <ProjectTime />
+        <ProjectTime onlyActive />
       </section>
 
       {err && (
@@ -328,7 +324,7 @@ export default function AdminDash() {
                     setLoadingProjects(true);
                     const [empRes, projRes, leavesRes] = await Promise.all([
                       api.get("/companies/employees"),
-                      api.get("/projects"),
+                      api.get("/projects", { params: { active: true } }),
                       api.get("/leaves/company/today"),
                     ]);
                     const empList: EmployeeLite[] = empRes.data.employees || [];

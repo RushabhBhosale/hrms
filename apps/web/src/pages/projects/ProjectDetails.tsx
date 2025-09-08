@@ -21,6 +21,8 @@ type Project = {
   members: string[];
   estimatedTimeMinutes?: number;
   startTime?: string;
+  isPersonal?: boolean;
+  active?: boolean;
 };
 
 type Task = {
@@ -234,6 +236,17 @@ export default function ProjectDetails() {
   }, [me]);
 
   const canAdminProject = canEditEstimate;
+
+  async function toggleActive(next: boolean) {
+    if (!id) return;
+    try {
+      const resp = await api.put(`/projects/${id}`, { active: next });
+      setProject(resp.data.project);
+      toast.success(next ? 'Project marked Active' : 'Project marked Inactive');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || 'Failed to update project');
+    }
+  }
 
   async function saveEstimate() {
     if (!id) return;
@@ -749,6 +762,28 @@ export default function ProjectDetails() {
                 </div>
               )}
             </div>
+
+            {/* Active/Inactive toggle for admins (non-personal projects) */}
+            {canAdminProject && project && !project.isPersonal && (
+              <div className="rounded-md border border-border bg-bg p-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium">Project Status</div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-0.5 rounded border ${
+                      (project.active !== false) ? 'border-secondary/30 text-secondary bg-secondary/10' : 'border-muted/40 text-muted'
+                    }`}>
+                      {(project.active !== false) ? 'Active' : 'Inactive'}
+                    </span>
+                    <button
+                      onClick={() => toggleActive(!(project.active !== false))}
+                      className="h-9 px-3 rounded-md border border-border text-sm hover:bg-surface"
+                    >
+                      {(project.active !== false) ? 'Mark Inactive' : 'Mark Active'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

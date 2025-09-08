@@ -12,6 +12,8 @@ const ProjectSchema = new mongoose.Schema(
     startTime: { type: Date },
     // Personal projects are owned by a single employee and used for non-project tasks
     isPersonal: { type: Boolean, default: false },
+    // Active flag: admins can deactivate finished projects
+    active: { type: Boolean, default: true },
     // Estimated total time to complete (in minutes)
     estimatedTimeMinutes: { type: Number, default: 0, min: 0 },
   },

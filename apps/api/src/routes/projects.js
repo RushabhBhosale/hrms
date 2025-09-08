@@ -177,6 +177,13 @@ router.get("/", auth, async (req, res) => {
           company: req.employee.company,
           $or: [{ teamLead: req.employee.id }, { members: req.employee.id }],
         };
+  if (req.query.active === "true") {
+    // Treat missing active as active=true for backward compatibility
+    const clause = { $or: [{ active: true }, { active: { $exists: false } }] };
+    if (query.$and) query.$and.push(clause);
+    else query.$and = [clause];
+  }
+  if (req.query.active === "false") query.active = false;
   const projects = await Project.find(query).lean();
   res.json({ projects });
 });
@@ -352,6 +359,15 @@ router.put(
     if (techStack !== undefined) project.techStack = techStack;
     if (teamLead !== undefined) project.teamLead = teamLead;
     if (members !== undefined) project.members = members;
+    // Active flag (cannot deactivate personal projects)
+    if (req.body.active !== undefined) {
+      const next = Boolean(req.body.active);
+      if (project.isPersonal && next === false)
+        return res
+          .status(400)
+          .json({ error: "Cannot deactivate personal project" });
+      project.active = next;
+    }
     // startTime: optional
     if (req.body.startTime !== undefined) {
       if (
