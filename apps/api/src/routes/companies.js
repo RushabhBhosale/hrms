@@ -12,6 +12,7 @@ const multer = require("multer");
 const path = require("path");
 const upload = multer({ dest: path.join(__dirname, "../../uploads") });
 const { syncLeaveBalances } = require("../utils/leaveBalances");
+const { sendMail, isEmailEnabled } = require("../utils/mailer");
 const { isValidEmail, isValidPassword, isValidPhone, normalizePhone } = require("../utils/validate");
 
 // Utility: simple hex validation
@@ -217,6 +218,35 @@ router.post("/register", async (req, res) => {
       },
     });
 
+    // Async notifications (non-blocking)
+    ;(async () => {
+      try {
+        if (isEmailEnabled()) {
+          // Notify platform superadmins
+          const supers = await Employee.find({ primaryRole: 'SUPERADMIN' }).select('email name');
+          const to = (supers || []).map((u) => u.email).filter(Boolean);
+          if (to.length) {
+            const subject = `New company registration pending: ${company.name}`;
+            const text = `A new company has requested approval.\n\nCompany: ${company.name}\nAdmin: ${adminName} <${adminEmail}>\n\nReview in the dashboard.`;
+            const link = process.env.CLIENT_ORIGIN ? `${process.env.CLIENT_ORIGIN}/superadmin/companies` : null;
+            const html = `<p>A new company has requested approval.</p>
+              <p><strong>Company:</strong> ${company.name}</p>
+              <p><strong>Admin:</strong> ${adminName} &lt;${adminEmail}&gt;</p>
+              ${link ? `<p><a href="${link}">Review in dashboard</a></p>` : ''}
+              <p style="color:#666;font-size:12px;">Automated email from HRMS</p>`;
+            await sendMail({ to, subject, text, html });
+          }
+          // Acknowledge requester
+          const subject2 = `Registration received: ${company.name}`;
+          const text2 = `Thanks for registering ${company.name}. Your request is pending approval. We will notify you once reviewed.`;
+          const html2 = `<p>Thanks for registering <strong>${company.name}</strong>.</p><p>Your request is pending approval. We will notify you once reviewed.</p>`;
+          await sendMail({ to: adminEmail.trim(), subject: subject2, text: text2, html: html2 });
+        }
+      } catch (e) {
+        console.warn('[companies/register] failed to send email:', e?.message || e);
+      }
+    })();
+
     return res.json({
       message: "Registration submitted. Awaiting superadmin approval.",
       companyId: company._id,
@@ -347,6 +377,22 @@ router.post("/:companyId/approve", auth, async (req, res) => {
 
   const populated = await company.populate("admin", "name email");
   res.json({ company: populated });
+
+  // Notify requested admin of approval
+  ;(async () => {
+    try {
+      if (!isEmailEnabled()) return;
+      const to = company.requestedAdmin?.email || populated.admin?.email;
+      if (!to) return;
+      const loginLink = process.env.CLIENT_ORIGIN ? `${process.env.CLIENT_ORIGIN}/login` : null;
+      const subject = `Your company has been approved: ${company.name}`;
+      const text = `Good news! Your company "${company.name}" has been approved. You can now log in.${loginLink ? `\n\nLogin: ${loginLink}` : ''}`;
+      const html = `<p>Good news! Your company <strong>${company.name}</strong> has been approved.</p>${loginLink ? `<p><a href="${loginLink}">Log in</a> to get started.</p>` : ''}<p style="color:#666;font-size:12px;">Automated email from HRMS</p>`;
+      await sendMail({ to, subject, text, html });
+    } catch (e) {
+      console.warn('[companies/approve] failed to send email:', e?.message || e);
+    }
+  })();
 });
 
 // Superadmin: reject a pending company registration
@@ -360,6 +406,21 @@ router.post("/:companyId/reject", auth, async (req, res) => {
   company.status = "rejected";
   await company.save();
   res.json({ company });
+
+  // Notify requester of rejection
+  ;(async () => {
+    try {
+      if (!isEmailEnabled()) return;
+      const to = company.requestedAdmin?.email;
+      if (!to) return;
+      const subject = `Your company registration was rejected: ${company.name}`;
+      const text = `We’re sorry, but your company "${company.name}" was not approved at this time.`;
+      const html = `<p>We’re sorry, but your company <strong>${company.name}</strong> was not approved at this time.</p><p>If you believe this is an error, please contact support.</p>`;
+      await sendMail({ to, subject, text, html });
+    } catch (e) {
+      console.warn('[companies/reject] failed to send email:', e?.message || e);
+    }
+  })();
 });
 
 // Admin: list roles in their company

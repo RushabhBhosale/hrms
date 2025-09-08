@@ -232,6 +232,23 @@ router.post("/:id/approve", auth, async (req, res) => {
   leave.allocations = allocations;
   await leave.save();
   res.json({ leave });
+
+  // Notify employee of approval (async)
+  ;(async () => {
+    try {
+      if (!isEmailEnabled()) return;
+      const emp = await Employee.findById(leave.employee).select('name email');
+      if (!emp?.email) return;
+      const fmt = (d) => new Date(d).toISOString().slice(0, 10);
+      const subject = `Your leave was approved: ${fmt(leave.startDate)} → ${fmt(leave.endDate)}`;
+      const message = leave.adminMessage ? String(leave.adminMessage) : '';
+      const text = `Hi ${emp.name},\n\nYour leave request has been approved.\nPeriod: ${fmt(leave.startDate)} to ${fmt(leave.endDate)}${message ? `\n\nMessage: ${message}` : ''}`;
+      const html = `<p>Hi ${emp.name},</p><p>Your leave request has been <strong>approved</strong>.</p><p><strong>Period:</strong> ${fmt(leave.startDate)} to ${fmt(leave.endDate)}</p>${message ? `<p><strong>Message:</strong> ${message.replace(/</g,'&lt;')}</p>` : ''}<p style="color:#666;font-size:12px;">Automated email from HRMS</p>`;
+      await sendMail({ to: emp.email, subject, text, html });
+    } catch (e) {
+      console.warn('[leaves/approve] Failed to send email:', e?.message || e);
+    }
+  })();
 });
 
 // Reject a leave
@@ -245,6 +262,23 @@ router.post("/:id/reject", auth, async (req, res) => {
   leave.adminMessage = req.body.message;
   await leave.save();
   res.json({ leave });
+
+  // Notify employee of rejection (async)
+  ;(async () => {
+    try {
+      if (!isEmailEnabled()) return;
+      const emp = await Employee.findById(leave.employee).select('name email');
+      if (!emp?.email) return;
+      const fmt = (d) => new Date(d).toISOString().slice(0, 10);
+      const subject = `Your leave was rejected: ${fmt(leave.startDate)} → ${fmt(leave.endDate)}`;
+      const message = leave.adminMessage ? String(leave.adminMessage) : '';
+      const text = `Hi ${emp.name},\n\nYour leave request was rejected.\nPeriod: ${fmt(leave.startDate)} to ${fmt(leave.endDate)}${message ? `\n\nMessage: ${message}` : ''}`;
+      const html = `<p>Hi ${emp.name},</p><p>Your leave request was <strong>rejected</strong>.</p><p><strong>Period:</strong> ${fmt(leave.startDate)} to ${fmt(leave.endDate)}</p>${message ? `<p><strong>Message:</strong> ${message.replace(/</g,'&lt;')}</p>` : ''}<p style="color:#666;font-size:12px;">Automated email from HRMS</p>`;
+      await sendMail({ to: emp.email, subject, text, html });
+    } catch (e) {
+      console.warn('[leaves/reject] Failed to send email:', e?.message || e);
+    }
+  })();
 });
 
 module.exports = router;
