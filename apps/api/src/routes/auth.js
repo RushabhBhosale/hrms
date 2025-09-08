@@ -5,6 +5,7 @@ const Employee = require('../models/Employee');
 const { auth } = require('../middleware/auth');
 const { syncLeaveBalances } = require('../utils/leaveBalances');
 const { sendMail, isEmailEnabled } = require('../utils/mailer');
+const { isValidEmail, isValidPassword, isValidPhone, normalizePhone } = require('../utils/validate');
 const ms = (n) => n; // clarity helper
 
 function generateOtp() {
@@ -14,7 +15,10 @@ function generateOtp() {
 }
 
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
+  if (!isValidEmail(email) || !isValidPassword(password)) {
+    return res.status(400).json({ error: 'Invalid email or password' });
+  }
   const employee = await Employee.findOne({ email });
   if (!employee) return res.status(400).json({ error: 'Invalid credentials' });
   const ok = await bcrypt.compare(password, employee.passwordHash);
@@ -49,8 +53,8 @@ router.post('/change-password', auth, async (req, res) => {
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
-  if (String(newPassword).length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!isValidPassword(newPassword)) {
+    return res.status(400).json({ error: 'Password must be more than 5 characters' });
   }
 
   const employee = await Employee.findById(req.employee.id);
@@ -147,7 +151,7 @@ router.post('/verify-reset-otp', async (req, res) => {
 router.post('/complete-password-reset', async (req, res) => {
   const { resetToken, newPassword } = req.body || {};
   if (!resetToken || !newPassword) return res.status(400).json({ error: 'Missing required fields' });
-  if (String(newPassword).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!isValidPassword(newPassword)) return res.status(400).json({ error: 'Password must be more than 5 characters' });
   let decoded;
   try {
     decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
@@ -177,8 +181,8 @@ router.post('/reset-password', async (req, res) => {
   if (!email || !otp || !newPassword) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
-  if (String(newPassword).length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!isValidPassword(newPassword)) {
+    return res.status(400).json({ error: 'Password must be more than 5 characters' });
   }
 
   const employee = await Employee.findOne({ email: String(email).trim() });
@@ -258,7 +262,7 @@ router.put('/me', auth, async (req, res) => {
 
   if (email !== undefined && email !== employee.email) {
     const nextEmail = String(email).trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+    if (!isValidEmail(nextEmail)) {
       return res.status(400).json({ error: 'Invalid email address' });
     }
     // Enforce uniqueness
@@ -267,7 +271,14 @@ router.put('/me', auth, async (req, res) => {
     employee.email = nextEmail;
   }
 
-  if (phone !== undefined) employee.phone = String(phone);
+  if (phone !== undefined) {
+    if (phone === null || phone === '') {
+      employee.phone = undefined;
+    } else {
+      if (!isValidPhone(phone)) return res.status(400).json({ error: 'Phone must be exactly 10 digits' });
+      employee.phone = normalizePhone(phone);
+    }
+  }
   if (address !== undefined) employee.address = String(address);
   if (dob !== undefined) {
     const d = new Date(dob);

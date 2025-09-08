@@ -1,6 +1,7 @@
 import { useEffect, useState, FormEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
+import { isValidPhone } from "../../lib/validate";
 import { toast } from 'react-hot-toast';
 
 type Employee = {
@@ -180,6 +181,10 @@ export default function EmployeeDetails() {
       setSaveLoading(true);
       setSaveErr(null);
       setSaveOk(null);
+      if (phone && !isValidPhone(phone)) {
+        setSaveErr('Phone must be exactly 10 digits');
+        return;
+      }
       const monthlyCtc = ctcMode === "annual" ? Number(ctc) / 12 : Number(ctc);
       const payload = {
         address,

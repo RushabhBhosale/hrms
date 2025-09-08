@@ -1,9 +1,13 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const Employee = require('../models/Employee');
+const { isValidEmail, isValidPassword } = require('../utils/validate');
 
 router.post('/superadmin', async (req, res) => {
   const { name, email, password } = req.body;
+  if (!name || !isValidEmail(email) || !isValidPassword(password)) {
+    return res.status(400).json({ error: 'Invalid name, email, or password' });
+  }
   const exists = await Employee.findOne({ email });
   if (exists) return res.json({ ok: true });
   const passwordHash = await bcrypt.hash(password, 10);

@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { api } from "../lib/api";
+import { isValidEmail, isValidPassword } from "../lib/validate";
 import { toast } from 'react-hot-toast';
 import { Link } from "react-router-dom";
 
@@ -23,6 +24,18 @@ export default function RegisterCompany() {
     setSuccess(null);
     setLoading(true);
     try {
+      if (!companyName.trim() || !adminName.trim()) {
+        setError("Please fill in company and admin names");
+        return;
+      }
+      if (!isValidEmail(adminEmail)) {
+        setError("Please enter a valid admin email");
+        return;
+      }
+      if (!isValidPassword(adminPassword)) {
+        setError("Password must be more than 5 characters");
+        return;
+      }
       await api.post("/companies/register", {
         companyName: companyName.trim(),
         adminName: adminName.trim(),
@@ -129,10 +142,10 @@ export default function RegisterCompany() {
                 type="submit"
                 disabled={
                   loading ||
-                  !companyName ||
-                  !adminName ||
-                  !adminEmail ||
-                  !adminPassword
+                  !companyName.trim() ||
+                  !adminName.trim() ||
+                  !isValidEmail(adminEmail) ||
+                  !isValidPassword(adminPassword)
                 }
                 className="w-full inline-flex items-center justify-center rounded-md bg-primary text-white h-10 disabled:opacity-60"
               >

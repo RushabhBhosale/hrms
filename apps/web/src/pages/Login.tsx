@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { setAuth } from '../lib/auth';
 import { applyTheme } from '../lib/theme';
 import { Link, useNavigate } from 'react-router-dom';
+import { isValidEmail, isValidPassword } from '../lib/validate';
 
 export default function Login() {
   const nav = useNavigate();
@@ -16,6 +17,14 @@ export default function Login() {
     setLoading(true);
     setErr('');
     try {
+      if (!isValidEmail(email)) {
+        setErr('Please enter a valid email');
+        return;
+      }
+      if (!isValidPassword(password)) {
+        setErr('Password must be more than 5 characters');
+        return;
+      }
       const res = await api.post('/auth/login', { email, password });
       setAuth(res.data.token, res.data.employee);
       try { const t = await api.get('/companies/theme'); if (t?.data?.theme) applyTheme(t.data.theme); } catch {}

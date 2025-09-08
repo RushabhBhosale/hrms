@@ -1,5 +1,6 @@
 import { useState, FormEvent, ChangeEvent, useMemo, useEffect } from "react";
 import { api } from "../../lib/api";
+import { isValidEmail, isValidPassword, isValidPhone } from "../../lib/validate";
 
 type FormState = {
   name: string;
@@ -41,11 +42,11 @@ export default function AddEmployee() {
   const canSubmit = useMemo(() => {
     return (
       form.name.trim() &&
-      form.email.trim() &&
-      form.password &&
+      isValidEmail(form.email) &&
+      isValidPassword(form.password) &&
       form.role &&
       form.address.trim() &&
-      form.phone.trim() &&
+      isValidPhone(form.phone) &&
       form.employeeId.trim() &&
       form.ctc.trim() &&
       !isNaN(Number(form.ctc)) &&
@@ -82,6 +83,18 @@ export default function AddEmployee() {
     setErr(null);
     if (!canSubmit) return;
     try {
+      if (!isValidEmail(form.email)) {
+        setErr("Please enter a valid email");
+        return;
+      }
+      if (!isValidPassword(form.password)) {
+        setErr("Password must be more than 5 characters");
+        return;
+      }
+      if (!isValidPhone(form.phone)) {
+        setErr("Phone must be exactly 10 digits");
+        return;
+      }
       setSubmitting(true);
       const fd = new FormData();
       // Convert CTC to monthly for backend

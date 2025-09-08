@@ -1,6 +1,7 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../lib/api";
 import { setAuth } from "../lib/auth";
+import { isValidEmail, isValidPassword, isValidPhone } from "../lib/validate";
 
 interface FormState {
   name: string;
@@ -69,6 +70,14 @@ export default function Profile() {
     setOk(null);
     setErr(null);
     try {
+      if (!isValidEmail(form.email)) {
+        setErr('Please enter a valid email');
+        return;
+      }
+      if (form.phone && !isValidPhone(form.phone)) {
+        setErr('Phone must be exactly 10 digits');
+        return;
+      }
       await api.put("/auth/me", {
         name: form.name,
         email: form.email,
@@ -259,13 +268,13 @@ export default function Profile() {
                 required
               />
             </Field>
-            <Field label="New password (min 8 chars)">
+            <Field label="New password (min 6 chars)">
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                minLength={8}
+                minLength={6}
                 required
               />
             </Field>
@@ -275,7 +284,7 @@ export default function Profile() {
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                minLength={8}
+                minLength={6}
                 required
               />
             </Field>

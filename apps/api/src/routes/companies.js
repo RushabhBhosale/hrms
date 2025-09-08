@@ -12,6 +12,7 @@ const multer = require("multer");
 const path = require("path");
 const upload = multer({ dest: path.join(__dirname, "../../uploads") });
 const { syncLeaveBalances } = require("../utils/leaveBalances");
+const { isValidEmail, isValidPassword, isValidPhone, normalizePhone } = require("../utils/validate");
 
 // Utility: simple hex validation
 function isHexColor(v) {
@@ -189,6 +190,12 @@ router.post("/register", async (req, res) => {
     if (!companyName || !adminName || !adminEmail || !adminPassword) {
       return res.status(400).json({ error: "Missing fields" });
     }
+    if (!isValidEmail(adminEmail)) {
+      return res.status(400).json({ error: "Invalid admin email" });
+    }
+    if (!isValidPassword(adminPassword)) {
+      return res.status(400).json({ error: "Password must be more than 5 characters" });
+    }
 
     const existingAdmin = await Employee.findOne({ email: adminEmail });
     if (existingAdmin) {
@@ -227,6 +234,12 @@ router.post("/", auth, async (req, res) => {
   const { companyName, adminName, adminEmail, adminPassword } = req.body;
   if (!companyName || !adminName || !adminEmail || !adminPassword) {
     return res.status(400).json({ error: "Missing fields" });
+  }
+  if (!isValidEmail(adminEmail)) {
+    return res.status(400).json({ error: "Invalid admin email" });
+  }
+  if (!isValidPassword(adminPassword)) {
+    return res.status(400).json({ error: "Password must be more than 5 characters" });
   }
   let admin = await Employee.findOne({ email: adminEmail });
   if (admin) return res.status(400).json({ error: "Admin already exists" });
@@ -273,6 +286,12 @@ router.post("/:companyId/admin", auth, async (req, res) => {
   const { adminName, adminEmail, adminPassword } = req.body;
   if (!adminName || !adminEmail || !adminPassword) {
     return res.status(400).json({ error: "Missing fields" });
+  }
+  if (!isValidEmail(adminEmail)) {
+    return res.status(400).json({ error: "Invalid admin email" });
+  }
+  if (!isValidPassword(adminPassword)) {
+    return res.status(400).json({ error: "Password must be more than 5 characters" });
   }
   const company = await Company.findById(req.params.companyId);
   if (!company) return res.status(404).json({ error: "Company not found" });
@@ -411,6 +430,11 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
   } = req.body;
   if (!name || !email || !password || !role || !employeeId)
     return res.status(400).json({ error: "Missing fields" });
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Invalid email" });
+  if (!isValidPassword(password)) return res.status(400).json({ error: "Password must be more than 5 characters" });
+  if (phone !== undefined && phone !== null && String(phone).trim() !== "") {
+    if (!isValidPhone(phone)) return res.status(400).json({ error: "Phone must be exactly 10 digits" });
+  }
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   if (!company.roles.includes(role))
@@ -440,7 +464,7 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     subRoles: [role],
     company: company._id,
     address,
-    phone,
+    phone: phone ? normalizePhone(phone) : undefined,
     dob: dob ? new Date(dob) : undefined,
     employeeId,
     ctc: Number.isFinite(Number(ctc)) ? Number(ctc) : 0,
@@ -743,7 +767,14 @@ router.put("/employees/:id", auth, async (req, res) => {
 
   // Validate and assign fields
   if (typeof address === 'string') employee.address = address.trim();
-  if (typeof phone === 'string') employee.phone = phone.trim();
+  if (phone !== undefined) {
+    if (phone === null || String(phone).trim() === '') {
+      employee.phone = undefined;
+    } else {
+      if (!isValidPhone(phone)) return res.status(400).json({ error: 'Phone must be exactly 10 digits' });
+      employee.phone = normalizePhone(phone);
+    }
+  }
   if (dob) {
     const d = new Date(dob);
     if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid DOB' });
