@@ -30,13 +30,40 @@ router.get(
   auth,
   requirePrimary(["ADMIN", "SUPERADMIN"]),
   async (req, res) => {
-    const emp = await Employee.findById(req.params.id)
+    const doc = await Employee.findById(req.params.id)
       .select(
-        "name email dob documents reportingPerson subRoles address phone employeeId ctc aadharNumber panNumber bankDetails"
+        [
+          // base fields for UI
+          "name",
+          "email",
+          "dob",
+          "documents",
+          "reportingPerson",
+          "subRoles",
+          "address",
+          "phone",
+          "employeeId",
+          "ctc",
+          "aadharNumber",
+          "panNumber",
+          "bankDetails",
+          // encryption markers required for proper decryption
+          "__enc_address",
+          "__enc_phone",
+          "__enc_dob",
+          "__enc_dob_d",
+          "__enc_aadharNumber",
+          "__enc_panNumber",
+          "__enc_bankDetails",
+          "__enc_bankDetails_d",
+          "__enc_ctc",
+          "__enc_ctc_d",
+        ].join(" ")
       )
-      .populate("reportingPerson", "name")
-      .lean();
-    if (!emp) return res.status(404).json({ error: "Not found" });
+      .populate("reportingPerson", "name");
+    if (!doc) return res.status(404).json({ error: "Not found" });
+    try { doc.decryptFieldsSync(); } catch (_) {}
+    const emp = doc.toObject();
     res.json({
       employee: {
         id: emp._id,

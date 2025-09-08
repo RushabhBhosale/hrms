@@ -404,24 +404,27 @@ router.get("/slips", auth, async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
 
     // ensure employee is in same company
-    const employee = await Employee.findById(employeeId).select("company ctc");
+    const employee = await Employee.findById(employeeId).select("company ctc __enc_ctc __enc_ctc_d");
+    try { employee?.decryptFieldsSync?.(); } catch (_) {}
     if (!employee) return res.status(404).json({ error: "Employee not found" });
     const companyId = req.employee.company || employee.company;
     if (!companyId || !employee.company.equals(companyId))
       return res.status(403).json({ error: "Forbidden" });
 
-    const [tpl, slip] = await Promise.all([
+    const [tpl, slipDoc] = await Promise.all([
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({
         employee: employeeId,
         company: companyId,
         month,
-      }).lean(),
+      }),
     ]);
 
     const template = ensureTemplateDefaults(
       tpl || { company: companyId, fields: [] }
     );
+    if (slipDoc) slipDoc.decryptFieldsSync();
+    const slip = slipDoc ? slipDoc.toObject() : null;
     const rawVals = slip?.values || {};
     const lockedVals = computeLockedValues({ template, employee });
     let values = overlayDefaults(
@@ -469,18 +472,24 @@ router.get("/slips/mine", auth, async (req, res) => {
     const employeeId = req.employee.id;
     const companyId = req.employee.company;
     if (!companyId) return res.status(400).json({ error: "Company not found" });
-    const [employee, tpl, slip] = await Promise.all([
-      Employee.findById(employeeId).select("ctc"),
+    const [employee, tpl, slipDoc] = await Promise.all([
+      (async () => {
+        const e = await Employee.findById(employeeId).select("ctc __enc_ctc __enc_ctc_d");
+        try { e?.decryptFieldsSync?.(); } catch (_) {}
+        return e;
+      })(),
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({
         employee: employeeId,
         company: companyId,
         month,
-      }).lean(),
+      }),
     ]);
     const template = ensureTemplateDefaults(
       tpl || { company: companyId, fields: [] }
     );
+    if (slipDoc) slipDoc.decryptFieldsSync();
+    const slip = slipDoc ? slipDoc.toObject() : null;
     const rawVals = slip?.values || {};
     const lockedVals = computeLockedValues({ template, employee });
     let values = overlayDefaults(
@@ -582,7 +591,12 @@ router.post("/slips", auth, async (req, res) => {
     );
 
     // Return with computed fields overlaid
-    const employeeFull = await Employee.findById(employeeId).select("ctc");
+    const employeeFull = await Employee.findById(employeeId).select("ctc __enc_ctc __enc_ctc_d");
+    try { employeeFull?.decryptFieldsSync?.(); } catch (_) {}
+    if (slip) {
+      // Ensure encrypted fields are available on doc
+      slip.decryptFieldsSync();
+    }
     const lockedVals = computeLockedValues({
       template,
       employee: employeeFull,
@@ -1045,23 +1059,26 @@ router.get("/slips/pdf", auth, async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
 
     const employee = await Employee.findById(employeeId).select(
-      "name email employeeId company ctc"
+      "name email employeeId company ctc __enc_ctc __enc_ctc_d"
     );
+    try { employee?.decryptFieldsSync?.(); } catch (_) {}
     if (!employee) return res.status(404).json({ error: "Employee not found" });
     const companyId = req.employee.company || employee.company;
     if (!companyId || !employee.company.equals(companyId))
       return res.status(403).json({ error: "Forbidden" });
 
-    const [company, templateRaw, slip] = await Promise.all([
+    const [company, templateRaw, slipDoc] = await Promise.all([
       Company.findById(companyId).lean(),
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({
         employee: employeeId,
         company: companyId,
         month,
-      }).lean(),
+      }),
     ]);
     const template = ensureTemplateDefaults(templateRaw || {});
+    if (slipDoc) slipDoc.decryptFieldsSync();
+    const slip = slipDoc ? slipDoc.toObject() : null;
     const valuesObj = {};
     const raw = slip?.values || {};
     const entries =
@@ -1114,17 +1131,19 @@ router.get("/slips/mine/pdf", auth, async (req, res) => {
     const companyId = req.employee.company;
     if (!companyId) return res.status(400).json({ error: "Company not found" });
 
-    const [employee, company, templateRaw, slip] = await Promise.all([
-      Employee.findById(employeeId).select("name email employeeId company ctc"),
+    const [employee, company, templateRaw, slipDoc] = await Promise.all([
+      (async () => { const e = await Employee.findById(employeeId).select("name email employeeId company ctc __enc_ctc __enc_ctc_d"); try { e?.decryptFieldsSync?.(); } catch (_) {} return e; })(),
       Company.findById(companyId).lean(),
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({
         employee: employeeId,
         company: companyId,
         month,
-      }).lean(),
+      }),
     ]);
     const template = ensureTemplateDefaults(templateRaw || {});
+    if (slipDoc) slipDoc.decryptFieldsSync();
+    const slip = slipDoc ? slipDoc.toObject() : null;
     const valuesObj = {};
     const raw = slip?.values || {};
     const entries =

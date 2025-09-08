@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { fieldEncryption } = require('mongoose-field-encryption');
 
 const SalarySlipSchema = new mongoose.Schema(
   {
@@ -14,5 +15,11 @@ const SalarySlipSchema = new mongoose.Schema(
 
 SalarySlipSchema.index({ employee: 1, company: 1, month: 1 }, { unique: true });
 
-module.exports = mongoose.model('SalarySlip', SalarySlipSchema);
+// Encrypt entire slip values map (contains earnings/deductions and misc info)
+const secret = process.env.ENC_KEY || '12345678901234567890123456789012';
+SalarySlipSchema.plugin(fieldEncryption, {
+  fields: ['values'],
+  secret,
+});
 
+module.exports = mongoose.model('SalarySlip', SalarySlipSchema);

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { fieldEncryption } = require('mongoose-field-encryption');
 
 const EmployeeSchema = new mongoose.Schema(
   {
@@ -50,5 +51,21 @@ const EmployeeSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Encrypt sensitive PII and compensation fields
+// Do NOT encrypt fields used for login/lookup/indexes (email, employeeId, name, company, roles)
+const secret = process.env.ENC_KEY || '12345678901234567890123456789012';
+EmployeeSchema.plugin(fieldEncryption, {
+  fields: [
+    'address',
+    'phone',
+    'dob',
+    'aadharNumber',
+    'panNumber',
+    'bankDetails',
+    'ctc',
+  ],
+  secret,
+});
 
 module.exports = mongoose.model('Employee', EmployeeSchema);

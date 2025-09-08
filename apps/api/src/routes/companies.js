@@ -764,6 +764,7 @@ router.put("/employees/:id", auth, async (req, res) => {
   }
 
   await employee.save();
+  try { employee.decryptFieldsSync(); } catch (_) {}
   res.json({
     employee: {
       id: employee._id,

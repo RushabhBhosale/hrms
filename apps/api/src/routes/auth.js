@@ -20,6 +20,8 @@ router.post('/login', async (req, res) => {
   const ok = await bcrypt.compare(password, employee.passwordHash);
   if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
   await syncLeaveBalances(employee);
+  // Ensure encrypted fields are decrypted for response payload
+  try { employee.decryptFieldsSync(); } catch (_) {}
   const payload = {
     id: employee._id.toString(),
     name: employee.name,
@@ -213,6 +215,7 @@ router.post('/reset-password', async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   const employee = await Employee.findById(req.employee.id);
   if (!employee) return res.status(404).json({ error: 'Not found' });
+  try { employee.decryptFieldsSync(); } catch (_) {}
   await syncLeaveBalances(employee);
   const payload = {
     id: employee._id.toString(),
