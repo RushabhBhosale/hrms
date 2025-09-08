@@ -12,6 +12,11 @@ export default function RegisterCompany() {
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Clear error feedback when user edits any input so stale errors don't linger
+  function clearError() {
+    if (error) setError(null);
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -83,21 +88,30 @@ export default function RegisterCompany() {
                 label="Company Name"
                 placeholder="Peracto Corporation"
                 value={companyName}
-                onChange={setCompanyName}
+                onChange={(v) => {
+                  clearError();
+                  setCompanyName(v);
+                }}
               />
               <div className="grid sm:grid-cols-2 gap-4">
                 <Field
                   label="Admin Name"
                   placeholder="Jane Doe"
                   value={adminName}
-                  onChange={setAdminName}
+                  onChange={(v) => {
+                    clearError();
+                    setAdminName(v);
+                  }}
                 />
                 <Field
                   label="Admin Email"
                   placeholder="jane@Peracto.com"
                   type="email"
                   value={adminEmail}
-                  onChange={setAdminEmail}
+                  onChange={(v) => {
+                    clearError();
+                    setAdminEmail(v);
+                  }}
                 />
               </div>
               <Field
@@ -105,7 +119,10 @@ export default function RegisterCompany() {
                 placeholder="••••••••"
                 type="password"
                 value={adminPassword}
-                onChange={setAdminPassword}
+                onChange={(v) => {
+                  clearError();
+                  setAdminPassword(v);
+                }}
               />
 
               <button

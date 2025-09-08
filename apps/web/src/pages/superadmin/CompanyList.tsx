@@ -63,6 +63,7 @@ export default function CompanyList() {
 
 function Row({ company, onChange }: { company: Company; onChange: (v: Company[]) => void }) {
   const [working, setWorking] = useState(false);
+  const [rowErr, setRowErr] = useState<string | null>(null);
 
   async function reload() {
     const res = await api.get('/companies');
@@ -71,9 +72,12 @@ function Row({ company, onChange }: { company: Company; onChange: (v: Company[])
 
   async function approve() {
     setWorking(true);
+    setRowErr(null);
     try {
       await api.post(`/companies/${company._id}/approve`);
       await reload();
+    } catch (e: any) {
+      setRowErr(e?.response?.data?.error || 'Failed to approve');
     } finally {
       setWorking(false);
     }
@@ -81,9 +85,12 @@ function Row({ company, onChange }: { company: Company; onChange: (v: Company[])
 
   async function reject() {
     setWorking(true);
+    setRowErr(null);
     try {
       await api.post(`/companies/${company._id}/reject`);
       await reload();
+    } catch (e: any) {
+      setRowErr(e?.response?.data?.error || 'Failed to reject');
     } finally {
       setWorking(false);
     }
@@ -124,6 +131,11 @@ function Row({ company, onChange }: { company: Company; onChange: (v: Company[])
             >
               Reject
             </button>
+            {rowErr && (
+              <span className="text-xs text-error ml-2 max-w-[16rem] truncate" title={rowErr}>
+                {rowErr}
+              </span>
+            )}
           </>
         ) : (
           <span className="text-xs text-muted">—</span>

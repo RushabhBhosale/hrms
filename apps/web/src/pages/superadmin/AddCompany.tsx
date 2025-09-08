@@ -30,6 +30,12 @@ export default function AddCompany() {
     setOk(null);
   }
 
+  // Clear banners on any field edit to avoid sticky errors
+  function clearBanners() {
+    if (err) setErr(null);
+    if (ok) setOk(null);
+  }
+
   async function load() {
     try {
       setLoading(true);
@@ -127,21 +133,30 @@ export default function AddCompany() {
             <Field
               label="Company Name"
               value={companyName}
-              onChange={setCompanyName}
+              onChange={(v) => {
+                clearBanners();
+                setCompanyName(v);
+              }}
               placeholder="Peracto Corp"
             />
             <div className="grid gap-4 md:grid-cols-2">
               <Field
                 label="Admin Name"
                 value={adminName}
-                onChange={setAdminName}
+                onChange={(v) => {
+                  clearBanners();
+                  setAdminName(v);
+                }}
                 placeholder="Jane Doe"
               />
               <Field
                 label="Admin Email"
                 type="email"
                 value={adminEmail}
-                onChange={setAdminEmail}
+                onChange={(v) => {
+                  clearBanners();
+                  setAdminEmail(v);
+                }}
                 placeholder="jane@Peracto.com"
               />
             </div>
@@ -149,7 +164,10 @@ export default function AddCompany() {
               label="Admin Password"
               type="password"
               value={adminPassword}
-              onChange={setAdminPassword}
+              onChange={(v) => {
+                clearBanners();
+                setAdminPassword(v);
+              }}
               placeholder="••••••••"
             />
             <div className="pt-2">
@@ -185,7 +203,10 @@ export default function AddCompany() {
               <select
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={existingCompany}
-                onChange={(e) => setExistingCompany(e.target.value)}
+                onChange={(e) => {
+                  clearBanners();
+                  setExistingCompany(e.target.value);
+                }}
               >
                 <option value="">Select Company</option>
                 {companiesWithoutAdmin.map((c) => (
@@ -199,14 +220,20 @@ export default function AddCompany() {
               <Field
                 label="Admin Name"
                 value={newAdminName}
-                onChange={setNewAdminName}
+                onChange={(v) => {
+                  clearBanners();
+                  setNewAdminName(v);
+                }}
                 placeholder="John Smith"
               />
               <Field
                 label="Admin Email"
                 type="email"
                 value={newAdminEmail}
-                onChange={setNewAdminEmail}
+                onChange={(v) => {
+                  clearBanners();
+                  setNewAdminEmail(v);
+                }}
                 placeholder="john@Peracto.com"
               />
             </div>
@@ -214,7 +241,10 @@ export default function AddCompany() {
               label="Admin Password"
               type="password"
               value={newAdminPassword}
-              onChange={setNewAdminPassword}
+              onChange={(v) => {
+                clearBanners();
+                setNewAdminPassword(v);
+              }}
               placeholder="••••••••"
             />
             <div className="pt-2">
