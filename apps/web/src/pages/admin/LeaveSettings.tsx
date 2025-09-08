@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, FormEvent, useMemo } from "react";
 import { api } from "../../lib/api";
 import { toast } from "react-hot-toast";
 import { Field } from "../../components/ui/Field";
@@ -21,6 +21,15 @@ type DayOverride = {
   type: "WORKING" | "HOLIDAY" | "HALF_DAY";
   note?: string;
 };
+
+// Define EmployeeLite type globally or in a shared types file
+type EmployeeLite = { id: string; name: string; email: string };
+
+// Props for BackfillLeaves component
+interface BackfillLeavesProps {
+  bfEmployees: EmployeeLite[];
+  bfEmpLoading: boolean;
+}
 
 export default function LeaveSettings() {
   const [form, setForm] = useState<FormState>({
@@ -53,6 +62,10 @@ export default function LeaveSettings() {
   const [ovSubmitting, setOvSubmitting] = useState(false);
   const [ovErr, setOvErr] = useState<string | null>(null);
 
+  // Employees for dropdown in backfill rows
+  const [bfEmployees, setBfEmployees] = useState<EmployeeLite[]>([]);
+  const [bfEmpLoading, setBfEmpLoading] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
@@ -83,6 +96,16 @@ export default function LeaveSettings() {
         setOvMonth(m);
       } catch {
         // ignore
+      }
+      // Load employees list (for backfill dropdown)
+      try {
+        setBfEmpLoading(true);
+        const er = await api.get("/companies/employees");
+        setBfEmployees(er.data.employees || []);
+      } catch {
+        // ignore
+      } finally {
+        setBfEmpLoading(false);
       }
     })();
   }, []);
@@ -456,6 +479,409 @@ export default function LeaveSettings() {
           </form>
         </div>
       </section>
+
+      {/* Pass bfEmployees and bfEmpLoading as props */}
+      <BackfillLeaves bfEmployees={bfEmployees} bfEmpLoading={bfEmpLoading} />
     </div>
+  );
+}
+
+type BackfillRow = {
+  email: string;
+  type: "PAID" | "CASUAL" | "SICK" | "UNPAID";
+  startDate: string; // yyyy-mm-dd
+  endDate: string; // yyyy-mm-dd
+  fallbackType?: "PAID" | "CASUAL" | "SICK" | "UNPAID" | "";
+  reason?: string;
+  _err?: string;
+};
+
+const LEAVE_TYPES: BackfillRow["type"][] = ["PAID", "CASUAL", "SICK", "UNPAID"];
+
+function toCsv(rows: BackfillRow[]) {
+  const header = "email,type,startDate,endDate,fallbackType,reason";
+  const body = rows
+    .map((r) =>
+      [
+        r.email,
+        r.type,
+        r.startDate,
+        r.endDate,
+        r.fallbackType || "",
+        (r.reason || "").replace(/"/g, '""'),
+      ]
+        .map((c) => (c?.includes(",") ? `"${c}"` : c))
+        .join(",")
+    )
+    .join("\n");
+  return `${header}\n${body}`;
+}
+
+function parseCsv(text: string): BackfillRow[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+  const hasHeader = /email\s*,\s*type/i.test(lines[0]);
+  const start = hasHeader ? 1 : 0;
+  const out: BackfillRow[] = [];
+  for (let i = start; i < lines.length; i++) {
+    const cols = lines[i].split(",").map((c) => c.trim());
+    if (cols.length < 4) continue;
+    const [email, type, startDate, endDate, fallbackType, reason] = cols;
+    out.push({
+      email,
+      type: (type as BackfillRow["type"]) || "PAID",
+      startDate,
+      endDate,
+      fallbackType: (fallbackType as BackfillRow["fallbackType"]) || "",
+      reason,
+    });
+  }
+  return out;
+}
+
+function validateRow(r: BackfillRow): string | null {
+  if (!/.+@.+\..+/.test(r.email)) return "Invalid email";
+  if (!LEAVE_TYPES.includes(r.type)) return "Invalid type";
+  if (!r.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(r.startDate))
+    return "Invalid start date";
+  if (!r.endDate || !/^\d{4}-\d{2}-\d{2}$/.test(r.endDate))
+    return "Invalid end date";
+  if (new Date(r.startDate) > new Date(r.endDate))
+    return "Start date must be before end date";
+  if (r.fallbackType && !LEAVE_TYPES.includes(r.fallbackType as any))
+    return "Invalid fallback type";
+  return null;
+}
+
+function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
+  const [rows, setRows] = useState<BackfillRow[]>([
+    {
+      email: "",
+      type: "PAID",
+      startDate: "",
+      endDate: "",
+      fallbackType: "",
+      reason: "",
+    },
+  ]);
+  const [approve, setApprove] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const validCount = useMemo(
+    () => rows.filter((r) => !validateRow(r)).length,
+    [rows]
+  );
+
+  function update(i: number, patch: Partial<BackfillRow>) {
+    setRows((prev) =>
+      prev.map((r, idx) =>
+        idx === i
+          ? {
+              ...r,
+              ...patch,
+              _err: validateRow({ ...r, ...patch }) || undefined,
+            }
+          : r
+      )
+    );
+  }
+  function addRow() {
+    setRows((prev) => [
+      ...prev,
+      {
+        email: "",
+        type: "PAID",
+        startDate: "",
+        endDate: "",
+        fallbackType: "",
+        reason: "",
+      },
+    ]);
+  }
+  function removeRow(i: number) {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  async function importCsv(file: File) {
+    const text = await file.text();
+    const parsed = parseCsv(text);
+    if (!parsed.length) {
+      setErr("No valid rows found in CSV");
+      return;
+    }
+    setErr(null);
+    setMsg(`Imported ${parsed.length} rows from CSV`);
+    setRows(parsed.map((r) => ({ ...r, _err: validateRow(r) || undefined })));
+  }
+
+  function downloadTemplate() {
+    const sample: BackfillRow[] = [
+      {
+        email: "jane@example.com",
+        type: "PAID",
+        startDate: "2025-02-10",
+        endDate: "2025-02-12",
+        fallbackType: "SICK",
+        reason: "Flu",
+      },
+    ];
+    const blob = new Blob([toCsv(sample)], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "leave-backfill-template.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function submit() {
+    setErr(null);
+    setMsg(null);
+    // Validate all rows once more
+    const next = rows.map((r) => ({ ...r, _err: validateRow(r) || undefined }));
+    setRows(next);
+    const invalid = next.filter((r) => r._err);
+    if (invalid.length) {
+      setErr(`Fix ${invalid.length} row(s) with errors before submitting.`);
+      return;
+    }
+    if (!next.length) {
+      setErr("Nothing to submit.");
+      return;
+    }
+    try {
+      setBusy(true);
+      const res = await api.post("/leaves/backfill", {
+        entries: next.map(({ _err, ...r }) => r),
+        approve,
+      });
+      const msg = `Created ${res.data.created || 0}, Approved ${
+        res.data.approved || 0
+      }${
+        (res.data.errors || []).length
+          ? `, Errors: ${res.data.errors.length}`
+          : ""
+      }`;
+      setMsg(msg);
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || "Failed to backfill");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface shadow-sm">
+      <div className="border-b border-border px-6 py-4 flex items-center justify-between">
+        <h3 className="text-lg font-semibold">Backfill Historical Leaves</h3>
+        <div className="flex items-center gap-2">
+          <label className="text-sm inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={approve}
+              onChange={(e) => setApprove(e.target.checked)}
+            />
+            Approve on import
+          </label>
+          <button
+            type="button"
+            onClick={downloadTemplate}
+            className="rounded-md border border-border bg-bg px-3 py-2 text-sm hover:bg-muted"
+          >
+            Download CSV template
+          </button>
+          <label className="rounded-md border border-border bg-bg px-3 py-2 text-sm hover:bg-muted cursor-pointer">
+            Import CSV
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) =>
+                e.target.files?.[0] && importCsv(e.target.files[0])
+              }
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="px-6 py-5 space-y-4">
+        {err && (
+          <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
+            {err}
+          </div>
+        )}
+        {msg && (
+          <div className="rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
+            {msg}
+          </div>
+        )}
+
+        <div className="overflow-auto">
+          <table className="min-w-[880px] w-full text-sm">
+            <thead>
+              <tr className="bg-bg border-b border-border text-left">
+                <th className="px-2 py-2 font-medium">Employee</th>
+                <th className="px-2 py-2 font-medium">Type</th>
+                <th className="px-2 py-2 font-medium">Start</th>
+                <th className="px-2 py-2 font-medium">End</th>
+                <th className="px-2 py-2 font-medium">Fallback</th>
+                <th className="px-2 py-2 font-medium">Reason</th>
+                <th className="px-2 py-2 font-medium w-[60px]"> </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-border/60 align-top">
+                  <td className="px-2 py-2">
+                    <select
+                      value={r.email}
+                      onChange={(e) => {
+                        e.preventDefault();
+                        update(i, { email: e.target.value });
+                      }}
+                      className={`w-full rounded-md border px-2 py-1 ${
+                        r._err?.includes("email")
+                          ? "border-error bg-error/5"
+                          : "border-border bg-surface"
+                      }`}
+                    >
+                      <option value="">
+                        {bfEmpLoading
+                          ? "Loading employees…"
+                          : "Select employee"}
+                      </option>
+                      {bfEmployees.map((emp) => (
+                        <option key={emp.id} value={emp.email}>
+                          {emp.name} ({emp.email})
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-2">
+                    <select
+                      value={r.type}
+                      onChange={(e) => {
+                        e.preventDefault();
+                        update(i, {
+                          type: e.target.value as BackfillRow["type"],
+                        });
+                      }}
+                      className="w-full rounded-md border border-border bg-surface px-2 py-1"
+                    >
+                      {LEAVE_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-2">
+                    <input
+                      type="date"
+                      value={r.startDate}
+                      onChange={(e) => update(i, { startDate: e.target.value })}
+                      className={`w-full rounded-md border px-2 py-1 ${
+                        r._err?.includes("start")
+                          ? "border-error bg-error/5"
+                          : "border-border bg-surface"
+                      }`}
+                    />
+                  </td>
+                  <td className="px-2 py-2">
+                    <input
+                      type="date"
+                      value={r.endDate}
+                      onChange={(e) => update(i, { endDate: e.target.value })}
+                      className={`w-full rounded-md border px-2 py-1 ${
+                        r._err?.includes("end")
+                          ? "border-error bg-error/5"
+                          : "border-border bg-surface"
+                      }`}
+                    />
+                  </td>
+                  <td className="px-2 py-2">
+                    <select
+                      value={r.fallbackType || ""}
+                      onChange={(e) => {
+                        e.preventDefault();
+                        update(i, {
+                          fallbackType: (e.target.value ||
+                            "") as BackfillRow["fallbackType"],
+                        });
+                      }}
+                      className="w-full rounded-md border border-border bg-surface px-2 py-1"
+                    >
+                      <option value="">(none)</option>
+                      {LEAVE_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-2">
+                    <input
+                      type="text"
+                      value={r.reason || ""}
+                      placeholder="Optional"
+                      onChange={(e) => update(i, { reason: e.target.value })}
+                      className="w-full rounded-md border border-border bg-surface px-2 py-1"
+                    />
+                    {r._err && (
+                      <div className="mt-1 text-xs text-error">{r._err}</div>
+                    )}
+                  </td>
+                  <td className="px-2 py-2">
+                    <button
+                      type="button"
+                      onClick={() => removeRow(i)}
+                      className="text-xs rounded-md border border-border px-2 py-1 hover:bg-bg"
+                      title="Remove row"
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-2 py-6 text-center text-muted">
+                    No rows. Click “Add Row” to begin or import a CSV.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs text-muted">
+            {rows.length} row(s) • {validCount} valid •{" "}
+            {rows.length - validCount} need fixes
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={addRow}
+              className="rounded-md border border-border bg-bg px-3 py-2 text-sm hover:bg-muted"
+            >
+              Add Row
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={submit}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+            >
+              {busy ? "Importing…" : "Import & Submit"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }

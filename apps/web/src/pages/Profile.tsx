@@ -148,6 +148,7 @@ export default function Profile() {
             <Field label="Phone">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                maxLength={10}
                 value={form.phone}
                 onChange={(e) => onChange("phone", e.target.value)}
               />
@@ -173,15 +174,24 @@ export default function Profile() {
             <Field label="Aadhar Number">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.aadharNumber}
-                onChange={(e) => onChange("aadharNumber", e.target.value)}
+                value={form.aadharNumber || ""}
+                maxLength={14}
+                onChange={(e) => {
+                  let val = e.target.value.replace(/\D/g, "");
+                  val = val.slice(0, 12);
+                  val = val.replace(/(\d{4})(?=\d)/g, "$1 ");
+                  onChange("aadharNumber", val);
+                }}
               />
             </Field>
             <Field label="PAN Number">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={form.panNumber}
-                onChange={(e) => onChange("panNumber", e.target.value)}
+                maxLength={10}
+                onChange={(e) =>
+                  onChange("panNumber", e.target.value.toUpperCase())
+                }
               />
             </Field>
           </div>

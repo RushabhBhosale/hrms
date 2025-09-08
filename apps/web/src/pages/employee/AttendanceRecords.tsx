@@ -233,24 +233,19 @@ export default function AttendanceRecords() {
     [summary]
   );
 
+  // Only three colors: red (<8h), green (>=8h with 10min grace), yellow for holidays
   function colorFor(ms?: number) {
-    if (!ms || ms <= 0) return "bg-border/60";
-    const h = ms / 3600000;
-    if (h < 2) return "bg-error/50";
-    if (h < 4) return "bg-warning/60";
-    if (h < 6) return "bg-warning/40";
-    if (h < 8) return "bg-secondary/60";
+    const graceHours = 8 - 10 / 60; // 7h 50m
+    const h = (ms || 0) / 3600000;
+    // Red when under grace threshold
+    if (h < graceHours) return "bg-error/60";
+    // Green when at or above 7h50m
     return "bg-success/80";
   }
 
   const legend = [
-    { label: "0h", cls: "bg-border/60" },
-    { label: "≤2h", cls: "bg-error/50" },
-    { label: "≤4h", cls: "bg-warning/60" },
-    { label: "≤6h", cls: "bg-warning/40" },
-    { label: "≤8h", cls: "bg-secondary/60" },
-    { label: "8h+", cls: "bg-success/80" },
-    { label: "Leave", cls: "bg-primary/30" },
+    { label: "< 8h", cls: "bg-error/60" },
+    { label: "≥ 8h (7h50m grace)", cls: "bg-success/80" },
     { label: "Holiday", cls: "bg-accent/30" },
   ];
 
@@ -490,12 +485,17 @@ export default function AttendanceRecords() {
                     const key = toISODateOnly(date);
                     const isLeave = leaveSet.has(key);
                     const isHoliday = holidaySet.has(key);
+                    const dow = date.getDay();
+                    const isWeekend = dow === 0 || dow === 6;
+                    const inFuture = date > today;
                     const color = inMonth
                       ? isHoliday
-                        ? "bg-accent/30"
+                        ? "bg-accent/30" // yellow
+                        : isWeekend || inFuture
+                        ? "bg-bg" // grayish for weekends and upcoming days
                         : isLeave
-                        ? "bg-primary/30"
-                        : colorFor(worked)
+                        ? "bg-error/60" // red for leave (kept within 3-colors)
+                        : colorFor(worked) // red/green based on hours with grace
                       : "bg-bg";
                     const isToday = isSameDay(date, today);
 
@@ -563,7 +563,7 @@ export default function AttendanceRecords() {
                           </div>
                         )}
                         {!rec && isLeave && showLeaves && (
-                          <div className="mt-5 text-[11px] font-medium text-primary">
+                          <div className="mt-5 text-[11px] font-medium text-error">
                             Leave
                           </div>
                         )}

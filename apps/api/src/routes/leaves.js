@@ -281,4 +281,133 @@ router.post("/:id/reject", auth, async (req, res) => {
   })();
 });
 
+// Admin: Bulk backfill historical leaves for the company
+// Body: { entries: [{ employeeId?: string, email?: string, type: 'PAID'|'CASUAL'|'SICK'|'UNPAID', fallbackType?: 'PAID'|'SICK'|'UNPAID', startDate: string|Date, endDate: string|Date, reason?: string }], approve?: boolean }
+router.post("/backfill", auth, requirePrimary(["ADMIN", "SUPERADMIN"]), async (req, res) => {
+  try {
+    const companyId = req.employee.company;
+    const approve = req.body?.approve !== false; // default approve
+    const rows = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (!rows.length) return res.status(400).json({ error: "No entries provided" });
+
+    const company = await Company.findById(companyId).select("bankHolidays leavePolicy");
+    const out = { created: 0, approved: 0, errors: [] };
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i] || {};
+      try {
+        // Resolve employee within the same company by id or email
+        let emp = null;
+        if (r.employeeId) {
+          emp = await Employee.findOne({ _id: r.employeeId, company: companyId });
+        } else if (r.email) {
+          emp = await Employee.findOne({ email: r.email, company: companyId });
+        }
+        if (!emp) throw new Error("Employee not found in company");
+        if (!r.type) throw new Error("Missing type");
+
+        const leave = await Leave.create({
+          employee: emp._id,
+          company: companyId,
+          approver: req.employee.id,
+          type: r.type,
+          fallbackType: r.fallbackType || null,
+          startDate: r.startDate,
+          endDate: r.endDate,
+          reason: r.reason || "Backfill import",
+          status: approve ? "PENDING" : "PENDING",
+        });
+        out.created += 1;
+
+        if (approve) {
+          // Mirror approval logic (no emails)
+          const employee = await Employee.findById(leave.employee);
+          await syncLeaveBalances(employee);
+          try { await accrueTotalIfNeeded(employee, company, new Date(leave.startDate)); } catch (_) {}
+          const start = new Date(leave.startDate);
+          const end = new Date(leave.endDate);
+          const total = Math.round((end - start) / 86400000) + 1;
+          const bankHolidayKeys = new Set(
+            (company?.bankHolidays || [])
+              .filter((h) => h.date >= start && h.date <= end)
+              .map((h) => new Date(h.date).toISOString().slice(0,10))
+          );
+          const overrides = await CompanyDayOverride.find({ company: leave.company, date: { $gte: start, $lte: end } })
+            .select('date type')
+            .lean();
+          for (const o of overrides) {
+            const key = new Date(o.date).toISOString().slice(0,10);
+            if (o.type === 'WORKING') bankHolidayKeys.delete(key);
+            if (o.type === 'HOLIDAY') bankHolidayKeys.add(key);
+          }
+          const holidays = bankHolidayKeys.size;
+          const days = Math.max(total - holidays, 0);
+          const key = String(leave.type || '').toLowerCase();
+          const caps = (company?.leavePolicy?.typeCaps) || {};
+          employee.leaveUsage = employee.leaveUsage || { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+          const allocations = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+
+          if (key === 'unpaid') {
+            employee.leaveUsage.unpaid = (employee.leaveUsage.unpaid || 0) + days;
+            allocations.unpaid = days;
+          } else {
+            const capForType = Math.max(0, Number(caps[key]) || 0);
+            const usedForType = Math.max(0, Number(employee.leaveUsage[key]) || 0);
+            const remainType = Math.max(0, capForType - usedForType);
+            let totalAvail = Math.max(0, Number(employee.totalLeaveAvailable) || 0);
+            const firstPart = Math.max(0, Math.min(days, Math.min(remainType, totalAvail)));
+            if (firstPart > 0) {
+              employee.leaveUsage[key] = usedForType + firstPart;
+              totalAvail -= firstPart;
+              employee.totalLeaveAvailable = Math.max(0, totalAvail);
+              allocations[key] = firstPart;
+            }
+            let remaining = Math.max(0, days - firstPart);
+            if (remaining > 0) {
+              const fb = String(leave.fallbackType || '').toLowerCase();
+              if (!fb) throw new Error(`Insufficient ${key} leave. Missing fallbackType`);
+              if (fb === 'unpaid') {
+                employee.leaveUsage.unpaid = (employee.leaveUsage.unpaid || 0) + remaining;
+                allocations.unpaid += remaining;
+                remaining = 0;
+              } else if (['paid','sick'].includes(fb)) {
+                const capFb = Math.max(0, Number(caps[fb]) || 0);
+                const usedFb = Math.max(0, Number(employee.leaveUsage[fb]) || 0);
+                const remainFb = Math.max(0, capFb - usedFb);
+                const useFb = Math.max(0, Math.min(remaining, Math.min(remainFb, totalAvail)));
+                if (useFb > 0) {
+                  employee.leaveUsage[fb] = usedFb + useFb;
+                  totalAvail = Math.max(0, totalAvail - useFb);
+                  employee.totalLeaveAvailable = totalAvail;
+                  allocations[fb] += useFb;
+                  remaining -= useFb;
+                }
+                if (remaining > 0) {
+                  employee.leaveUsage.unpaid = (employee.leaveUsage.unpaid || 0) + remaining;
+                  allocations.unpaid += remaining;
+                  remaining = 0;
+                }
+              } else {
+                throw new Error("Invalid fallbackType");
+              }
+            }
+          }
+          await syncLeaveBalances(employee);
+          leave.status = "APPROVED";
+          leave.allocations = allocations;
+          await leave.save();
+          await employee.save();
+          out.approved += 1;
+        }
+      } catch (e) {
+        out.errors.push({ index: i, error: e?.message || String(e) });
+      }
+    }
+
+    res.json(out);
+  } catch (e) {
+    res.status(400).json({ error: e?.message || 'Failed to backfill leaves' });
+  }
+});
+
 module.exports = router;
