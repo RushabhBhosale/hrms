@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from "react";
 import { api } from "../../lib/api";
-import { toast } from 'react-hot-toast';
+import { toast } from "react-hot-toast";
+import { Field } from "../../components/ui/Field";
 
 type FormState = {
   totalAnnual: string;
@@ -17,12 +18,18 @@ type Holiday = {
 
 type DayOverride = {
   date: string; // yyyy-mm-dd
-  type: 'WORKING' | 'HOLIDAY' | 'HALF_DAY';
+  type: "WORKING" | "HOLIDAY" | "HALF_DAY";
   note?: string;
 };
 
 export default function LeaveSettings() {
-  const [form, setForm] = useState<FormState>({ totalAnnual: "0", ratePerMonth: "0", capsPaid: "0", capsCasual: "0", capsSick: "0" });
+  const [form, setForm] = useState<FormState>({
+    totalAnnual: "0",
+    ratePerMonth: "0",
+    capsPaid: "0",
+    capsCasual: "0",
+    capsSick: "0",
+  });
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -34,9 +41,15 @@ export default function LeaveSettings() {
   const [resetMsg, setResetMsg] = useState<string | null>(null);
 
   // Company Day Overrides
-  const [ovMonth, setOvMonth] = useState<string>(new Date().toISOString().slice(0,7));
+  const [ovMonth, setOvMonth] = useState<string>(
+    new Date().toISOString().slice(0, 7)
+  );
   const [overrides, setOverrides] = useState<DayOverride[]>([]);
-  const [ovForm, setOvForm] = useState<DayOverride>({ date: "", type: 'WORKING', note: '' });
+  const [ovForm, setOvForm] = useState<DayOverride>({
+    date: "",
+    type: "WORKING",
+    note: "",
+  });
   const [ovSubmitting, setOvSubmitting] = useState(false);
   const [ovErr, setOvErr] = useState<string | null>(null);
 
@@ -62,8 +75,10 @@ export default function LeaveSettings() {
         // ignore
       }
       try {
-        const m = new Date().toISOString().slice(0,7);
-        const res = await api.get("/companies/day-overrides", { params: { month: m } });
+        const m = new Date().toISOString().slice(0, 7);
+        const res = await api.get("/companies/day-overrides", {
+          params: { month: m },
+        });
         setOverrides(res.data.overrides || []);
         setOvMonth(m);
       } catch {
@@ -123,14 +138,19 @@ export default function LeaveSettings() {
 
   async function loadOverrides(month: string) {
     try {
-      const res = await api.get("/companies/day-overrides", { params: { month } });
+      const res = await api.get("/companies/day-overrides", {
+        params: { month },
+      });
       setOverrides(res.data.overrides || []);
     } catch (e) {
       // ignore
     }
   }
 
-  function onOvChange<K extends keyof DayOverride>(key: K, value: DayOverride[K]) {
+  function onOvChange<K extends keyof DayOverride>(
+    key: K,
+    value: DayOverride[K]
+  ) {
     setOvForm((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -145,7 +165,7 @@ export default function LeaveSettings() {
         note: ovForm.note,
       });
       setOverrides(res.data.overrides || []);
-      setOvForm({ date: "", type: 'WORKING', note: '' });
+      setOvForm({ date: "", type: "WORKING", note: "" });
     } catch (e: any) {
       setOvErr(e?.response?.data?.error || "Failed to save override");
     } finally {
@@ -188,7 +208,8 @@ export default function LeaveSettings() {
             </Field>
             <Field label="Accrual Per Month">
               <input
-                type="number" step="0.5"
+                type="number"
+                step="0.5"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={form.ratePerMonth}
                 onChange={(e) => onChange("ratePerMonth", e.target.value)}
@@ -236,20 +257,32 @@ export default function LeaveSettings() {
               disabled={resetting}
               onClick={async () => {
                 setResetMsg(null);
-                if (!window.confirm('Reset all employees\' leave balances? This will zero out usage and pool, then re-accrue to current month.')) return;
+                if (
+                  !window.confirm(
+                    "Reset all employees' leave balances? This will zero out usage and pool, then re-accrue to current month."
+                  )
+                )
+                  return;
                 try {
                   setResetting(true);
-                  const res = await api.post('/companies/leave-balances/reset', { reaccrue: true });
-                  setResetMsg(`Reset completed for ${res.data.count || 0} employees.`);
+                  const res = await api.post(
+                    "/companies/leave-balances/reset",
+                    { reaccrue: true }
+                  );
+                  setResetMsg(
+                    `Reset completed for ${res.data.count || 0} employees.`
+                  );
                 } catch (e: any) {
-                  setResetMsg(e?.response?.data?.error || 'Failed to reset leave balances');
+                  setResetMsg(
+                    e?.response?.data?.error || "Failed to reset leave balances"
+                  );
                 } finally {
                   setResetting(false);
                 }
               }}
               className="ml-3 inline-flex items-center justify-center rounded-md border border-error/30 bg-error/10 px-4 py-2 text-error hover:bg-error/15 disabled:opacity-60"
             >
-              {resetting ? 'Resetting…' : 'Reset Leave Balances'}
+              {resetting ? "Resetting…" : "Reset Leave Balances"}
             </button>
             {resetMsg && (
               <span className="ml-3 text-sm text-muted">{resetMsg}</span>
@@ -271,7 +304,9 @@ export default function LeaveSettings() {
         <div className="px-6 py-5 space-y-5">
           <ul className="list-disc pl-6 space-y-1">
             {holidays.length === 0 && (
-              <li className="list-none text-sm text-muted">No holidays added.</li>
+              <li className="list-none text-sm text-muted">
+                No holidays added.
+              </li>
             )}
             {holidays.map((h) => (
               <li key={h.date}>
@@ -327,21 +362,34 @@ export default function LeaveSettings() {
             <input
               type="month"
               value={ovMonth}
-              onChange={async (e) => { setOvMonth(e.target.value); await loadOverrides(e.target.value); }}
+              onChange={async (e) => {
+                setOvMonth(e.target.value);
+                await loadOverrides(e.target.value);
+              }}
               className="rounded-md border border-border bg-surface px-3 py-2"
             />
           </div>
         </div>
         <div className="px-6 py-5 space-y-5">
-          <p className="text-sm text-muted">Declare exceptions: mark a working day as Holiday or Half-Day; or lift a weekend/bank holiday as Working.</p>
+          <p className="text-sm text-muted">
+            Declare exceptions: mark a working day as Holiday or Half-Day; or
+            lift a weekend/bank holiday as Working.
+          </p>
           <ul className="list-disc pl-6 space-y-1">
             {overrides.length === 0 && (
-              <li className="list-none text-sm text-muted">No overrides for {ovMonth}.</li>
+              <li className="list-none text-sm text-muted">
+                No overrides for {ovMonth}.
+              </li>
             )}
             {overrides.map((o) => (
-              <li key={o.date} className="flex items-center justify-between gap-3">
+              <li
+                key={o.date}
+                className="flex items-center justify-between gap-3"
+              >
                 <div>
-                  {new Date(o.date).toLocaleDateString()} — {o.type.replace('_',' ')}{o.note ? `: ${o.note}` : ''}
+                  {new Date(o.date).toLocaleDateString()} —{" "}
+                  {o.type.replace("_", " ")}
+                  {o.note ? `: ${o.note}` : ""}
                 </div>
                 <button
                   className="text-xs rounded-md border border-border px-2 py-1 hover:bg-bg"
@@ -350,7 +398,7 @@ export default function LeaveSettings() {
                       await api.delete(`/companies/day-overrides/${o.date}`);
                       await loadOverrides(ovMonth);
                     } catch {
-                      toast.error('Failed to delete override');
+                      toast.error("Failed to delete override");
                     }
                   }}
                 >
@@ -360,13 +408,16 @@ export default function LeaveSettings() {
             ))}
           </ul>
 
-          <form onSubmit={addOverride} className="grid gap-4 md:grid-cols-4 items-end">
+          <form
+            onSubmit={addOverride}
+            className="grid gap-4 md:grid-cols-4 items-end"
+          >
             <div className="space-y-2">
               <label className="text-sm font-medium">Date</label>
               <input
                 type="date"
                 value={ovForm.date}
-                onChange={(e) => onOvChange('date', e.target.value)}
+                onChange={(e) => onOvChange("date", e.target.value)}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 required
               />
@@ -375,7 +426,9 @@ export default function LeaveSettings() {
               <label className="text-sm font-medium">Type</label>
               <select
                 value={ovForm.type}
-                onChange={(e) => onOvChange('type', e.target.value as DayOverride['type'])}
+                onChange={(e) =>
+                  onOvChange("type", e.target.value as DayOverride["type"])
+                }
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="WORKING">Working Day</option>
@@ -387,8 +440,8 @@ export default function LeaveSettings() {
               <label className="text-sm font-medium">Note (optional)</label>
               <input
                 type="text"
-                value={ovForm.note || ''}
-                onChange={(e) => onOvChange('note', e.target.value)}
+                value={ovForm.note || ""}
+                onChange={(e) => onOvChange("note", e.target.value)}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="e.g., Special working Saturday"
               />
@@ -398,26 +451,11 @@ export default function LeaveSettings() {
               disabled={ovSubmitting}
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
             >
-              {ovSubmitting ? 'Saving...' : 'Save'}
+              {ovSubmitting ? "Saving..." : "Save"}
             </button>
           </form>
         </div>
       </section>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium">{label}</label>
-      {children}
     </div>
   );
 }

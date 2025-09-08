@@ -3,12 +3,14 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { toast } from "react-hot-toast";
 import { getEmployee } from "../../lib/auth";
+import type { PrimaryRole } from "../../lib/auth";
 
 type EmployeeLite = {
   id: string;
   name: string;
   email: string;
   subRoles: string[];
+  primaryRole: PrimaryRole;
 };
 type Project = {
   _id: string;
@@ -91,6 +93,17 @@ export default function ProjectDetails() {
     () => employees.filter((e) => memberIds.includes(e.id)),
     [employees, memberIds]
   );
+
+  function roleLabel(e: EmployeeLite) {
+    return (
+      e.subRoles?.[0] ||
+      (e.primaryRole === "ADMIN"
+        ? "admin"
+        : e.primaryRole === "SUPERADMIN"
+        ? "superadmin"
+        : "member")
+    );
+  }
 
   const canCreateTask = useMemo(() => {
     if (!project || !me) return false;
@@ -509,7 +522,7 @@ export default function ProjectDetails() {
                 >
                   <div className="text-sm">{m.name}</div>
                   <div className="text-xs text-muted">
-                    {m.subRoles?.[0] || "member"}
+                    {roleLabel(m)}
                   </div>
                 </div>
               ))}

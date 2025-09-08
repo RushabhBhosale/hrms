@@ -2,6 +2,7 @@ import { useEffect, useState, FormEvent } from "react";
 import { api } from "../lib/api";
 import { setAuth } from "../lib/auth";
 import { isValidEmail, isValidPassword, isValidPhone } from "../lib/validate";
+import { Field } from "../components/ui/Field";
 
 interface FormState {
   name: string;
@@ -34,9 +35,9 @@ export default function Profile() {
   const [pwOk, setPwOk] = useState<string | null>(null);
   const [pwErr, setPwErr] = useState<string | null>(null);
   const [pwLoading, setPwLoading] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -71,11 +72,11 @@ export default function Profile() {
     setErr(null);
     try {
       if (!isValidEmail(form.email)) {
-        setErr('Please enter a valid email');
+        setErr("Please enter a valid email");
         return;
       }
       if (form.phone && !isValidPhone(form.phone)) {
-        setErr('Phone must be exactly 10 digits');
+        setErr("Phone must be exactly 10 digits");
         return;
       }
       await api.put("/auth/me", {
@@ -240,18 +241,21 @@ export default function Profile() {
             setPwErr(null);
             setPwOk(null);
             if (newPassword !== confirmPassword) {
-              setPwErr('Passwords do not match');
+              setPwErr("Passwords do not match");
               return;
             }
             setPwLoading(true);
             try {
-              await api.post('/auth/change-password', { currentPassword, newPassword });
-              setPwOk('Password updated');
-              setCurrentPassword('');
-              setNewPassword('');
-              setConfirmPassword('');
+              await api.post("/auth/change-password", {
+                currentPassword,
+                newPassword,
+              });
+              setPwOk("Password updated");
+              setCurrentPassword("");
+              setNewPassword("");
+              setConfirmPassword("");
             } catch (e: any) {
-              setPwErr(e?.response?.data?.error || 'Failed to change password');
+              setPwErr(e?.response?.data?.error || "Failed to change password");
             } finally {
               setPwLoading(false);
             }
@@ -295,26 +299,11 @@ export default function Profile() {
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white"
               disabled={pwLoading}
             >
-              {pwLoading ? '...' : 'Update password'}
+              {pwLoading ? "..." : "Update password"}
             </button>
           </div>
         </form>
       </section>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium">{label}</label>
-      {children}
     </div>
   );
 }

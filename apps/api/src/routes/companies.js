@@ -937,7 +937,7 @@ router.get("/employees", auth, async (req, res) => {
   }
 
   const employees = await Employee.find({ company: companyId })
-    .select("name email subRoles")
+    .select("name email subRoles primaryRole")
     .lean();
   res.json({
     employees: employees.map((u) => ({
@@ -945,6 +945,7 @@ router.get("/employees", auth, async (req, res) => {
       name: u.name,
       email: u.email,
       subRoles: u.subRoles,
+      primaryRole: u.primaryRole,
     })),
   });
 });

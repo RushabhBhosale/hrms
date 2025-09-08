@@ -1,7 +1,8 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
 import { applyTheme, resetTheme } from "../../lib/theme";
-import { toast } from 'react-hot-toast';
+import { toast } from "react-hot-toast";
+import { Field } from "../../components/ui/Field";
 
 export default function CompanyProfile() {
   const [name, setName] = useState("");
@@ -368,21 +369,6 @@ export default function CompanyProfile() {
           </div>
         </div>
       </section>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium">{label}</label>
-      {children}
     </div>
   );
 }

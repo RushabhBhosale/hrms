@@ -1,15 +1,20 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
-import { toast } from 'react-hot-toast';
+import { toast } from "react-hot-toast";
+import { Field } from "../../components/ui/Field";
 
 type WorkHours = {
   start: string; // HH:mm
-  end: string;   // HH:mm
+  end: string; // HH:mm
   graceMinutes: number;
 };
 
 export default function CompanyTiming() {
-  const [form, setForm] = useState<WorkHours>({ start: "09:30", end: "18:30", graceMinutes: 0 });
+  const [form, setForm] = useState<WorkHours>({
+    start: "09:30",
+    end: "18:30",
+    graceMinutes: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
@@ -66,7 +71,9 @@ export default function CompanyTiming() {
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Company Timing</h2>
-        <p className="text-sm text-muted">Configure default work hours and grace period.</p>
+        <p className="text-sm text-muted">
+          Configure default work hours and grace period.
+        </p>
       </div>
 
       {err && (
@@ -109,7 +116,9 @@ export default function CompanyTiming() {
                 type="number"
                 min={0}
                 value={form.graceMinutes}
-                onChange={(e) => onChange("graceMinutes", Number(e.target.value))}
+                onChange={(e) =>
+                  onChange("graceMinutes", Number(e.target.value))
+                }
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
               />
             </Field>
@@ -125,15 +134,6 @@ export default function CompanyTiming() {
           </div>
         </form>
       </section>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium">{label}</label>
-      {children}
     </div>
   );
 }

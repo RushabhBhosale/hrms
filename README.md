@@ -66,6 +66,35 @@ Then log in at `http://localhost:5173` with:
 - Email: `superadmin@hrms.dev`
 - Password: `password`
 
+### Dummy Seed Data (Company + Everything)
+
+To quickly populate a full demo company with users, attendance history, projects, tasks, leaves, and announcements:
+
+```bash
+# optional: add SEED_KEY in apps/api/.env to guard this route
+# SEED_KEY=dev-seed
+
+# run the seed (append ?key=YOUR_KEY if SEED_KEY is set)
+curl -X POST 'http://localhost:4000/seed/dummy' \
+  -H 'Content-Type: application/json' \
+  -d '{"reset":true}'
+
+# If you set SEED_KEY=dev-seed:
+# curl -X POST 'http://localhost:4000/seed/dummy?key=dev-seed' -H 'Content-Type: application/json' -d '{"reset":true}'
+```
+
+This creates:
+
+- Company: "Acme Corporation"
+- Admin: `admin@acme.test` (password: `password123`)
+- Employees across roles (HR, Manager, Developers, Designer, QA)
+- Past 30 days attendance (weekdays), random timings
+- Projects + several tasks with time logs
+- Sample leave requests (approved, pending, rejected)
+- A couple of company announcements
+
+Use any of the seeded emails with `password123` to log in and explore the app.
+
 ## Configuration
 
 ### API environment (`apps/api/.env`)

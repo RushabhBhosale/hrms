@@ -1,6 +1,11 @@
 import { useState, FormEvent, ChangeEvent, useMemo, useEffect } from "react";
 import { api } from "../../lib/api";
-import { isValidEmail, isValidPassword, isValidPhone } from "../../lib/validate";
+import {
+  isValidEmail,
+  isValidPassword,
+  isValidPhone,
+} from "../../lib/validate";
+import { Field } from "../../components/ui/Field";
 
 type FormState = {
   name: string;
@@ -39,21 +44,6 @@ export default function AddEmployee() {
   );
   const [roles, setRoles] = useState<string[]>([]);
 
-  const canSubmit = useMemo(() => {
-    return (
-      form.name.trim() &&
-      isValidEmail(form.email) &&
-      isValidPassword(form.password) &&
-      form.role &&
-      form.address.trim() &&
-      isValidPhone(form.phone) &&
-      form.employeeId.trim() &&
-      form.ctc.trim() &&
-      !isNaN(Number(form.ctc)) &&
-      Number(form.ctc) >= 0
-    );
-  }, [form]);
-
   function onChange<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
@@ -81,7 +71,6 @@ export default function AddEmployee() {
     e.preventDefault();
     setOk(null);
     setErr(null);
-    if (!canSubmit) return;
     try {
       if (!isValidEmail(form.email)) {
         setErr("Please enter a valid email");
@@ -95,6 +84,10 @@ export default function AddEmployee() {
         setErr("Phone must be exactly 10 digits");
         return;
       }
+      if (!form.employeeId) {
+        setErr("Employee Id is required");
+      }
+
       setSubmitting(true);
       const fd = new FormData();
       // Convert CTC to monthly for backend
@@ -138,17 +131,6 @@ export default function AddEmployee() {
           Create an employee and upload documents.
         </p>
       </div>
-
-      {err && (
-        <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
-          {err}
-        </div>
-      )}
-      {ok && (
-        <div className="rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
-          {ok}
-        </div>
-      )}
 
       <section className="rounded-lg border border-border bg-surface shadow-sm">
         <div className="border-b border-border px-6 py-4">
@@ -275,7 +257,8 @@ export default function AddEmployee() {
             <Field label="Phone">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                placeholder="+91 98765 43210"
+                placeholder="9876543210"
+                maxLength={10}
                 value={form.phone}
                 onChange={(e) => onChange("phone", e.target.value)}
               />
@@ -319,10 +302,21 @@ export default function AddEmployee() {
             </Field>
           </div>
 
+          {err && (
+            <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
+              {err}
+            </div>
+          )}
+          {ok && (
+            <div className="rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
+              {ok}
+            </div>
+          )}
+
           <div className="pt-2">
             <button
               type="submit"
-              disabled={!canSubmit || submitting}
+              disabled={submitting}
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
             >
               {submitting ? "Creating…" : "Add Employee"}
@@ -330,21 +324,6 @@ export default function AddEmployee() {
           </div>
         </form>
       </section>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium">{label}</label>
-      {children}
     </div>
   );
 }

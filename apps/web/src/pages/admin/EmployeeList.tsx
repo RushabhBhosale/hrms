@@ -2,12 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
+import { RoleBadge } from "../../components/ui/RoleBadge";
+import type { PrimaryRole } from "../../lib/auth";
 
 type CompanyEmployee = {
   id: string;
   name: string;
   email: string;
   subRoles: string[];
+  primaryRole: PrimaryRole;
 };
 
 export default function EmployeeList() {
@@ -17,8 +20,8 @@ export default function EmployeeList() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
-  const [sortKey, setSortKey] = useState<'name'|'email'|'role'>('name');
-  const [sortDir, setSortDir] = useState<'asc'|'desc'>('asc');
+  const [sortKey, setSortKey] = useState<"name" | "email" | "role">("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   async function load() {
     try {
@@ -36,6 +39,17 @@ export default function EmployeeList() {
     load();
   }, []);
 
+  function roleLabel(u: CompanyEmployee) {
+    return (
+      u.subRoles?.[0] ||
+      (u.primaryRole === "ADMIN"
+        ? "admin"
+        : u.primaryRole === "SUPERADMIN"
+        ? "superadmin"
+        : "employee")
+    );
+  }
+
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return employees;
@@ -43,20 +57,21 @@ export default function EmployeeList() {
       (e) =>
         e.name.toLowerCase().includes(term) ||
         e.email.toLowerCase().includes(term) ||
-        e.subRoles.join(",").toLowerCase().includes(term)
+        e.subRoles.join(",").toLowerCase().includes(term) ||
+        roleLabel(e).toLowerCase().includes(term)
     );
   }, [q, employees]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
-    const dir = sortDir === 'asc' ? 1 : -1;
-    arr.sort((a,b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
       switch (sortKey) {
-        case 'email':
+        case "email":
           return dir * a.email.localeCompare(b.email);
-        case 'role':
-          return dir * (a.subRoles?.[0] || '').localeCompare(b.subRoles?.[0] || '');
-        case 'name':
+        case "role":
+          return dir * roleLabel(a).localeCompare(roleLabel(b));
+        case "name":
         default:
           return dir * a.name.localeCompare(b.name);
       }
@@ -68,10 +83,17 @@ export default function EmployeeList() {
   const pages = Math.max(1, Math.ceil(total / Math.max(1, limit)));
   const start = total === 0 ? 0 : (page - 1) * limit + 1;
   const end = Math.min(total, page * limit);
-  const pageRows = useMemo(() => sorted.slice((page-1)*limit, (page-1)*limit + limit), [sorted, page, limit]);
+  const pageRows = useMemo(
+    () => sorted.slice((page - 1) * limit, (page - 1) * limit + limit),
+    [sorted, page, limit]
+  );
 
   function toggleSort(k: typeof sortKey) {
-    if (sortKey === k) setSortDir(d => d==='asc'?'desc':'asc'); else { setSortKey(k); setSortDir('asc'); }
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir("asc");
+    }
   }
 
   return (
@@ -108,15 +130,24 @@ export default function EmployeeList() {
       <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
         <div className="border-b border-border px-4 py-3 flex items-center justify-between">
           <div className="text-sm text-muted">
-            {loading ? 'Loading…' : `Showing ${start}-${end} of ${total} employees`}
+            {loading
+              ? "Loading…"
+              : `Showing ${start}-${end} of ${total} employees`}
           </div>
           <div className="flex items-center gap-2">
             <select
               className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
               value={limit}
-              onChange={(e)=>{ setPage(1); setLimit(parseInt(e.target.value,10)); }}
+              onChange={(e) => {
+                setPage(1);
+                setLimit(parseInt(e.target.value, 10));
+              }}
             >
-              {[10,20,50,100].map(n=> <option key={n} value={n}>{n} / page</option>)}
+              {[10, 20, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n} / page
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -126,9 +157,27 @@ export default function EmployeeList() {
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <Th sortable onSort={()=>toggleSort('name')} dir={sortKey==='name'?sortDir:null}>Name</Th>
-                <Th sortable onSort={()=>toggleSort('email')} dir={sortKey==='email'?sortDir:null}>Email</Th>
-                <Th sortable onSort={()=>toggleSort('role')} dir={sortKey==='role'?sortDir:null}>Role</Th>
+                <Th
+                  sortable
+                  onSort={() => toggleSort("name")}
+                  dir={sortKey === "name" ? sortDir : null}
+                >
+                  Name
+                </Th>
+                <Th
+                  sortable
+                  onSort={() => toggleSort("email")}
+                  dir={sortKey === "email" ? sortDir : null}
+                >
+                  Email
+                </Th>
+                <Th
+                  sortable
+                  onSort={() => toggleSort("role")}
+                  dir={sortKey === "role" ? sortDir : null}
+                >
+                  Role
+                </Th>
               </tr>
             </thead>
             <tbody>
@@ -157,7 +206,7 @@ export default function EmployeeList() {
                       </span>
                     </Td>
                     <Td>
-                      <RoleBadge role={u.subRoles?.[0]} />
+                      <RoleBadge role={roleLabel(u)} />
                     </Td>
                   </tr>
                 ))
@@ -198,7 +247,7 @@ export default function EmployeeList() {
                 </div>
                 <div className="text-sm text-muted">{u.email}</div>
                 <div className="mt-2">
-                  <RoleBadge role={u.subRoles?.[0]} />
+                  <RoleBadge role={roleLabel(u)} />
                 </div>
               </div>
             ))
@@ -210,34 +259,13 @@ export default function EmployeeList() {
         <Pagination
           page={page}
           pages={pages}
-          onFirst={()=>setPage(1)}
-          onPrev={()=>setPage(p=>Math.max(1,p-1))}
-          onNext={()=>setPage(p=>Math.min(pages,p+1))}
-          onLast={()=>setPage(pages)}
+          onFirst={() => setPage(1)}
+          onPrev={() => setPage((p) => Math.max(1, p - 1))}
+          onNext={() => setPage((p) => Math.min(pages, p + 1))}
+          onLast={() => setPage(pages)}
           disabled={loading}
         />
       </div>
     </div>
   );
 }
-
-// Using shared Th, Td, SkeletonRows, Pagination from components/ui/Table
-
-function RoleBadge({ role }: { role?: string }) {
-  const label = (role || "employee").toLowerCase();
-  const tone =
-    label === "manager"
-      ? "bg-secondary/10 text-secondary"
-      : label === "hr"
-      ? "bg-accent/10 text-accent"
-      : "bg-primary/10 text-primary";
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${tone}`}
-    >
-      {label.charAt(0).toUpperCase() + label.slice(1)}
-    </span>
-  );
-}
-
-// Using shared SkeletonRows

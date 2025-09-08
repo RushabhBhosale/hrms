@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
+import { StatusBadge } from "../../components/ui/StatusBadge";
 
-type Leave = {
+export type Leave = {
   _id: string;
   employee: { _id: string; name: string };
   startDate: string;
@@ -202,12 +203,36 @@ export default function LeaveRequests() {
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
-                <Th sortable onSort={() => toggleSort("employee")} dir={sortKey === "employee" ? sortDir : null}>Employee</Th>
-                <Th sortable onSort={() => toggleSort("start")} dir={sortKey === "start" ? sortDir : null}>Start</Th>
-                <Th sortable onSort={() => toggleSort("end")} dir={sortKey === "end" ? sortDir : null}>End</Th>
+                <Th
+                  sortable
+                  onSort={() => toggleSort("employee")}
+                  dir={sortKey === "employee" ? sortDir : null}
+                >
+                  Employee
+                </Th>
+                <Th
+                  sortable
+                  onSort={() => toggleSort("start")}
+                  dir={sortKey === "start" ? sortDir : null}
+                >
+                  Start
+                </Th>
+                <Th
+                  sortable
+                  onSort={() => toggleSort("end")}
+                  dir={sortKey === "end" ? sortDir : null}
+                >
+                  End
+                </Th>
                 <Th>Type</Th>
                 <Th>Reason</Th>
-                <Th sortable onSort={() => toggleSort("status")} dir={sortKey === "status" ? sortDir : null}>Status</Th>
+                <Th
+                  sortable
+                  onSort={() => toggleSort("status")}
+                  dir={sortKey === "status" ? sortDir : null}
+                >
+                  Status
+                </Th>
                 <Th>Actions</Th>
               </tr>
             </thead>
@@ -392,22 +417,3 @@ export default function LeaveRequests() {
     </div>
   );
 }
-
-// Using shared Th, Td, SkeletonRows, Pagination from components/ui/Table
-
-function StatusBadge({ status }: { status: Leave["status"] }) {
-  const map: Record<Leave["status"], string> = {
-    PENDING: "bg-accent/10 text-accent",
-    APPROVED: "bg-secondary/10 text-secondary",
-    REJECTED: "bg-error/10 text-error",
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${map[status]}`}
-    >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
-  );
-}
-
-// Using shared SkeletonRows

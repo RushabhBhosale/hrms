@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
 import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
 import { getEmployee, setAuth, LeaveBalances } from "../../lib/auth";
+import { StatusBadge } from "../../components/ui/StatusBadge";
 
 type Leave = {
   _id: string;
@@ -622,20 +623,3 @@ export default function LeaveRequest() {
 }
 
 // Using shared Th, Td, SkeletonRows, Pagination from components/ui/Table
-
-// (no extra helpers)
-function StatusBadge({ status }: { status: Leave["status"] }) {
-  const map: Record<Leave["status"], string> = {
-    PENDING: "bg-accent/10 text-accent",
-    APPROVED: "bg-secondary/10 text-secondary",
-    REJECTED: "bg-error/10 text-error",
-  };
-  const label = status.charAt(0) + status.slice(1).toLowerCase();
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${map[status]}`}
-    >
-      {label}
-    </span>
-  );
-}

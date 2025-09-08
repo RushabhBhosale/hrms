@@ -3,6 +3,7 @@ import { api } from "../../lib/api";
 import { Th, Td } from "../../components/ui/Table";
 import { toast } from "react-hot-toast";
 import { getEmployee } from "../../lib/auth";
+import type { PrimaryRole } from "../../lib/auth";
 import { Link, useNavigate } from "react-router-dom";
 
 type EmployeeLite = {
@@ -10,6 +11,7 @@ type EmployeeLite = {
   name: string;
   email: string;
   subRoles: string[];
+  primaryRole: PrimaryRole;
 };
 type Project = {
   _id: string;
@@ -42,7 +44,7 @@ export default function ProjectsAdmin() {
   const [startTime, setStartTime] = useState<string>(""); // datetime-local string
 
   const teamLeadOptions = useMemo(() => {
-    // prefer HR or manager as team lead
+    // prefer HR or manager as team lead (admins typically manage too, but keep current rule)
     const priority = employees.filter((e) =>
       e.subRoles?.some((r) => r === "hr" || r === "manager")
     );
@@ -51,6 +53,17 @@ export default function ProjectsAdmin() {
     );
     return [...priority, ...others];
   }, [employees]);
+
+  function roleLabel(e: EmployeeLite) {
+    return (
+      e.subRoles?.[0] ||
+      (e.primaryRole === "ADMIN"
+        ? "admin"
+        : e.primaryRole === "SUPERADMIN"
+        ? "superadmin"
+        : "employee")
+    );
+  }
 
   async function load() {
     setLoading(true);
@@ -203,7 +216,7 @@ export default function ProjectsAdmin() {
               <option value="">Select team lead</option>
               {teamLeadOptions.map((e) => (
                 <option key={e.id} value={e.id}>
-                  {e.name} ({e.subRoles?.[0] || "employee"})
+                  {e.name} ({roleLabel(e)})
                 </option>
               ))}
             </select>
@@ -228,10 +241,7 @@ export default function ProjectsAdmin() {
                     }
                   />
                   <span>
-                    {e.name}{" "}
-                    <span className="text-muted">
-                      ({e.subRoles?.[0] || "employee"})
-                    </span>
+                    {e.name} <span className="text-muted">({roleLabel(e)})</span>
                   </span>
                 </label>
               ))}
