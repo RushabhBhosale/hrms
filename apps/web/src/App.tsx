@@ -42,6 +42,8 @@ import MonthlyReport from "./pages/report/MonthlyReport";
 import Reports from "./pages/report/Reports";
 import LandingPage from "./pages/LandingPage";
 import Announcements from "./pages/employee/Announcements";
+import Invoices from "./pages/admin/Invoices";
+import InvoiceDetails from "./pages/admin/InvoiceDetails";
 
 export default function App() {
   return (
@@ -95,6 +97,8 @@ export default function App() {
         <Route path="salary/template" element={<SalaryTemplate />} />
         <Route path="salary/slips" element={<SalarySlipsAdmin />} />
         <Route path="announcements" element={<AnnouncementsAdmin />} />
+        <Route path="invoices" element={<Invoices />} />
+        <Route path="invoices/:id" element={<InvoiceDetails />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -143,6 +147,22 @@ export default function App() {
         <Route path="projects/:id" element={<ProjectDetails />} />
         <Route path="projects/:id/tasks" element={<ProjectTasks />} />
         <Route path="announcements" element={<Announcements />} />
+        <Route
+          path="invoices"
+          element={
+            <RoleGuard sub={["hr"]}>
+              <Invoices />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="invoices/:id"
+          element={
+            <RoleGuard sub={["hr"]}>
+              <InvoiceDetails />
+            </RoleGuard>
+          }
+        />
         <Route path="profile" element={<Profile />} />
       </Route>
 

@@ -64,6 +64,8 @@ export default function EmployeeLayout() {
     { to: "/app/tasks", label: "My Tasks", icon: ListChecks },
     { to: "/app/announcements", label: "Announcements", icon: Megaphone },
     { to: "/app/projects", label: "Projects", icon: Users },
+    // If HR, expose Invoices link for full access as requested
+    ...(u?.subRoles?.includes('hr') ? [{ to: "/app/invoices", label: "Invoices", icon: FileText }] : []),
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
     { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
     { to: "/app/salary-slip", label: "Salary Slip", icon: FileText },
