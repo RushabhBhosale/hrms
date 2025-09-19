@@ -27,20 +27,31 @@ function allowAdminOrHR(req, res, next) {
 
 // Compute totals for invoice line items
 function computeTotals(lineItems = []) {
-  const normalized = (lineItems || []).map((li) => {
-    const qty = Number(li.quantity || 0);
-    const rate = Number(li.rate || 0);
-    const taxPct = Number(li.taxPercent || 0);
-    const base = qty * rate;
-    const tax = base * (taxPct / 100);
-    return {
-      ...li,
-      quantity: qty,
-      rate,
-      taxPercent: taxPct,
-      total: Math.round((base + tax) * 100) / 100,
-    };
-  });
+  const normalized = (Array.isArray(lineItems) ? lineItems : [])
+    .map((li) => {
+      if (!li) return null;
+      const description = String(li.description || "").trim();
+      if (!description) return null;
+      const qtyNum = Number(li.quantity);
+      const rateNum = Number(li.rate);
+      const taxNum = Number(li.taxPercent);
+      const qty = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : 0;
+      const rate = Number.isFinite(rateNum) && rateNum > 0 ? rateNum : 0;
+      const taxPercent = Number.isFinite(taxNum)
+        ? Math.min(Math.max(taxNum, 0), 100)
+        : 0;
+      const base = qty * rate;
+      const tax = base * (taxPercent / 100);
+      return {
+        ...li,
+        description,
+        quantity: qty,
+        rate,
+        taxPercent,
+        total: Math.round((base + tax) * 100) / 100,
+      };
+    })
+    .filter(Boolean);
   const subtotal =
     Math.round(
       normalized.reduce((s, li) => s + li.quantity * li.rate, 0) * 100
@@ -317,6 +328,8 @@ router.post("/", auth, allowAdminOrHR, async (req, res) => {
 
     const { normalized, subtotal, taxTotal, totalAmount } =
       computeTotals(lineItems);
+    if (!normalized.length)
+      return res.status(400).json({ error: "Add at least one line item" });
 
     const { invoiceNumber, sequenceKey } = await nextInvoiceNumber(
       req.employee.company
@@ -454,6 +467,8 @@ router.put("/:id", auth, allowAdminOrHR, async (req, res) => {
       const { normalized, subtotal, taxTotal, totalAmount } = computeTotals(
         data.lineItems
       );
+      if (!normalized.length)
+        return res.status(400).json({ error: "Add at least one line item" });
       data.lineItems = normalized;
       data.subtotal = subtotal;
       data.taxTotal = taxTotal;
