@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Users,
   ListChecks,
+  Wallet,
 } from "lucide-react";
 import { Megaphone } from "lucide-react";
 import AnnouncementsPopup from "../components/AnnouncementsPopup";
@@ -64,8 +65,12 @@ export default function EmployeeLayout() {
     { to: "/app/tasks", label: "My Tasks", icon: ListChecks },
     { to: "/app/announcements", label: "Announcements", icon: Megaphone },
     { to: "/app/projects", label: "Projects", icon: Users },
-    // If HR, expose Invoices link for full access as requested
-    ...(u?.subRoles?.includes('hr') ? [{ to: "/app/invoices", label: "Invoices", icon: FileText }] : []),
+    ...(u?.subRoles?.includes("hr")
+      ? [
+          { to: "/app/expenses", label: "Expenses", icon: Wallet },
+          { to: "/app/invoices", label: "Invoices", icon: FileText },
+        ]
+      : []),
     { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
     { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
     { to: "/app/salary-slip", label: "Salary Slip", icon: FileText },
@@ -102,6 +107,7 @@ export default function EmployeeLayout() {
     if (pathname.startsWith("/app/tasks")) return "My Tasks";
     if (pathname.startsWith("/app/projects")) return "Projects";
     if (pathname.startsWith("/app/announcements")) return "Announcements";
+    if (pathname.startsWith("/app/expenses")) return "Expenses";
     if (pathname.startsWith("/app/leave")) return "Leave";
     if (pathname.startsWith("/app/approvals")) return "Leave Approvals";
     if (pathname.startsWith("/app/salary-slip")) return "Salary Slip";

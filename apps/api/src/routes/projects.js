@@ -71,13 +71,20 @@ router.get("/personal", auth, async (req, res) => {
   }
 });
 
-// Create project - admin only
+function canManageProjects(emp) {
+  if (!emp) return false;
+  if (isAdmin(emp)) return true;
+  return (emp.subRoles || []).includes("hr");
+}
+
+// Create project - admin or HR
 router.post(
   "/",
   auth,
-  requirePrimary(["ADMIN", "SUPERADMIN"]),
   async (req, res) => {
     try {
+      if (!canManageProjects(req.employee))
+        return res.status(403).json({ error: "Forbidden" });
       const { title, description, techStack, teamLead, members } = req.body;
       // Estimated time handling: accept minutes or hours
       let estimatedTimeMinutes = 0;

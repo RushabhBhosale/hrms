@@ -539,7 +539,7 @@ export default function InvoiceDetails() {
             <div className="hidden md:grid md:grid-cols-6 gap-2 text-xs text-muted px-1">
               <div className="md:col-span-2">Description</div>
               <div>Qty (hrs)</div>
-              <div>Rate ({currency === "INR" ? "₹" : currency}/hr)</div>
+              <div>Rate ({currency === "INR" ? "INR" : currency}/hr)</div>
               <div>Tax (%)</div>
               <div className="text-right">Amount</div>
             </div>
@@ -587,7 +587,7 @@ export default function InvoiceDetails() {
                       placeholder="0.00"
                     />
                     <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
-                      {currency === "INR" ? "₹" : currency}/hr
+                      {currency === "INR" ? "INR" : currency}/hr
                     </span>
                   </div>
                   <div className="relative">

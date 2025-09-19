@@ -44,6 +44,7 @@ import LandingPage from "./pages/LandingPage";
 import Announcements from "./pages/employee/Announcements";
 import Invoices from "./pages/admin/Invoices";
 import InvoiceDetails from "./pages/admin/InvoiceDetails";
+import Expenses from "./pages/admin/Expenses";
 
 export default function App() {
   return (
@@ -99,6 +100,7 @@ export default function App() {
         <Route path="announcements" element={<AnnouncementsAdmin />} />
         <Route path="invoices" element={<Invoices />} />
         <Route path="invoices/:id" element={<InvoiceDetails />} />
+        <Route path="expenses" element={<Expenses />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -147,6 +149,14 @@ export default function App() {
         <Route path="projects/:id" element={<ProjectDetails />} />
         <Route path="projects/:id/tasks" element={<ProjectTasks />} />
         <Route path="announcements" element={<Announcements />} />
+        <Route
+          path="expenses"
+          element={
+            <RoleGuard sub={["hr"]}>
+              <Expenses />
+            </RoleGuard>
+          }
+        />
         <Route
           path="invoices"
           element={

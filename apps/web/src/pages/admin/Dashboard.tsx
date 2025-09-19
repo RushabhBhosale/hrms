@@ -1,8 +1,32 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import type { ReactNode } from "react";
 import { api } from "../../lib/api";
 import ProjectTime from "../report/ProjectTime";
-import { Users, UserCheck } from "lucide-react";
+import {
+  Users,
+  UserCheck,
+  FileText,
+  TrendingUp,
+  Receipt,
+  PieChart as PieChartIcon,
+  CalendarClock,
+} from "lucide-react";
 import { Card } from "../../components/ui/Card";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
 
 type EmployeeLite = {
   id: string;
@@ -24,6 +48,322 @@ type Attendance = {
   lastPunchIn?: string;
   workedMs?: number;
 };
+
+type InvoiceSummary = {
+  count: number;
+  totalAmount: number;
+  paidAmount: number;
+  outstandingAmount: number;
+  overdueAmount: number;
+  upcomingDueAmount: number;
+  upcomingDueCount: number;
+};
+
+type ExpenseSummary = {
+  totalCount: number;
+  totalAmount: number;
+  monthToDateAmount: number;
+  yearToDateAmount: number;
+  recurringCount: number;
+  recurringAmount: number;
+};
+
+type UpcomingRecurringItem = {
+  id: string;
+  category: string;
+  nextDueDate: string | null;
+  frequency: string | null;
+  amount: number;
+  lastPaidOn?: string;
+  status: "pending" | "paid";
+};
+
+type RecurringSeriesPoint = {
+  date: string;
+  total: number;
+};
+
+type SpendBreakdown = {
+  recurring: { amount: number; count: number };
+  oneTime: { amount: number; count: number };
+};
+
+type RecurringTrendPoint = {
+  key: string;
+  label: string;
+  total: number;
+};
+
+type FinanceSummary = {
+  invoiceSummary: InvoiceSummary;
+  expenseSummary: ExpenseSummary;
+  upcomingRecurring: UpcomingRecurringItem[];
+  upcomingRecurringSeries: RecurringSeriesPoint[];
+  spendBreakdown: SpendBreakdown;
+  recurringTrend: RecurringTrendPoint[];
+};
+
+function formatCurrency(value: number, currency = "INR") {
+  const formatter = new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  });
+  return formatter.format(Number.isFinite(value) ? value : 0);
+}
+
+function formatCurrencyShort(value: number) {
+  const formatted = formatCurrency(value);
+  return formatted.replace(/^[^\d-]*/, "");
+}
+
+function formatDateLabel(value?: string | null) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function titleCase(value?: string | null) {
+  if (!value) return "-";
+  return value
+    .split(/[\s_-]+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+const PIE_COLORS = ["#2563eb", "#14b8a6"];
+
+function RecurringBarChart({ data }: { data: RecurringSeriesPoint[] }) {
+  if (!data.length)
+    return (
+      <div className="flex h-64 items-center justify-center text-sm text-muted">
+        No recurring expenses due in the next 30 days.
+      </div>
+    );
+
+  const chartData = data.map((point) => ({
+    ...point,
+    label: new Date(point.date).toLocaleDateString("en-IN", {
+      month: "short",
+      day: "numeric",
+    }),
+    total: Number(point.total || 0),
+  }));
+
+  return (
+    <div className="h-56">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={chartData}
+          margin={{ top: 16, right: 12, left: 4, bottom: 12 }}
+        >
+          <CartesianGrid
+            strokeDasharray="4 8"
+            stroke="rgba(148, 163, 184, 0.35)"
+          />
+          <XAxis
+            dataKey="label"
+            tickLine={false}
+            axisLine={{ stroke: "var(--border)" }}
+            tick={{ fontSize: 12 }}
+          />
+          <YAxis
+            tickLine={false}
+            axisLine={{ stroke: "var(--border)" }}
+            tickFormatter={(value: any) => formatCurrencyShort(Number(value))}
+            tick={{ fontSize: 12 }}
+          />
+          <RechartsTooltip
+            cursor={{ fill: "rgba(37, 99, 235, 0.08)" }}
+            formatter={(value: any) => formatCurrency(Number(value))}
+            labelFormatter={(_: any, payload: any) => {
+              const original = payload?.[0]?.payload;
+              if (!original) return "";
+              return new Date(original.date).toLocaleDateString("en-IN", {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+              });
+            }}
+          />
+          <Bar
+            dataKey="total"
+            fill="#2563eb"
+            radius={[6, 6, 0, 0]}
+            maxBarSize={32}
+          />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function PieSplitChart({ breakdown }: { breakdown: SpendBreakdown }) {
+  const total = breakdown.recurring.amount + breakdown.oneTime.amount;
+  if (total <= 0)
+    return (
+      <div className="flex h-56 items-center justify-center text-sm text-muted">
+        No expenses recorded yet.
+      </div>
+    );
+
+  const chartData = [
+    {
+      name: "Recurring",
+      value: Number(breakdown.recurring.amount || 0),
+      count: breakdown.recurring.count,
+    },
+    {
+      name: "One-Time",
+      value: Number(breakdown.oneTime.amount || 0),
+      count: breakdown.oneTime.count,
+    },
+  ];
+
+  return (
+    <div className="h-52">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+          <Pie
+            data={chartData}
+            dataKey="value"
+            nameKey="name"
+            innerRadius="50%"
+            outerRadius="72%"
+            paddingAngle={4}
+          >
+            {chartData.map((entry, index) => (
+              <Cell
+                key={entry.name}
+                fill={PIE_COLORS[index % PIE_COLORS.length]}
+              />
+            ))}
+          </Pie>
+          <Legend
+            layout="horizontal"
+            align="center"
+            verticalAlign="bottom"
+            height={36}
+            wrapperStyle={{ fontSize: 11 }}
+            formatter={(value: any, entry: any) => {
+              const datum = chartData.find((d) => d.name === value);
+              if (!datum) return value;
+              return `${value} · ${formatCurrency(datum.value)} · ${
+                datum.count
+              } items`;
+            }}
+          />
+          <RechartsTooltip
+            formatter={(value: any, name: any) => [
+              formatCurrency(Number(value)),
+              name,
+            ]}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function TrendLineChart({ data }: { data: RecurringTrendPoint[] }) {
+  if (!data.length)
+    return (
+      <div className="flex h-64 items-center justify-center text-sm text-muted">
+        No recurring expenses logged yet.
+      </div>
+    );
+
+  const chartData = data.map((point) => ({
+    ...point,
+    total: Number(point.total || 0),
+  }));
+
+  return (
+    <div className="h-56">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart
+          data={chartData}
+          margin={{ top: 12, right: 16, left: 0, bottom: 12 }}
+        >
+          <CartesianGrid
+            strokeDasharray="4 8"
+            stroke="rgba(148, 163, 184, 0.35)"
+          />
+          <XAxis
+            dataKey="label"
+            tickLine={false}
+            axisLine={{ stroke: "var(--border)" }}
+            angle={-15}
+            height={50}
+            textAnchor="end"
+            tick={{ fontSize: 12 }}
+          />
+          <YAxis
+            tickLine={false}
+            axisLine={{ stroke: "var(--border)" }}
+            tickFormatter={(value: any) => formatCurrencyShort(Number(value))}
+            tick={{ fontSize: 12 }}
+          />
+          <RechartsTooltip
+            formatter={(value: any) => formatCurrency(Number(value))}
+          />
+          <Line
+            type="monotone"
+            dataKey="total"
+            stroke="#2563eb"
+            strokeWidth={2}
+            dot={{ r: 3.5, strokeWidth: 1, stroke: "#1d4ed8", fill: "white" }}
+            activeDot={{ r: 5 }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function FinanceStatCard({
+  icon,
+  title,
+  value,
+  subValue,
+  tone = "primary",
+}: {
+  icon: ReactNode;
+  title: string;
+  value: string;
+  subValue?: string;
+  tone?: "primary" | "secondary" | "accent" | "neutral";
+}) {
+  const toneClasses: Record<string, string> = {
+    primary: "bg-primary/10 text-primary",
+    secondary: "bg-secondary/10 text-secondary",
+    accent: "bg-accent/10 text-accent",
+    neutral: "bg-muted text-foreground/70",
+  };
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-border bg-surface px-4 py-4 shadow-sm">
+      <div className="space-y-1">
+        <div className="text-xs uppercase tracking-wide text-muted">
+          {title}
+        </div>
+        <div className="text-2xl font-semibold">{value}</div>
+        {subValue && <div className="text-xs text-muted">{subValue}</div>}
+      </div>
+      <div
+        className={`flex h-10 w-10 items-center justify-center rounded-full ${
+          toneClasses[tone] || toneClasses.primary
+        }`}
+      >
+        {icon}
+      </div>
+    </div>
+  );
+}
 
 function format(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -51,18 +391,41 @@ export default function AdminDash() {
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [leaveMap, setLeaveMap] = useState<Record<string, boolean>>({});
+  const [finance, setFinance] = useState<FinanceSummary | null>(null);
+  const [loadingFinance, setLoadingFinance] = useState(false);
+  const [financeError, setFinanceError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
         setErr(null);
         setLoadingProjects(true);
-        const [empRes, att, projRes, leavesRes] = await Promise.all([
-          api.get("/companies/employees"),
-          api.get("/attendance/company/today"),
-          api.get("/projects", { params: { active: true } }),
-          api.get("/leaves/company/today"),
-        ]);
+        setFinanceError(null);
+        setLoadingFinance(true);
+        const financePromise = api
+          .get("/finance/dashboard")
+          .then((res) => {
+            setFinanceError(null);
+            return res;
+          })
+          .catch((error) => {
+            console.error(error);
+            setFinance(null);
+            setFinanceError(
+              error?.response?.data?.error || "Failed to load finance overview"
+            );
+            return null;
+          });
+
+        const [empRes, att, projRes, leavesRes, financeRes] = await Promise.all(
+          [
+            api.get("/companies/employees"),
+            api.get("/attendance/company/today"),
+            api.get("/projects", { params: { active: true } }),
+            api.get("/leaves/company/today"),
+            financePromise,
+          ]
+        );
         const empList: EmployeeLite[] = empRes.data.employees || [];
         const projList: ProjectLite[] = (projRes.data.projects || []).filter(
           (p: ProjectLite) => !p.isPersonal
@@ -79,11 +442,13 @@ export default function AdminDash() {
           employees: empList.length,
           present: att.data.attendance.length,
         });
+        if (financeRes && financeRes.data) setFinance(financeRes.data);
       } catch (err: any) {
         console.error(err);
         setErr(err?.response?.data?.error || "Failed to load dashboard data");
       } finally {
         setLoadingProjects(false);
+        setLoadingFinance(false);
       }
     }
     load();
@@ -99,6 +464,22 @@ export default function AdminDash() {
       setErr(e?.response?.data?.error || "Failed to load attendance");
     } finally {
       setLoadingAtt(false);
+    }
+  }
+
+  async function refreshFinance() {
+    try {
+      setFinanceError(null);
+      setLoadingFinance(true);
+      const res = await api.get("/finance/dashboard");
+      setFinance(res.data || null);
+    } catch (e: any) {
+      setFinance(null);
+      setFinanceError(
+        e?.response?.data?.error || "Failed to load finance overview"
+      );
+    } finally {
+      setLoadingFinance(false);
     }
   }
 
@@ -181,7 +562,6 @@ export default function AdminDash() {
         emp.email.toLowerCase().includes(term)
     );
   }, [assignments, assignQ]);
-  console.log("dfkld", filteredAssignments);
   const assignTotal = filteredAssignments.length;
   const assignPages = Math.max(
     1,
@@ -198,8 +578,6 @@ export default function AdminDash() {
       ),
     [filteredAssignments, assignPage, assignLimit]
   );
-
-  console.log("desjkhde", assignRows);
 
   return (
     <div className="space-y-8">
@@ -272,9 +650,198 @@ export default function AdminDash() {
           tone="secondary"
         />
       </div>
+
       {/* Project time analytics at top */}
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
         <ProjectTime onlyActive />
+      </section>
+
+      <section className="space-y-6 rounded-lg border border-border bg-surface p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">Financial Overview</h3>
+            <p className="text-sm text-muted">
+              Invoices and company spend snapshots
+            </p>
+          </div>
+          <button
+            onClick={refreshFinance}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-bg disabled:opacity-60"
+            disabled={loadingFinance}
+          >
+            <CalendarClock size={16} />
+            {loadingFinance ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+
+        {financeError && (
+          <div className="rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
+            {financeError}
+          </div>
+        )}
+
+        {loadingFinance && !finance ? (
+          <div className="flex h-24 items-center justify-center text-sm text-muted">
+            Loading finance metrics…
+          </div>
+        ) : finance ? (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <FinanceStatCard
+                icon={<FileText size={18} />}
+                title="Invoices Issued"
+                value={`${finance.invoiceSummary.count}`}
+                subValue={`Total ${formatCurrency(
+                  finance.invoiceSummary.totalAmount
+                )}${
+                  finance.invoiceSummary.upcomingDueAmount > 0
+                    ? ` · Due soon ${formatCurrency(
+                        finance.invoiceSummary.upcomingDueAmount
+                      )}`
+                    : ""
+                }`}
+              />
+              <FinanceStatCard
+                icon={<TrendingUp size={18} />}
+                title="Outstanding"
+                value={formatCurrency(finance.invoiceSummary.outstandingAmount)}
+                subValue={`Overdue ${formatCurrency(
+                  finance.invoiceSummary.overdueAmount
+                )}`}
+                tone="accent"
+              />
+              <FinanceStatCard
+                icon={<Receipt size={18} />}
+                title="Expenses YTD"
+                value={formatCurrency(finance.expenseSummary.yearToDateAmount)}
+                subValue={`MTD ${formatCurrency(
+                  finance.expenseSummary.monthToDateAmount
+                )}`}
+                tone="secondary"
+              />
+              <FinanceStatCard
+                icon={<PieChartIcon size={18} />}
+                title="Recurring Spend"
+                value={formatCurrency(finance.expenseSummary.recurringAmount)}
+                subValue={`${finance.expenseSummary.recurringCount} recurring entries`}
+                tone="neutral"
+              />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[2fr_1.15fr]">
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-base font-semibold">
+                    Upcoming Recurring Expenses (Next 30 Days)
+                  </h4>
+                  <div className="mt-3 overflow-auto rounded-lg border border-border">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-muted/20">
+                        <tr className="text-left text-muted">
+                          <th className="px-3 py-2 font-medium">Category</th>
+                          <th className="px-3 py-2 font-medium">
+                            Next Due Date
+                          </th>
+                          <th className="px-3 py-2 font-medium">Frequency</th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            Amount
+                          </th>
+                          <th className="px-3 py-2 font-medium">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {finance.upcomingRecurring.length === 0 && (
+                          <tr>
+                            <td
+                              className="px-3 py-4 text-center text-sm text-muted"
+                              colSpan={5}
+                            >
+                              No recurring expenses due in the next 30 days.
+                            </td>
+                          </tr>
+                        )}
+                        {finance.upcomingRecurring.slice(0, 10).map((item) => (
+                          <tr
+                            key={item.id}
+                            className="border-t border-border/50"
+                          >
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {item.category || "-"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-muted">
+                              {formatDateLabel(item.nextDueDate)}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-muted">
+                              {titleCase(item.frequency)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium">
+                              {formatCurrency(item.amount)}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              <span
+                                className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${
+                                  item.status === "pending"
+                                    ? "bg-accent/10 text-accent"
+                                    : "bg-secondary/10 text-secondary"
+                                }`}
+                              >
+                                <span
+                                  className={`h-2 w-2 rounded-full ${
+                                    item.status === "pending"
+                                      ? "bg-accent"
+                                      : "bg-secondary"
+                                  }`}
+                                />
+                                {titleCase(item.status)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border p-4">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h4 className="text-base font-semibold">
+                      Upcoming Spend Curve
+                    </h4>
+                    <span className="text-xs text-muted">
+                      Total{" "}
+                      {formatCurrency(
+                        finance.upcomingRecurringSeries.reduce(
+                          (sum, item) => sum + item.total,
+                          0
+                        )
+                      )}
+                    </span>
+                  </div>
+                  <RecurringBarChart data={finance.upcomingRecurringSeries} />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-lg border border-border p-4">
+                  <h4 className="text-base font-semibold">
+                    Recurring vs One-Time
+                  </h4>
+                  <PieSplitChart breakdown={finance.spendBreakdown} />
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <h4 className="text-base font-semibold">
+                    Recurring Expense Trend
+                  </h4>
+                  <TrendLineChart data={finance.recurringTrend} />
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-24 items-center justify-center text-sm text-muted">
+            Finance data not available.
+          </div>
+        )}
       </section>
 
       {err && (

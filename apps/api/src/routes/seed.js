@@ -7,6 +7,10 @@ const Project = require('../models/Project');
 const Task = require('../models/Task');
 const Leave = require('../models/Leave');
 const Announcement = require('../models/Announcement');
+const Invoice = require('../models/Invoice');
+const Expense = require('../models/Expense');
+const ExpenseCategory = require('../models/ExpenseCategory');
+const { auth } = require('../middleware/auth');
 const { isValidEmail, isValidPassword } = require('../utils/validate');
 
 function startOfDay(d) {
@@ -32,6 +36,81 @@ function addMonths(d, n) {
   return x;
 }
 
+const DEFAULT_EXPENSE_CATEGORIES = [
+  'Housekeeping',
+  'Tea/Coffee',
+  'Stationery',
+  'Travel',
+  'Festival Gifts',
+  'Birthday Celebrations',
+  'Misc',
+];
+
+async function ensureDefaultExpenseCategories(companyId, employeeId) {
+  const existingCount = await ExpenseCategory.countDocuments({ company: companyId });
+  if (existingCount > 0) return;
+  const docs = DEFAULT_EXPENSE_CATEGORIES.map((name) => ({
+    company: companyId,
+    name,
+    isDefault: true,
+    createdBy: employeeId,
+  }));
+  try {
+    await ExpenseCategory.insertMany(docs, { ordered: false });
+  } catch (err) {
+    if (err?.code !== 11000) throw err;
+  }
+}
+
+function addFrequency(date, frequency) {
+  const d = new Date(date.getTime());
+  switch (frequency) {
+    case 'daily':
+      d.setDate(d.getDate() + 1);
+      return d;
+    case 'weekly':
+      d.setDate(d.getDate() + 7);
+      return d;
+    case 'monthly': {
+      const day = d.getDate();
+      d.setDate(1);
+      d.setMonth(d.getMonth() + 1);
+      const max = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(day, max));
+      return d;
+    }
+    case 'quarterly': {
+      const day = d.getDate();
+      d.setDate(1);
+      d.setMonth(d.getMonth() + 3);
+      const max = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(day, max));
+      return d;
+    }
+    case 'yearly':
+      d.setFullYear(d.getFullYear() + 1);
+      return d;
+    default:
+      return null;
+  }
+}
+
+function computeNextDue(startDate, frequency, today) {
+  if (!startDate) return null;
+  const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (start >= todayStart) return start;
+  let cursor = new Date(start.getTime());
+  let guard = 0;
+  while (cursor < todayStart && guard < 500) {
+    const next = addFrequency(cursor, frequency);
+    if (!next) return null;
+    cursor = next;
+    guard += 1;
+  }
+  return cursor;
+}
+
 router.post('/superadmin', async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !isValidEmail(email) || !isValidPassword(password)) {
@@ -45,6 +124,204 @@ router.post('/superadmin', async (req, res) => {
 });
 
 module.exports = router;
+
+// Seed demo finance data (invoices + expenses) for the current company
+router.post('/finance', auth, async (req, res) => {
+  const employee = req.employee;
+  if (!employee) return res.status(401).json({ error: 'Unauthorized' });
+  const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(employee.primaryRole);
+  const isHr = (employee.subRoles || []).includes('hr');
+  if (!isAdmin && !isHr) return res.status(403).json({ error: 'Forbidden' });
+
+  const companyId = employee.company;
+  const creatorId = employee.id;
+  const seedMarker = '__finance_seed__';
+  const reset = !!req.body?.reset;
+
+  if (reset) {
+    await Promise.all([
+      Invoice.deleteMany({ company: companyId, notes: seedMarker }),
+      Expense.deleteMany({ company: companyId, notes: seedMarker }),
+    ]);
+  }
+
+  await ensureDefaultExpenseCategories(companyId, creatorId);
+  const categories = await ExpenseCategory.find({ company: companyId })
+    .select('name')
+    .lean();
+  const catMap = new Map(categories.map((c) => [c.name, c]));
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const targetExpenses = [
+    {
+      name: 'Housekeeping',
+      amount: 4200,
+      paidBy: 'bank',
+      description: 'Monthly office cleaning',
+      isRecurring: true,
+      frequency: 'monthly',
+      startOffsetMonths: -4,
+      nextDueOffsetDays: 7,
+    },
+    {
+      name: 'Tea/Coffee',
+      amount: 1800,
+      paidBy: 'cash',
+      description: 'Pantry supplies',
+      isRecurring: true,
+      frequency: 'weekly',
+      startOffsetMonths: -1,
+      nextDueOffsetDays: 3,
+    },
+    {
+      name: 'Travel',
+      amount: 12500,
+      paidBy: 'card',
+      description: 'Client visit travel booking',
+      isRecurring: false,
+      dateOffsetDays: -12,
+    },
+    {
+      name: 'Festival Gifts',
+      amount: 9800,
+      paidBy: 'upi',
+      description: 'Festive hampers for staff',
+      isRecurring: false,
+      dateOffsetDays: -32,
+    },
+    {
+      name: 'Stationery',
+      amount: 2600,
+      paidBy: 'bank',
+      description: 'Printer cartridges & notebooks',
+      isRecurring: true,
+      frequency: 'monthly',
+      startOffsetMonths: -2,
+      nextDueOffsetDays: 20,
+    },
+  ];
+
+  const expenseDocs = [];
+  for (const exp of targetExpenses) {
+    const category = catMap.get(exp.name) || categories[0];
+    if (!category) continue;
+    const baseDate = exp.dateOffsetDays
+      ? new Date(today.getFullYear(), today.getMonth(), today.getDate() + exp.dateOffsetDays)
+      : new Date(now.getFullYear(), now.getMonth() + (exp.startOffsetMonths || 0), today.getDate());
+    const expense = {
+      company: companyId,
+      date: baseDate,
+      category: category._id,
+      categoryName: category.name,
+      description: exp.description,
+      notes: seedMarker,
+      amount: exp.amount,
+      paidBy: exp.paidBy,
+      attachments: [],
+      isRecurring: Boolean(exp.isRecurring),
+      createdBy: creatorId,
+      updatedBy: creatorId,
+    };
+    if (exp.isRecurring) {
+      const startDate = new Date(now.getFullYear(), now.getMonth() + (exp.startOffsetMonths || 0), 1);
+      const frequency = exp.frequency || 'monthly';
+      const nextDueDate = computeNextDue(startDate, frequency, today) || new Date(today.getTime() + (exp.nextDueOffsetDays || 0) * 86400000);
+      expense.recurring = {
+        frequency,
+        startDate,
+        nextDueDate,
+        reminderDaysBefore: 3,
+      };
+    }
+    expenseDocs.push(expense);
+  }
+
+  const insertedExpenses = expenseDocs.length
+    ? await Expense.insertMany(expenseDocs, { ordered: false })
+    : [];
+
+  const baseLineItems = (description, amount) => [
+    {
+      description,
+      quantity: 1,
+      rate: amount,
+      taxPercent: 0,
+      total: amount,
+    },
+  ];
+
+  const invoiceTemplates = [
+    {
+      type: 'receivable',
+      status: 'paid',
+      issueOffsetDays: -45,
+      dueOffsetDays: -15,
+      amount: 120000,
+      partyName: 'Globex Corp',
+      title: 'Quarterly retainer',
+    },
+    {
+      type: 'receivable',
+      status: 'pending',
+      issueOffsetDays: -14,
+      dueOffsetDays: 7,
+      amount: 68000,
+      partyName: 'Initech Ltd',
+      title: 'Implementation sprint',
+    },
+    {
+      type: 'payable',
+      status: 'overdue',
+      issueOffsetDays: -30,
+      dueOffsetDays: -5,
+      amount: 28000,
+      partyName: 'Workspace Rentals',
+      title: 'Office rent',
+    },
+    {
+      type: 'receivable',
+      status: 'sent',
+      issueOffsetDays: -2,
+      dueOffsetDays: 20,
+      amount: 92000,
+      partyName: 'Stark Industries',
+      title: 'Custom integration',
+    },
+  ];
+
+  const invoiceDocs = invoiceTemplates.map((tpl, idx) => {
+    const issueDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + tpl.issueOffsetDays);
+    const dueDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + tpl.dueOffsetDays);
+    return {
+      company: companyId,
+      type: tpl.type,
+      invoiceNumber: `DEMO-${Date.now()}-${idx}`,
+      partyType: tpl.type === 'payable' ? 'vendor' : 'client',
+      partyName: tpl.partyName,
+      issueDate,
+      dueDate,
+      status: tpl.status,
+      currency: 'INR',
+      lineItems: baseLineItems(tpl.title, tpl.amount),
+      subtotal: tpl.amount,
+      taxTotal: 0,
+      totalAmount: tpl.amount,
+      notes: seedMarker,
+      createdAt: issueDate,
+      updatedAt: issueDate,
+    };
+  });
+
+  const insertedInvoices = await Invoice.insertMany(invoiceDocs, { ordered: false });
+
+  res.json({
+    ok: true,
+    invoicesCreated: insertedInvoices.length,
+    expensesCreated: insertedExpenses.length,
+  });
+});
 
 // Seed a full dummy company with data for testing
 // POST /seed/dummy?key=YOUR_SEED_KEY (optional guard)

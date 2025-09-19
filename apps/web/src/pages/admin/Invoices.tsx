@@ -40,6 +40,10 @@ export default function Invoices() {
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [dueFrom, setDueFrom] = useState("");
+  const [dueTo, setDueTo] = useState("");
+  const [amountMin, setAmountMin] = useState("");
+  const [amountMax, setAmountMax] = useState("");
   const [sortBy, setSortBy] = useState("issueDate");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [items, setItems] = useState<Invoice[]>([]);
@@ -75,6 +79,10 @@ export default function Invoices() {
           q: q || undefined,
           from: from || undefined,
           to: to || undefined,
+          dueFrom: dueFrom || undefined,
+          dueTo: dueTo || undefined,
+          amountMin: amountMin || undefined,
+          amountMax: amountMax || undefined,
           sortBy,
           sortDir,
         },
@@ -88,6 +96,14 @@ export default function Invoices() {
   useEffect(() => {
     load();
   }, [type, status, sortBy, sortDir]);
+
+  useEffect(() => {
+    setPartyType((prev) => {
+      if (type === "payable" && prev === "client") return "vendor";
+      if (type === "receivable" && prev === "vendor") return "client";
+      return prev;
+    });
+  }, [type]);
 
   useEffect(() => {
     (async () => {
@@ -151,8 +167,7 @@ export default function Invoices() {
           (Math.min(Math.max(Number(li.taxPercent || 0), 0), 100) / 100),
       0
     );
-    const total = subtotal + tax;
-    return { subtotal, tax, total };
+    return { subtotal, tax, total: subtotal + tax };
   }, [lineItems]);
 
   function setLine(idx: number, patch: Partial<LineItem>) {
@@ -160,7 +175,6 @@ export default function Invoices() {
       prev.map((li, i) => (i === idx ? { ...li, ...patch } : li))
     );
   }
-
   function addLine() {
     setLineItems((prev) => [
       ...prev,
@@ -236,51 +250,72 @@ export default function Invoices() {
     return () => clearTimeout(t);
   }, [q, from, to]);
 
+  const listTotal = useMemo(() => {
+    const sum = (items || []).reduce(
+      (s: number, it: any) => s + Number(it.totalAmount || 0),
+      0
+    );
+    return fmtMoney(sum);
+  }, [items]);
+
   return (
     <div className="space-y-5 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-2xl font-semibold tracking-tight">Invoices</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="rounded-md border border-border overflow-hidden">
+      <div className="sticky top-0 z-10 bg-bg/80 backdrop-blur supports-[backdrop-filter]:bg-bg/60 border-b border-border -mx-4 px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-semibold tracking-tight">Invoices</h2>
+            <span className="text-xs rounded-full border px-2 py-0.5">
+              {type === "receivable" ? "Outgoing" : "Incoming"}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="rounded-md border border-border overflow-hidden">
+              <button
+                className={`px-3 py-1.5 ${
+                  type === "receivable" ? "bg-primary text-white" : "bg-surface"
+                }`}
+                onClick={() => setType("receivable")}
+              >
+                Outgoing
+              </button>
+              <button
+                className={`px-3 py-1.5 ${
+                  type === "payable" ? "bg-primary text-white" : "bg-surface"
+                }`}
+                onClick={() => setType("payable")}
+              >
+                Incoming
+              </button>
+            </div>
             <button
-              className={`px-3 py-1.5 ${
-                type === "receivable" ? "bg-primary text-white" : "bg-surface"
-              }`}
-              onClick={() => setType("receivable")}
+              className="px-3 py-1.5 rounded-md border"
+              onClick={() => setShowCreate((v) => !v)}
             >
-              Outgoing
+              {showCreate ? "Close" : "New Invoice"}
             </button>
             <button
-              className={`px-3 py-1.5 ${
-                type === "payable" ? "bg-primary text-white" : "bg-surface"
-              }`}
-              onClick={() => setType("payable")}
+              className="px-3 py-1.5 rounded-md border"
+              onClick={() =>
+                exportExcel({
+                  type,
+                  status,
+                  q,
+                  from,
+                  to,
+                  dueFrom,
+                  dueTo,
+                  amountMin,
+                  amountMax,
+                })
+              }
             >
-              Incoming
+              Export Excel
             </button>
           </div>
-          <button
-            className="px-3 py-1.5 rounded-md border"
-            onClick={() => setShowCreate((v) => !v)}
-          >
-            {showCreate ? "Close" : "New Invoice"}
-          </button>
-          <a
-            className="px-3 py-1.5 rounded-md border"
-            href={`${
-              import.meta.env.VITE_API_URL || "http://localhost:4000"
-            }/invoices/reports/export?type=${type}${
-              from ? `&from=${from}` : ""
-            }${to ? `&to=${to}` : ""}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Export Excel
-          </a>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-7 gap-3 items-end">
+      <div className="grid grid-cols-1 md:grid-cols-10 gap-3 items-end">
         <select
           value={status}
           onChange={(e) => setStatus(e.target.value)}
@@ -311,6 +346,18 @@ export default function Invoices() {
           onChange={(e) => setTo(e.target.value)}
           className="rounded-md border border-border bg-surface px-3 py-2"
         />
+        <input
+          type="date"
+          value={dueFrom}
+          onChange={(e) => setDueFrom(e.target.value)}
+          className="rounded-md border border-border bg-surface px-3 py-2"
+        />
+        <input
+          type="date"
+          value={dueTo}
+          onChange={(e) => setDueTo(e.target.value)}
+          className="rounded-md border border-border bg-surface px-3 py-2"
+        />
         <div className="flex gap-2">
           <select
             value={sortBy}
@@ -338,11 +385,59 @@ export default function Invoices() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+        <div className="relative">
+          <input
+            type="number"
+            value={amountMin}
+            onChange={(e) => setAmountMin(e.target.value)}
+            className="w-full rounded-md border border-border bg-surface pl-7 pr-3 py-2"
+            placeholder="Min Amount"
+          />
+          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs">
+            ₹
+          </span>
+        </div>
+        <div className="relative">
+          <input
+            type="number"
+            value={amountMax}
+            onChange={(e) => setAmountMax(e.target.value)}
+            className="w-full rounded-md border border-border bg-surface pl-7 pr-3 py-2"
+            placeholder="Max Amount"
+          />
+          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs">
+            ₹
+          </span>
+        </div>
+
+        <div>
+          <button
+            className="px-3 py-1.5 rounded-md border"
+            onClick={() =>
+              exportPdf({
+                type,
+                status,
+                q,
+                from,
+                to,
+                dueFrom,
+                dueTo,
+                amountMin,
+                amountMax,
+              })
+            }
+          >
+            Export PDF
+          </button>
+        </div>
+      </div>
+
       {showCreate && (
-        <div className="border border-border rounded-md p-4 space-y-4 bg-surface/50">
+        <div className="border border-border rounded-xl p-5 space-y-4 bg-surface/50">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs text-muted">Party Type</label>
+              <div className="text-xs text-muted mb-1">Party Type</div>
               <select
                 value={partyType}
                 onChange={(e) => setPartyType(e.target.value as any)}
@@ -354,7 +449,7 @@ export default function Invoices() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-muted">Project (Client)</label>
+              <div className="text-xs text-muted mb-1">Project (Client)</div>
               <select
                 value={projectId}
                 onChange={async (e) => {
@@ -379,7 +474,7 @@ export default function Invoices() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-muted">Party Name</label>
+              <div className="text-xs text-muted mb-1">Party Name</div>
               <input
                 placeholder="Company or person e.g. Acme Ltd."
                 value={partyName}
@@ -388,7 +483,7 @@ export default function Invoices() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted">Party Email</label>
+              <div className="text-xs text-muted mb-1">Party Email</div>
               <input
                 type="email"
                 placeholder="billing@acme.com"
@@ -398,7 +493,7 @@ export default function Invoices() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted">Issue Date</label>
+              <div className="text-xs text-muted mb-1">Issue Date</div>
               <input
                 type="date"
                 value={issueDate}
@@ -407,7 +502,7 @@ export default function Invoices() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted">Due Date</label>
+              <div className="text-xs text-muted mb-1">Due Date</div>
               <input
                 type="date"
                 value={dueDate}
@@ -416,7 +511,7 @@ export default function Invoices() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted">Payment Terms</label>
+              <div className="text-xs text-muted mb-1">Payment Terms</div>
               <input
                 placeholder="Net 15 / Net 30 / On receipt"
                 value={paymentTerms}
@@ -427,7 +522,14 @@ export default function Invoices() {
           </div>
 
           <div>
-            <label className="text-sm font-semibold">Line Items</label>
+            <div className="text-sm font-semibold">Line Items</div>
+            <div className="hidden md:grid md:grid-cols-6 gap-2 text-xs text-muted px-1 mt-2">
+              <div className="md:col-span-2">Description</div>
+              <div>Qty (hrs)</div>
+              <div>Rate (₹/hr)</div>
+              <div>Tax (%)</div>
+              <div className="text-right">Amount</div>
+            </div>
             <div className="space-y-2 mt-2">
               {lineItems.map((li, idx) => {
                 const amount =
@@ -449,33 +551,48 @@ export default function Invoices() {
                       }
                       className="rounded-md border border-border bg-surface px-3 py-2 md:col-span-2"
                     />
-                    <input
-                      type="number"
-                      placeholder="Hours e.g. 2.5"
-                      value={li.quantity}
-                      onChange={(e) =>
-                        setLine(idx, { quantity: Number(e.target.value) })
-                      }
-                      className="rounded-md border border-border bg-surface px-3 py-2"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Rate e.g. 1500"
-                      value={li.rate}
-                      onChange={(e) =>
-                        setLine(idx, { rate: Number(e.target.value) })
-                      }
-                      className="rounded-md border border-border bg-surface px-3 py-2"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Tax % e.g. 18"
-                      value={li.taxPercent}
-                      onChange={(e) =>
-                        setLine(idx, { taxPercent: Number(e.target.value) })
-                      }
-                      className="rounded-md border border-border bg-surface px-3 py-2"
-                    />
+                    <div className="relative">
+                      <input
+                        type="number"
+                        placeholder="0.00"
+                        value={li.quantity}
+                        onChange={(e) =>
+                          setLine(idx, { quantity: Number(e.target.value) })
+                        }
+                        className="w-full rounded-md border border-border bg-surface pl-3 pr-14 py-2"
+                      />
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                        hrs
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        placeholder="0.00"
+                        value={li.rate}
+                        onChange={(e) =>
+                          setLine(idx, { rate: Number(e.target.value) })
+                        }
+                        className="w-full rounded-md border border-border bg-surface pl-3 pr-16 py-2"
+                      />
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                        ₹/hr
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={li.taxPercent}
+                        onChange={(e) =>
+                          setLine(idx, { taxPercent: Number(e.target.value) })
+                        }
+                        className="w-full rounded-md border border-border bg-surface pl-3 pr-8 py-2"
+                      />
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                        %
+                      </span>
+                    </div>
                     <div className="text-right font-medium">
                       {fmtMoney(amount)}
                     </div>
@@ -512,7 +629,7 @@ export default function Invoices() {
               {showTaskPicker && (
                 <div className="mt-3 border border-border rounded-md p-2 bg-bg">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <label className="text-xs text-muted">Show</label>
+                    <div className="text-xs text-muted">Show</div>
                     <select
                       value={taskStatusFilter}
                       onChange={(e) =>
@@ -525,16 +642,14 @@ export default function Invoices() {
                       <option value="INPROGRESS">In Progress</option>
                       <option value="PENDING">Pending</option>
                     </select>
-                    <label className="text-xs text-muted ml-4">
-                      Default Rate
-                    </label>
+                    <div className="text-xs text-muted ml-4">Default Rate</div>
                     <input
                       type="number"
                       value={defaultRate}
                       onChange={(e) => setDefaultRate(Number(e.target.value))}
                       className="w-24 rounded-md border border-border bg-surface px-2 py-1"
                     />
-                    <label className="text-xs text-muted">Tax %</label>
+                    <div className="text-xs text-muted">Tax %</div>
                     <input
                       type="number"
                       value={defaultTaxPercent}
@@ -605,7 +720,7 @@ export default function Invoices() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="md:col-span-2">
-              <label className="text-xs text-muted">Notes</label>
+              <div className="text-xs text-muted">Notes</div>
               <textarea
                 placeholder="Thank you for your business. UPI/Bank details, late fee policy, or PO reference can go here."
                 value={notes}
@@ -643,7 +758,7 @@ export default function Invoices() {
       )}
 
       {loading ? (
-        <div className="overflow-hidden border border-border rounded-md">
+        <div className="overflow-hidden border border-border rounded-xl">
           <div className="animate-pulse divide-y divide-border">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="h-12 bg-surface" />
@@ -651,11 +766,11 @@ export default function Invoices() {
           </div>
         </div>
       ) : items.length === 0 ? (
-        <div className="border border-dashed border-border rounded-md p-8 text-center text-sm text-muted">
+        <div className="border border-dashed border-border rounded-xl p-8 text-center text-sm text-muted">
           No invoices found. Try changing filters or create a new invoice.
         </div>
       ) : (
-        <div className="overflow-x-auto border border-border rounded-md">
+        <div className="overflow-x-auto border border-border rounded-xl">
           <table className="min-w-full text-sm">
             <thead className="bg-surface">
               <tr>
@@ -668,12 +783,13 @@ export default function Invoices() {
               </tr>
             </thead>
             <tbody>
-              {items.map((it) => {
+              {items.map((it, i) => {
                 const d = it.issueDate ? new Date(it.issueDate) : null;
+                const row = i % 2 ? "bg-bg" : "bg-surface/30";
                 return (
                   <tr
                     key={it._id}
-                    className="border-t border-border hover:bg-surface/50"
+                    className={`border-t border-border hover:bg-surface/60 ${row}`}
                   >
                     <td className="p-2 font-mono break-words">
                       {it.invoiceNumber}
@@ -718,6 +834,15 @@ export default function Invoices() {
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr className="border-t border-border bg-surface/50">
+                <td colSpan={4} className="p-2 text-right font-semibold">
+                  Total (listed)
+                </td>
+                <td className="p-2 text-right font-semibold">{listTotal}</td>
+                <td />
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
@@ -730,6 +855,79 @@ async function downloadPdf(id: string, invoiceNumber?: string) {
   const res = await api.get(`/invoices/${id}/pdf`, { responseType: "blob" });
   const blob = new Blob([res.data], { type: "application/pdf" });
   await downloadFileBlob(blob, name);
+}
+
+async function exportExcel(opts: {
+  type: "receivable" | "payable";
+  status?: string;
+  q?: string;
+  from?: string;
+  to?: string;
+  dueFrom?: string;
+  dueTo?: string;
+  amountMin?: string;
+  amountMax?: string;
+}) {
+  const params = new URLSearchParams();
+  if (opts?.type) params.set("type", opts.type);
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  if (opts?.dueFrom) params.set("dueFrom", opts.dueFrom);
+  if (opts?.dueTo) params.set("dueTo", opts.dueTo);
+  if (opts?.amountMin) params.set("amountMin", opts.amountMin);
+  if (opts?.amountMax) params.set("amountMax", opts.amountMax);
+  const res = await api.get("/invoices/reports/export?" + params.toString(), {
+    responseType: "blob",
+  });
+  const blob = new Blob([res.data], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const fname =
+    "invoices" +
+    (opts.type ? "-" + opts.type : "") +
+    (opts.from || opts.to
+      ? "-" + (opts.from || "") + "_" + (opts.to || "")
+      : "") +
+    ".xlsx";
+  await downloadFileBlob(blob, fname);
+}
+
+async function exportPdf(opts: {
+  type: "receivable" | "payable";
+  status?: string;
+  q?: string;
+  from?: string;
+  to?: string;
+  dueFrom?: string;
+  dueTo?: string;
+  amountMin?: string;
+  amountMax?: string;
+}) {
+  const params = new URLSearchParams();
+  if (opts?.type) params.set("type", opts.type);
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  if (opts?.dueFrom) params.set("dueFrom", opts.dueFrom);
+  if (opts?.dueTo) params.set("dueTo", opts.dueTo);
+  if (opts?.amountMin) params.set("amountMin", opts.amountMin);
+  if (opts?.amountMax) params.set("amountMax", opts.amountMax);
+  const res = await api.get(
+    "/invoices/reports/export-pdf?" + params.toString(),
+    { responseType: "blob" }
+  );
+  const blob = new Blob([res.data], { type: "application/pdf" });
+  const fname =
+    "invoices" +
+    (opts.type ? "-" + opts.type : "") +
+    (opts.from || opts.to
+      ? "-" + (opts.from || "") + "_" + (opts.to || "")
+      : "") +
+    ".pdf";
+  await downloadFileBlob(blob, fname);
 }
 
 async function downloadFileBlob(blob: Blob, filename: string) {

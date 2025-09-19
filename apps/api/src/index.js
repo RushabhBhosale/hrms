@@ -22,6 +22,8 @@ app.use("/projects", require("./routes/projects"));
 app.use("/salary", require("./routes/salary"));
 app.use("/announcements", require("./routes/announcements"));
 app.use("/invoices", require("./routes/invoices"));
+app.use("/expenses", require("./routes/expenses"));
+app.use("/finance", require("./routes/finance"));
 
 connectDB().then(() => {
   const port = process.env.PORT || 4000;
