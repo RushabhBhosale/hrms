@@ -37,6 +37,7 @@ export default function Invoices() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [items, setItems] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
+  const isReceivable = type === "receivable";
 
   async function load() {
     try {
@@ -74,12 +75,27 @@ export default function Invoices() {
     return () => clearTimeout(t);
   }, [q, from, to]);
 
-  const listTotal = useMemo(() => {
-    const sum = (items || []).reduce(
-      (s: number, it: any) => s + Number(it.totalAmount || 0),
-      0
+  const listTotals = useMemo(() => {
+    return (items || []).reduce(
+      (acc, it: any) => {
+        const subtotalRaw = Number(
+          it?.subtotal ?? it?.totalAmount ?? it?.amount ?? 0
+        );
+        const taxRaw = Number(it?.taxTotal ?? 0);
+        const subtotal = Number.isFinite(subtotalRaw) ? subtotalRaw : 0;
+        const tax = Number.isFinite(taxRaw) ? taxRaw : 0;
+        const totalSource =
+          it?.totalAmount !== undefined && it?.totalAmount !== null
+            ? Number(it.totalAmount)
+            : subtotal + tax;
+        const total = Number.isFinite(totalSource) ? totalSource : 0;
+        acc.subtotal += subtotal;
+        acc.tax += tax;
+        acc.total += total;
+        return acc;
+      },
+      { subtotal: 0, tax: 0, total: 0 }
     );
-    return fmtMoney(sum);
   }, [items]);
 
   return (
@@ -264,6 +280,9 @@ export default function Invoices() {
                 <th className="text-left p-2">Party</th>
                 <th className="text-left p-2">Status</th>
                 <th className="text-right p-2">Amount</th>
+                {isReceivable && (
+                  <th className="text-right p-2">Total</th>
+                )}
                 <th className="text-right p-2">Actions</th>
               </tr>
             </thead>
@@ -271,6 +290,17 @@ export default function Invoices() {
               {items.map((it, i) => {
                 const d = it.issueDate ? new Date(it.issueDate) : null;
                 const row = i % 2 ? "bg-bg" : "bg-surface/30";
+                const subtotalRaw = Number(
+                  it?.subtotal ?? it?.totalAmount ?? it?.amount ?? 0
+                );
+                const subtotal = Number.isFinite(subtotalRaw) ? subtotalRaw : 0;
+                const taxRaw = Number(it?.taxTotal ?? 0);
+                const tax = Number.isFinite(taxRaw) ? taxRaw : 0;
+                const totalSource =
+                  it?.totalAmount !== undefined && it?.totalAmount !== null
+                    ? Number(it.totalAmount)
+                    : subtotal + tax;
+                const total = Number.isFinite(totalSource) ? totalSource : 0;
                 return (
                   <tr
                     key={it._id}
@@ -297,10 +327,24 @@ export default function Invoices() {
                       </span>
                     </td>
                     <td className="p-2 text-right">
-                      {it?.totalAmount?.toFixed
-                        ? fmtMoney(it.totalAmount)
-                        : fmtMoney(Number(it.totalAmount || 0))}
+                      {isReceivable ? (
+                        <div className="flex flex-col items-end leading-tight">
+                          <span>{fmtMoney(subtotal)}</span>
+                          {tax > 0 ? (
+                            <span className="text-xs text-muted">
+                              + Tax {fmtMoney(tax)}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        fmtMoney(total)
+                      )}
                     </td>
+                    {isReceivable && (
+                      <td className="p-2 text-right font-medium">
+                        {fmtMoney(total)}
+                      </td>
+                    )}
                     <td className="p-2 text-right space-x-3">
                       <Link
                         className="underline"
@@ -324,7 +368,25 @@ export default function Invoices() {
                 <td colSpan={4} className="p-2 text-right font-semibold">
                   Total (listed)
                 </td>
-                <td className="p-2 text-right font-semibold">{listTotal}</td>
+                <td className="p-2 text-right font-semibold">
+                  {isReceivable ? (
+                    <div className="flex flex-col items-end leading-tight">
+                      <span>{fmtMoney(listTotals.subtotal)}</span>
+                      {listTotals.tax > 0 ? (
+                        <span className="text-xs text-muted">
+                          + Tax {fmtMoney(listTotals.tax)}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : (
+                    fmtMoney(listTotals.total)
+                  )}
+                </td>
+                {isReceivable && (
+                  <td className="p-2 text-right font-semibold">
+                    {fmtMoney(listTotals.total)}
+                  </td>
+                )}
                 <td />
               </tr>
             </tfoot>
