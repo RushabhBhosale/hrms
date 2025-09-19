@@ -82,6 +82,7 @@ function drawInvoice(doc, inv) {
   const margin = 36;
   const contentW = pageW - margin * 2;
   const PAD = 10;
+  const currencyCode = inv.currency || "INR";
   const fmt = (n) =>
     Number(n || 0).toLocaleString("en-IN", {
       minimumFractionDigits: 2,
@@ -162,7 +163,7 @@ function drawInvoice(doc, inv) {
     { w: 60, label: "Qty", align: "right" },
     { w: 90, label: "Rate", align: "right" },
     { w: 70, label: "Tax %", align: "right" },
-    { w: 100, label: "Total", align: "right" },
+    { w: 100, label: "Line Total", align: "right" },
   ];
   let x = margin;
   doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
@@ -181,29 +182,50 @@ function drawInvoice(doc, inv) {
   // Rows with zebra stripes
   doc.font("Helvetica").fontSize(10).fillColor("#111827");
   let ry = tableTop + 24;
+  const baseRowHeight = 18;
   (inv.lineItems || []).forEach((li, idx) => {
+    const quantity = Number(li.quantity || 0);
+    const rate = Number(li.rate || 0);
+    const taxPercent = Math.min(Math.max(Number(li.taxPercent || 0), 0), 100);
+    const lineSubtotal = quantity * rate;
+    const lineTotal =
+      li.total !== undefined && li.total !== null && !Number.isNaN(li.total)
+        ? Number(li.total)
+        : lineSubtotal * (1 + taxPercent / 100);
+    const roundedLineTotal = Math.round(lineTotal * 100) / 100;
+
+    const description = String(li.description || "").replace(/\r\n/g, "\n");
+    const descHeight = doc.heightOfString(description, {
+      width: cols[0].w - PAD * 2,
+      align: "left",
+    });
+    const rowHeight = Math.max(baseRowHeight, descHeight + 8);
+    const rowTop = ry;
+
     if (idx % 2 === 0) {
-      doc
-        .rect(margin, ry - 4, contentW, 18)
-        .fill("#FAFAFA")
-        .fillColor("#111827");
+      doc.rect(margin, rowTop, contentW, rowHeight).fill("#FAFAFA");
+      doc.fillColor("#111827");
     }
+
     let cx = margin;
     const cells = [
-      String(li.description || ""),
-      String(Number(li.quantity || 0)),
-      fmt(li.rate),
-      String(Number(li.taxPercent || 0)),
-      fmt(li.total),
+      description,
+      fmt(quantity),
+      fmt(rate),
+      fmt(taxPercent),
+      `${currencyCode} ${fmt(roundedLineTotal)}`,
     ];
+
     cells.forEach((val, i) => {
-      doc.text(val, cx + PAD, ry, {
+      doc.text(val, cx + PAD, rowTop, {
         width: cols[i].w - PAD * 2,
         align: cols[i].align,
+        lineBreak: true,
+        height: rowHeight,
       });
       cx += cols[i].w;
     });
-    ry += 18;
+    ry += rowHeight;
   });
 
   // Totals box

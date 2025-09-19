@@ -613,7 +613,7 @@ export default function AdminDash() {
               disabled={loadingAtt || !!pending}
               className="rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
             >
-              {loadingAtt ? "Loading…" : "Refresh"}
+              {loadingAtt ? "Loading..." : "Refresh"}
             </button>
             {punchedIn ? (
               <button
@@ -621,7 +621,7 @@ export default function AdminDash() {
                 onClick={() => punch("out")}
                 disabled={pending === "out"}
               >
-                {pending === "out" ? "Punching Out…" : "Punch Out"}
+                {pending === "out" ? "Punching Out..." : "Punch Out"}
               </button>
             ) : (
               <button
@@ -629,7 +629,7 @@ export default function AdminDash() {
                 onClick={() => punch("in")}
                 disabled={pending === "in"}
               >
-                {pending === "in" ? "Punching In…" : "Punch In"}
+                {pending === "in" ? "Punching In..." : "Punch In"}
               </button>
             )}
           </div>
@@ -670,7 +670,7 @@ export default function AdminDash() {
             disabled={loadingFinance}
           >
             <CalendarClock size={16} />
-            {loadingFinance ? "Refreshing…" : "Refresh"}
+            {loadingFinance ? "Refreshing..." : "Refresh"}
           </button>
         </div>
 
@@ -682,7 +682,7 @@ export default function AdminDash() {
 
         {loadingFinance && !finance ? (
           <div className="flex h-24 items-center justify-center text-sm text-muted">
-            Loading finance metrics…
+            Loading finance metrics...
           </div>
         ) : finance ? (
           <div className="space-y-6">
@@ -866,7 +866,7 @@ export default function AdminDash() {
                 setAssignPage(1);
                 setAssignQ(e.target.value);
               }}
-              placeholder="Search name or email…"
+              placeholder="Search name or email..."
               className="h-10 w-64 rounded-md border border-border bg-surface px-3"
             />
             <select
@@ -915,14 +915,14 @@ export default function AdminDash() {
               className="rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-bg disabled:opacity-60"
               disabled={loadingProjects}
             >
-              {loadingProjects ? "Refreshing…" : "Refresh"}
+              {loadingProjects ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
 
         <div className="mt-3 text-sm text-muted">
           {loadingProjects
-            ? "Loading…"
+            ? "Loading..."
             : `Showing ${assignStart}-${assignEnd} of ${assignTotal}`}
         </div>
 
@@ -983,7 +983,7 @@ export default function AdminDash() {
                 <tr>
                   <td colSpan={4} className="py-4 text-center text-muted">
                     {loadingProjects
-                      ? "Loading assignments…"
+                      ? "Loading assignments..."
                       : "No employees or projects found."}
                   </td>
                 </tr>

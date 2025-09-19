@@ -43,6 +43,7 @@ import Reports from "./pages/report/Reports";
 import LandingPage from "./pages/LandingPage";
 import Announcements from "./pages/employee/Announcements";
 import Invoices from "./pages/admin/Invoices";
+import InvoiceCreate from "./pages/admin/InvoiceCreate";
 import InvoiceDetails from "./pages/admin/InvoiceDetails";
 import Expenses from "./pages/admin/Expenses";
 
@@ -99,6 +100,7 @@ export default function App() {
         <Route path="salary/slips" element={<SalarySlipsAdmin />} />
         <Route path="announcements" element={<AnnouncementsAdmin />} />
         <Route path="invoices" element={<Invoices />} />
+        <Route path="invoices/new" element={<InvoiceCreate />} />
         <Route path="invoices/:id" element={<InvoiceDetails />} />
         <Route path="expenses" element={<Expenses />} />
         <Route path="profile" element={<Profile />} />
