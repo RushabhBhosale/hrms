@@ -31,8 +31,6 @@ export default function Invoices() {
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [dueFrom, setDueFrom] = useState("");
-  const [dueTo, setDueTo] = useState("");
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [sortBy, setSortBy] = useState("issueDate");
@@ -50,8 +48,6 @@ export default function Invoices() {
           q: q || undefined,
           from: from || undefined,
           to: to || undefined,
-          dueFrom: dueFrom || undefined,
-          dueTo: dueTo || undefined,
           amountMin: amountMin || undefined,
           amountMax: amountMax || undefined,
           sortBy,
@@ -121,22 +117,20 @@ export default function Invoices() {
             >
               New Invoice
             </Link>
-            <button
-              className="px-3 py-1.5 rounded-md border"
-              onClick={() =>
-                exportExcel({
-                  type,
-                  status,
-                  q,
-                  from,
-                  to,
-                  dueFrom,
-                  dueTo,
-                  amountMin,
-                  amountMax,
-                })
-              }
-            >
+          <button
+            className="px-3 py-1.5 rounded-md border"
+            onClick={() =>
+              exportExcel({
+                type,
+                status,
+                q,
+                from,
+                to,
+                amountMin,
+                amountMax,
+              })
+            }
+          >
               Export Excel
             </button>
           </div>
@@ -172,18 +166,6 @@ export default function Invoices() {
           type="date"
           value={to}
           onChange={(e) => setTo(e.target.value)}
-          className="rounded-md border border-border bg-surface px-3 py-2"
-        />
-        <input
-          type="date"
-          value={dueFrom}
-          onChange={(e) => setDueFrom(e.target.value)}
-          className="rounded-md border border-border bg-surface px-3 py-2"
-        />
-        <input
-          type="date"
-          value={dueTo}
-          onChange={(e) => setDueTo(e.target.value)}
           className="rounded-md border border-border bg-surface px-3 py-2"
         />
         <div className="flex gap-2">
@@ -249,8 +231,6 @@ export default function Invoices() {
                 q,
                 from,
                 to,
-                dueFrom,
-                dueTo,
                 amountMin,
                 amountMax,
               })
@@ -368,8 +348,6 @@ async function exportExcel(opts: {
   q?: string;
   from?: string;
   to?: string;
-  dueFrom?: string;
-  dueTo?: string;
   amountMin?: string;
   amountMax?: string;
 }) {
@@ -379,8 +357,6 @@ async function exportExcel(opts: {
   if (opts?.q) params.set("q", opts.q);
   if (opts?.from) params.set("from", opts.from);
   if (opts?.to) params.set("to", opts.to);
-  if (opts?.dueFrom) params.set("dueFrom", opts.dueFrom);
-  if (opts?.dueTo) params.set("dueTo", opts.dueTo);
   if (opts?.amountMin) params.set("amountMin", opts.amountMin);
   if (opts?.amountMax) params.set("amountMax", opts.amountMax);
   const res = await api.get("/invoices/reports/export?" + params.toString(), {
@@ -405,8 +381,6 @@ async function exportPdf(opts: {
   q?: string;
   from?: string;
   to?: string;
-  dueFrom?: string;
-  dueTo?: string;
   amountMin?: string;
   amountMax?: string;
 }) {
@@ -416,8 +390,6 @@ async function exportPdf(opts: {
   if (opts?.q) params.set("q", opts.q);
   if (opts?.from) params.set("from", opts.from);
   if (opts?.to) params.set("to", opts.to);
-  if (opts?.dueFrom) params.set("dueFrom", opts.dueFrom);
-  if (opts?.dueTo) params.set("dueTo", opts.dueTo);
   if (opts?.amountMin) params.set("amountMin", opts.amountMin);
   if (opts?.amountMax) params.set("amountMax", opts.amountMax);
   const res = await api.get(
