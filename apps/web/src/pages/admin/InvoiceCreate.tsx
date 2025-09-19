@@ -6,7 +6,8 @@ type LineItem = {
   description: string;
   quantity: number;
   rate: number;
-  taxPercent: number;
+  amountMode: "time" | "flat";
+  flatAmount: number;
 };
 
 type ProjectLite = { _id: string; title: string };
@@ -40,7 +41,7 @@ export default function InvoiceCreate() {
   const [paymentTerms, setPaymentTerms] = useState("");
   const [notes, setNotes] = useState("");
   const [lineItems, setLineItems] = useState<LineItem[]>([
-    { description: "", quantity: 1, rate: 0, taxPercent: 0 },
+    { description: "", quantity: 1, rate: 0, amountMode: "time", flatAmount: 0 },
   ]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -56,7 +57,7 @@ export default function InvoiceCreate() {
     "ALL" | "DONE" | "INPROGRESS" | "PENDING"
   >("DONE");
   const [defaultRate, setDefaultRate] = useState<number>(0);
-  const [defaultTaxPercent, setDefaultTaxPercent] = useState<number>(0);
+  const [taxPercent, setTaxPercent] = useState<number>(0);
   const [taskAmounts, setTaskAmounts] = useState<Record<string, string>>({});
 
   const isPayable = type === "payable";
@@ -109,12 +110,30 @@ export default function InvoiceCreate() {
   function addLine() {
     setLineItems((prev) => [
       ...prev,
-      { description: "", quantity: 1, rate: 0, taxPercent: 0 },
+      { description: "", quantity: 1, rate: 0, amountMode: "time", flatAmount: 0 },
     ]);
   }
 
   function rmLine(idx: number) {
     setLineItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function changeAmountMode(idx: number, mode: "time" | "flat") {
+    setLineItems((prev) =>
+      prev.map((li, i) => {
+        if (i !== idx) return li;
+        if (mode === "flat") {
+          const computed = Number(li.quantity || 0) * Number(li.rate || 0);
+          return {
+            ...li,
+            amountMode: "flat",
+            flatAmount:
+              li.flatAmount || (Number.isFinite(computed) ? computed : 0),
+          };
+        }
+        return { ...li, amountMode: "time" };
+      })
+    );
   }
 
   function toggleTask(id: string) {
@@ -133,9 +152,10 @@ export default function InvoiceCreate() {
     const hasAmount = finalAmount !== undefined;
     const line: LineItem = {
       description: `Task: ${task.title}`,
-      quantity: hasAmount ? 1 : qty || 1,
-      rate: hasAmount ? finalAmount : defaultRate || 0,
-      taxPercent: defaultTaxPercent || 0,
+      quantity: qty || 1,
+      rate: defaultRate || 0,
+      amountMode: hasAmount ? "flat" : "time",
+      flatAmount: hasAmount ? finalAmount || 0 : 0,
     };
     setLineItems((prev) => [...prev, line]);
   }
@@ -150,17 +170,14 @@ export default function InvoiceCreate() {
       const taskId = String(t._id);
       const overrideRaw = taskAmounts[taskId];
       const overrideAmount = overrideRaw ? Number(overrideRaw) : undefined;
+      const hasOverride =
+        overrideAmount !== undefined && !Number.isNaN(overrideAmount);
       return {
         description: `Task: ${t.title}`,
-        quantity:
-          overrideAmount !== undefined && !Number.isNaN(overrideAmount)
-            ? 1
-            : qty || 1,
-        rate:
-          overrideAmount !== undefined && !Number.isNaN(overrideAmount)
-            ? overrideAmount
-            : defaultRate || 0,
-        taxPercent: defaultTaxPercent || 0,
+        quantity: qty || 1,
+        rate: defaultRate || 0,
+        amountMode: hasOverride ? "flat" : "time",
+        flatAmount: hasOverride ? overrideAmount || 0 : 0,
       } as LineItem;
     });
     setLineItems((prev) => [...prev, ...mapped]);
@@ -174,20 +191,25 @@ export default function InvoiceCreate() {
   }
 
   const totals = useMemo(() => {
-    const subtotal = lineItems.reduce(
-      (s, li) => s + Number(li.quantity || 0) * Number(li.rate || 0),
-      0
+    const subtotal = lineItems.reduce((sum, li) => {
+      const lineAmount =
+        li.amountMode === "flat"
+          ? Number(li.flatAmount || 0)
+          : Number(li.quantity || 0) * Number(li.rate || 0);
+      return sum + (Number.isFinite(lineAmount) ? lineAmount : 0);
+    }, 0);
+    const normalizedTaxPercent = Math.min(
+      Math.max(Number(taxPercent || 0), 0),
+      100
     );
-    const tax = lineItems.reduce(
-      (s, li) =>
-        s +
-        Number(li.quantity || 0) *
-          Number(li.rate || 0) *
-          (Math.min(Math.max(Number(li.taxPercent || 0), 0), 100) / 100),
-      0
-    );
-    return { subtotal, tax, total: subtotal + tax };
-  }, [lineItems]);
+    const tax = subtotal * (normalizedTaxPercent / 100);
+    return {
+      subtotal,
+      tax,
+      total: subtotal + tax,
+      taxPercent: normalizedTaxPercent,
+    };
+  }, [lineItems, taxPercent]);
 
   const canSave = useMemo(() => {
     if (!issueDate) return false;
@@ -241,6 +263,7 @@ export default function InvoiceCreate() {
     try {
       setSaving(true);
       setErr(null);
+      const normalizedTaxPercent = totals.taxPercent ?? 0;
       const payload: any = {
         type,
         partyType,
@@ -259,7 +282,19 @@ export default function InvoiceCreate() {
                 taxPercent: 0,
               },
             ]
-          : lineItems,
+          : lineItems.map((li) => {
+              const useFlat = li.amountMode === "flat";
+              const quantity = useFlat ? 1 : Number(li.quantity || 0);
+              const rate = useFlat
+                ? Number(li.flatAmount || 0)
+                : Number(li.rate || 0);
+              return {
+                description: li.description,
+                quantity: Number.isFinite(quantity) ? quantity : 0,
+                rate: Number.isFinite(rate) ? rate : 0,
+                taxPercent: normalizedTaxPercent,
+              };
+            }),
         notes: notes || undefined,
         status: "draft",
       };
@@ -419,267 +454,271 @@ export default function InvoiceCreate() {
         {isReceivable && (
           <div>
             <div className="text-sm font-semibold">Line Items</div>
-            <div className="hidden md:grid md:grid-cols-6 gap-2 text-xs text-muted px-1 mt-2">
-              <div className="md:col-span-2">Description</div>
-              <div>Qty (hrs)</div>
-              <div>Rate (₹/hr)</div>
-              <div>Tax (%)</div>
-              <div className="text-right">Amount</div>
-            </div>
             <div className="space-y-3 mt-2">
+              {lineItems.length === 0 && (
+                <div className="border border-dashed border-border rounded-md p-4 text-sm text-muted">
+                  No line items yet. Add one to get started.
+                </div>
+              )}
               {lineItems.map((li, idx) => {
-                const amount =
-                  Number(li.quantity || 0) *
-                  Number(li.rate || 0) *
-                  (1 +
-                    Math.min(Math.max(Number(li.taxPercent || 0), 0), 100) /
-                      100);
+                const isTime = li.amountMode === "time";
+                const amount = isTime
+                  ? Number(li.quantity || 0) * Number(li.rate || 0)
+                  : Number(li.flatAmount || 0);
+                const safeAmount = Number.isFinite(amount) ? amount : 0;
                 return (
-                  <>
-                    <div
-                      key={idx}
-                      className="grid grid-cols-1 md:grid-cols-6 gap-2 items-start"
-                    >
-                      <div className="md:col-span-2 space-y-1">
-                        <textarea
-                          placeholder="Describe work or item e.g. Landing page design (8h)"
-                          value={li.description}
-                          onChange={(e) =>
-                            setLine(idx, { description: e.target.value })
-                          }
-                          className="rounded-md border border-border bg-surface px-3 py-2"
-                          rows={3}
-                        />
-                        <div className="flex gap-2 text-xs text-muted">
-                          <button
-                            type="button"
-                            className="px-2 py-1 border rounded"
-                            onClick={() => appendBullet(idx)}
-                          >
-                            • Bullet
-                          </button>
-                          <button
-                            type="button"
-                            className="px-2 py-1 border rounded"
-                            onClick={() => appendNumbered(idx)}
-                          >
-                            1. Numbered
-                          </button>
-                          <span className="inline-flex items-center">
-                            Lists supported via Enter
-                          </span>
-                        </div>
-                      </div>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          placeholder="0"
-                          value={li.quantity}
-                          onChange={(e) =>
-                            setLine(idx, { quantity: Number(e.target.value) })
-                          }
-                          className="w-full rounded-md border border-border bg-surface pl-3 pr-8 py-2"
-                        />
-                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
-                          hrs
-                        </span>
-                      </div>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          placeholder="0"
-                          value={li.rate}
-                          onChange={(e) =>
-                            setLine(idx, { rate: Number(e.target.value) })
-                          }
-                          className="w-full rounded-md border border-border bg-surface pl-4 pr-3 py-2"
-                        />
-                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted">
-                          ₹
-                        </span>
-                      </div>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          placeholder="0"
-                          value={li.taxPercent}
-                          onChange={(e) =>
-                            setLine(idx, { taxPercent: Number(e.target.value) })
-                          }
-                          className="w-full rounded-md border border-border bg-surface pl-3 pr-8 py-2"
-                        />
-                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
-                          %
-                        </span>
-                      </div>
-                      <div className="text-right font-medium">
-                        {fmtMoney(amount)}
-                      </div>
+                  <div
+                    key={idx}
+                    className="rounded-lg border border-border bg-surface px-3 py-3 space-y-3"
+                  >
+                    <div className="flex items-center justify-between text-xs text-muted">
+                      <span>Line {idx + 1}</span>
                       <button
                         type="button"
                         onClick={() => rmLine(idx)}
-                        className="px-3 py-2 rounded-md border"
+                        className="px-2 py-1 border rounded"
                       >
                         Remove
                       </button>
                     </div>
-                  </>
+                    <textarea
+                      placeholder="Describe work or item e.g. Landing page design (8h)"
+                      value={li.description}
+                      onChange={(e) => setLine(idx, { description: e.target.value })}
+                      className="w-full rounded-md border border-border bg-surface px-3 py-2"
+                      rows={3}
+                    />
+                    <div className="flex gap-2 text-xs text-muted flex-wrap">
+                      <button
+                        type="button"
+                        className="px-2 py-1 border rounded"
+                        onClick={() => appendBullet(idx)}
+                      >
+                        • Bullet
+                      </button>
+                      <button
+                        type="button"
+                        className="px-2 py-1 border rounded"
+                        onClick={() => appendNumbered(idx)}
+                      >
+                        1. Numbered
+                      </button>
+                      <span className="inline-flex items-center">
+                        Lists supported via Enter
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-xs text-muted">Amount type</span>
+                      <button
+                        type="button"
+                        onClick={() => changeAmountMode(idx, "time")}
+                        className={`px-2 py-1 border rounded ${
+                          isTime ? "bg-primary text-white border-primary" : ""
+                        }`}
+                      >
+                        Hours × Rate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => changeAmountMode(idx, "flat")}
+                        className={`px-2 py-1 border rounded ${
+                          !isTime ? "bg-primary text-white border-primary" : ""
+                        }`}
+                      >
+                        Flat amount
+                      </button>
+                    </div>
+                    {isTime ? (
+                      <div className="flex flex-wrap gap-3">
+                        <div className="relative w-full md:w-32">
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="0"
+                            value={li.quantity}
+                            onChange={(e) =>
+                              setLine(idx, { quantity: Number(e.target.value) })
+                            }
+                            className="w-full rounded-md border border-border bg-surface pl-3 pr-8 py-2"
+                          />
+                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                            hrs
+                          </span>
+                        </div>
+                        <div className="relative w-full md:w-36">
+                          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                            ₹
+                          </span>
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="0"
+                            value={li.rate}
+                            onChange={(e) =>
+                              setLine(idx, { rate: Number(e.target.value) })
+                            }
+                            className="w-full rounded-md border border-border bg-surface pl-5 pr-3 py-2"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="relative w-full md:w-48">
+                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                          ₹
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          placeholder="0"
+                          value={li.flatAmount}
+                          onChange={(e) =>
+                            setLine(idx, { flatAmount: Number(e.target.value) })
+                          }
+                          className="w-full rounded-md border border-border bg-surface pl-5 pr-3 py-2"
+                        />
+                      </div>
+                    )}
+                    <div className="text-right font-medium">
+                      Amount: {fmtMoney(safeAmount)}
+                    </div>
+                  </div>
                 );
               })}
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={addLine}
-                  className="px-3 py-2 rounded-md border"
-                >
-                  Add line
-                </button>
-                <button
-                  disabled={!projectId}
-                  onClick={() => {
-                    if (projectId) {
-                      setShowTaskPicker((v) => !v);
-                      if (!tasks.length) loadTasksForProject(projectId);
-                    }
-                  }}
-                  className="px-3 py-2 rounded-md border disabled:opacity-50"
-                >
-                  {showTaskPicker ? "Hide tasks" : "Add tasks from project"}
-                </button>
-              </div>
-
-              {showTaskPicker && (
-                <div className="mt-3 border border-border rounded-md p-2 bg-bg">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <div className="text-xs text-muted">Show</div>
-                    <select
-                      value={taskStatusFilter}
-                      onChange={(e) =>
-                        setTaskStatusFilter(e.target.value as any)
-                      }
-                      className="rounded-md border border-border bg-surface px-2 py-1"
-                    >
-                      <option value="ALL">All</option>
-                      <option value="DONE">Done</option>
-                      <option value="INPROGRESS">In Progress</option>
-                      <option value="PENDING">Pending</option>
-                    </select>
-                    <div className="text-xs text-muted ml-4">Default Rate</div>
-                    <input
-                      type="number"
-                      value={defaultRate}
-                      onChange={(e) => setDefaultRate(Number(e.target.value))}
-                      className="w-24 rounded-md border border-border bg-surface px-2 py-1"
-                    />
-                    <div className="text-xs text-muted">Tax %</div>
-                    <input
-                      type="number"
-                      value={defaultTaxPercent}
-                      onChange={(e) =>
-                        setDefaultTaxPercent(Number(e.target.value))
-                      }
-                      className="w-20 rounded-md border border-border bg-surface px-2 py-1"
-                    />
-                    <button
-                      onClick={importSelectedTasks}
-                      className="ml-auto px-3 py-2 rounded-md border"
-                    >
-                      Add selected
-                    </button>
-                  </div>
-                  <div className="overflow-x-auto mt-2">
-                    {taskLoading ? (
-                      <div className="p-2">Loading tasks…</div>
-                    ) : (
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-surface">
-                          <tr>
-                            <th className="p-2 text-left">Select</th>
-                            <th className="p-2 text-left">Task</th>
-                            <th className="p-2 text-right">Minutes</th>
-                            <th className="p-2 text-right">Hours</th>
-                            <th className="p-2 text-right">Amount</th>
-                            <th className="p-2 text-right">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {tasks
-                            .filter(
-                              (t: any) =>
-                                taskStatusFilter === "ALL" ||
-                                t.status === taskStatusFilter
-                            )
-                            .map((t: any) => {
-                              const minutes = Number(t.timeSpentMinutes || 0);
-                              const hours =
-                                Math.round((minutes / 60) * 100) / 100;
-                              const taskId = String(t._id);
-                              const overrideValue = taskAmounts[taskId] ?? "";
-                              return (
-                                <tr
-                                  key={t._id}
-                                  className="border-t border-border"
-                                >
-                                  <td className="p-2">
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedTaskIds.includes(taskId)}
-                                      onChange={() => toggleTask(taskId)}
-                                    />
-                                  </td>
-                                  <td className="p-2 break-words">{t.title}</td>
-                                  <td className="p-2 text-right">{minutes}</td>
-                                  <td className="p-2 text-right">{hours}</td>
-                                  <td className="p-2 text-right">
-                                    <input
-                                      type="number"
-                                      value={overrideValue}
-                                      onChange={(e) =>
-                                        setTaskAmounts((prev) => ({
-                                          ...prev,
-                                          [taskId]: e.target.value,
-                                        }))
-                                      }
-                                      placeholder={
-                                        defaultRate
-                                          ? String(
-                                              Math.round(
-                                                hours * defaultRate * 100
-                                              ) / 100
-                                            )
-                                          : ""
-                                      }
-                                      className="w-28 rounded-md border border-border bg-surface px-2 py-1 text-right"
-                                    />
-                                  </td>
-                                  <td className="p-2 text-right">
-                                    <button
-                                      type="button"
-                                      className="px-2 py-1 border rounded"
-                                      onClick={() => {
-                                        const amount = overrideValue
-                                          ? Number(overrideValue)
-                                          : undefined;
-                                        addTaskLineFromTask(t, amount);
-                                        setTaskAmounts((prev) => {
-                                          const next = { ...prev };
-                                          delete next[taskId];
-                                          return next;
-                                        });
-                                      }}
-                                    >
-                                      Add
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
+            <div className="flex gap-2 flex-wrap mt-3">
+              <button onClick={addLine} className="px-3 py-2 rounded-md border">
+                Add line
+              </button>
+              <button
+                disabled={!projectId}
+                onClick={() => {
+                  if (projectId) {
+                    setShowTaskPicker((v) => !v);
+                    if (!tasks.length) loadTasksForProject(projectId);
+                  }
+                }}
+                className="px-3 py-2 rounded-md border disabled:opacity-50"
+              >
+                {showTaskPicker ? "Hide tasks" : "Add tasks from project"}
+              </button>
+            </div>
+
+            {showTaskPicker && (
+              <div className="mt-3 border border-border rounded-md p-2 bg-bg">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="text-xs text-muted">Show</div>
+                  <select
+                    value={taskStatusFilter}
+                    onChange={(e) => setTaskStatusFilter(e.target.value as any)}
+                    className="rounded-md border border-border bg-surface px-2 py-1"
+                  >
+                    <option value="ALL">All</option>
+                    <option value="DONE">Done</option>
+                    <option value="INPROGRESS">In Progress</option>
+                    <option value="PENDING">Pending</option>
+                  </select>
+                  <div className="text-xs text-muted ml-4">Default Rate</div>
+                  <input
+                    type="number"
+                    value={defaultRate}
+                    onChange={(e) => setDefaultRate(Number(e.target.value))}
+                    className="w-24 rounded-md border border-border bg-surface px-2 py-1"
+                  />
+                  <button
+                    onClick={importSelectedTasks}
+                    className="ml-auto px-3 py-2 rounded-md border"
+                  >
+                    Add selected
+                  </button>
+                </div>
+                <div className="overflow-x-auto mt-2">
+                  {taskLoading ? (
+                    <div className="p-2">Loading tasks…</div>
+                  ) : (
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-surface">
+                        <tr>
+                          <th className="p-2 text-left">Select</th>
+                          <th className="p-2 text-left">Task</th>
+                          <th className="p-2 text-right">Minutes</th>
+                          <th className="p-2 text-right">Hours</th>
+                          <th className="p-2 text-right">Override Amount (₹)</th>
+                          <th className="p-2 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tasks
+                          .filter(
+                            (t: any) =>
+                              taskStatusFilter === "ALL" ||
+                              t.status === taskStatusFilter
+                          )
+                          .map((t: any) => {
+                            const minutes = Number(t.timeSpentMinutes || 0);
+                            const hours = Math.round((minutes / 60) * 100) / 100;
+                            const taskId = String(t._id);
+                            const overrideValue = taskAmounts[taskId] ?? "";
+                            return (
+                              <tr key={t._id} className="border-t border-border">
+                                <td className="p-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedTaskIds.includes(taskId)}
+                                    onChange={() => toggleTask(taskId)}
+                                  />
+                                </td>
+                                <td className="p-2 break-words">{t.title}</td>
+                                <td className="p-2 text-right">{minutes}</td>
+                                <td className="p-2 text-right">{hours}</td>
+                                <td className="p-2 text-right">
+                                  <input
+                                    type="number"
+                                    value={overrideValue}
+                                    onChange={(e) =>
+                                      setTaskAmounts((prev) => ({
+                                        ...prev,
+                                        [taskId]: e.target.value,
+                                      }))
+                                    }
+                                    placeholder={
+                                      defaultRate
+                                        ? String(
+                                            Math.round(hours * defaultRate * 100) /
+                                              100
+                                          )
+                                        : ""
+                                    }
+                                    className="w-28 rounded-md border border-border bg-surface px-2 py-1 text-right"
+                                  />
+                                </td>
+                                <td className="p-2 text-right">
+                                  <button
+                                    type="button"
+                                    className="px-2 py-1 border rounded"
+                                    onClick={() => {
+                                      const amount = overrideValue
+                                        ? Number(overrideValue)
+                                        : undefined;
+                                      addTaskLineFromTask(t, amount);
+                                      setTaskAmounts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[taskId];
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    Add
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -747,7 +786,7 @@ export default function InvoiceCreate() {
               className="w-full rounded-md border border-border bg-surface px-3 py-2 h-24"
             />
           </div>
-          <div className="border rounded-md p-3 bg-bg space-y-1">
+          <div className="border rounded-md p-3 bg-bg space-y-3">
             <div className="flex justify-between">
               <span>Subtotal</span>
               <span>
@@ -756,10 +795,31 @@ export default function InvoiceCreate() {
                 )}
               </span>
             </div>
-            <div className="flex justify-between">
-              <span>Tax</span>
-              <span>{fmtMoney(isPayable ? 0 : totals.tax)}</span>
-            </div>
+            {isPayable ? (
+              <div className="flex justify-between">
+                <span>Tax</span>
+                <span>{fmtMoney(0)}</span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span>Tax %</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    value={taxPercent}
+                    onChange={(e) => setTaxPercent(Number(e.target.value))}
+                    className="w-24 rounded-md border border-border bg-surface px-2 py-1 text-right"
+                  />
+                </div>
+                <div className="flex justify-between">
+                  <span>Tax ({totals.taxPercent}%)</span>
+                  <span>{fmtMoney(totals.tax)}</span>
+                </div>
+              </div>
+            )}
             <div className="flex justify-between font-semibold text-base">
               <span>Total</span>
               <span>
