@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { CalendarClock, UploadCloud } from "lucide-react";
+import { CalendarClock, UploadCloud, Download } from "lucide-react";
 
 import { api } from "../../lib/api";
 
@@ -32,6 +32,38 @@ type MasterWarning = {
   sheet: string;
   rowNumber?: number;
   message: string;
+};
+
+type CountryOption = {
+  id: string;
+  name: string;
+  nameKey: string;
+  isoCode: string | null;
+  phoneCode: string | null;
+};
+
+type StateOption = {
+  id: string;
+  name: string;
+  nameKey: string;
+  stateKey: string;
+  isoCode: string | null;
+  countryId: string;
+  countryName: string;
+  countryKey: string;
+};
+
+type CityOption = {
+  id: string;
+  name: string;
+  nameKey: string;
+  cityKey: string;
+  stateId: string;
+  stateName: string;
+  stateKey: string;
+  countryId: string;
+  countryName: string;
+  countryKey: string;
 };
 
 const MASTER_LABELS: Record<keyof MasterSummary, string> = {
@@ -72,10 +104,25 @@ export default function SuperadminDashboard() {
   const [masterUploadResult, setMasterUploadResult] =
     useState<MasterImportResult | null>(null);
   const [masterWarnings, setMasterWarnings] = useState<MasterWarning[]>([]);
+  const [countries, setCountries] = useState<CountryOption[]>([]);
+  const [states, setStates] = useState<StateOption[]>([]);
+  const [cities, setCities] = useState<CityOption[]>([]);
+  const [countriesLoading, setCountriesLoading] = useState(false);
+  const [statesLoading, setStatesLoading] = useState(false);
+  const [citiesLoading, setCitiesLoading] = useState(false);
+  const [hierarchyError, setHierarchyError] = useState<string | null>(null);
+  const [selectedCountryId, setSelectedCountryId] = useState<string>("");
+  const [selectedStateId, setSelectedStateId] = useState<string>("");
+  const [selectedCityId, setSelectedCityId] = useState<string>("");
+  const [downloadingSample, setDownloadingSample] = useState(false);
+  const [sampleDownloadError, setSampleDownloadError] = useState<string | null>(
+    null
+  );
 
   useEffect(() => {
     refreshCompanyCount();
     refreshMasterSummary();
+    loadCountries();
   }, []);
 
   async function refreshCompanyCount() {
@@ -135,6 +182,7 @@ export default function SuperadminDashboard() {
       setMasterSummary(res.data.summary || null);
       setMasterUploadResult(res.data.result || null);
       setMasterWarnings(res.data.warnings || []);
+      void loadCountries();
       setMasterFile(null);
       if (masterFileInputRef.current) {
         masterFileInputRef.current.value = "";
@@ -157,6 +205,232 @@ export default function SuperadminDashboard() {
     } finally {
       setMasterUploading(false);
     }
+  }
+
+  async function loadCountries() {
+    try {
+      setHierarchyError(null);
+      setCountriesLoading(true);
+      const res = await api.get("/masters/countries");
+      const list = Array.isArray(res.data?.countries)
+        ? (res.data.countries as CountryOption[])
+        : [];
+      setCountries(list);
+      if (!list.length) {
+        setStates([]);
+        setCities([]);
+        setSelectedCountryId("");
+        setSelectedStateId("");
+        setSelectedCityId("");
+      } else {
+        setSelectedCountryId((prev) => {
+          if (prev && list.some((country) => country.id === prev)) {
+            return prev;
+          }
+          return list[0].id;
+        });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setHierarchyError(
+        err?.response?.data?.error || "Failed to load countries."
+      );
+      setCountries([]);
+      setSelectedCountryId("");
+      setStates([]);
+      setSelectedStateId("");
+      setCities([]);
+      setSelectedCityId("");
+    } finally {
+      setCountriesLoading(false);
+    }
+  }
+
+  async function loadStates(countryId: string) {
+    if (!countryId) {
+      setStates([]);
+      setSelectedStateId("");
+      setCities([]);
+      setSelectedCityId("");
+      return;
+    }
+
+    try {
+      setHierarchyError(null);
+      setStatesLoading(true);
+      const res = await api.get("/masters/states", {
+        params: { countryId },
+      });
+      const list = Array.isArray(res.data?.states)
+        ? (res.data.states as StateOption[])
+        : [];
+      setStates(list);
+      if (!list.length) {
+        setSelectedStateId("");
+        setCities([]);
+        setSelectedCityId("");
+      } else {
+        setSelectedStateId((prev) => {
+          if (prev && list.some((state) => state.id === prev)) {
+            return prev;
+          }
+          return list[0].id;
+        });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setHierarchyError(
+        err?.response?.data?.error ||
+          "Failed to load states for the selected country."
+      );
+      setStates([]);
+      setSelectedStateId("");
+      setCities([]);
+      setSelectedCityId("");
+    } finally {
+      setStatesLoading(false);
+    }
+  }
+
+  async function loadCities(stateId: string) {
+    if (!stateId) {
+      setCities([]);
+      setSelectedCityId("");
+      return;
+    }
+
+    try {
+      setHierarchyError(null);
+      setCitiesLoading(true);
+      const res = await api.get("/masters/cities", {
+        params: { stateId },
+      });
+      const list = Array.isArray(res.data?.cities)
+        ? (res.data.cities as CityOption[])
+        : [];
+      setCities(list);
+      if (!list.length) {
+        setSelectedCityId("");
+      } else {
+        setSelectedCityId((prev) => {
+          if (prev && list.some((city) => city.id === prev)) {
+            return prev;
+          }
+          return list[0].id;
+        });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setHierarchyError(
+        err?.response?.data?.error || "Failed to load cities for the state."
+      );
+      setCities([]);
+      setSelectedCityId("");
+    } finally {
+      setCitiesLoading(false);
+    }
+  }
+
+  async function downloadSampleWorkbook() {
+    try {
+      setSampleDownloadError(null);
+      setDownloadingSample(true);
+      const res = await api.get("/masters/import/sample", {
+        responseType: "blob",
+      });
+      const disposition = res.headers["content-disposition"] as
+        | string
+        | undefined;
+      let filename = "master-data-sample.xlsx";
+      if (disposition) {
+        const utfMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        const simpleMatch = disposition.match(/filename="?([^";]+)"?/i);
+        if (utfMatch?.[1]) {
+          filename = decodeURIComponent(utfMatch[1]);
+        } else if (simpleMatch?.[1]) {
+          filename = simpleMatch[1];
+        }
+      }
+      const blob = new Blob([res.data], {
+        type:
+          res.headers["content-type"] ||
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error(err);
+      setSampleDownloadError(
+        err?.response?.data?.error ||
+          "Failed to download the sample workbook."
+      );
+    } finally {
+      setDownloadingSample(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedCountryId) {
+      setStates([]);
+      setSelectedStateId("");
+      setCities([]);
+      setSelectedCityId("");
+      return;
+    }
+    loadStates(selectedCountryId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCountryId]);
+
+  useEffect(() => {
+    if (!selectedStateId) {
+      setCities([]);
+      setSelectedCityId("");
+      return;
+    }
+    loadCities(selectedStateId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStateId]);
+
+  const selectedCountry =
+    countries.find((country) => country.id === selectedCountryId) || null;
+  const selectedState =
+    states.find((state) => state.id === selectedStateId) || null;
+  const selectedCity =
+    cities.find((city) => city.id === selectedCityId) || null;
+  const statesDisabled =
+    !selectedCountryId || statesLoading || states.length === 0;
+  const citiesDisabled =
+    !selectedStateId || citiesLoading || cities.length === 0;
+  let hierarchyStatus = "";
+  if (countriesLoading) {
+    hierarchyStatus = "Loading countries...";
+  } else if (statesLoading) {
+    hierarchyStatus = "Loading states...";
+  } else if (citiesLoading) {
+    hierarchyStatus = "Loading cities...";
+  } else if (selectedCity && selectedState && selectedCountry) {
+    hierarchyStatus = `Showing ${cities.length} city${
+      cities.length === 1 ? "" : "ies"
+    } in ${selectedState.name}, ${selectedCountry.name}.`;
+  } else if (selectedState && selectedCountry) {
+    hierarchyStatus = `${cities.length} city${
+      cities.length === 1 ? "" : "ies"
+    } available for ${selectedState.name}.`;
+  } else if (selectedCountry) {
+    hierarchyStatus = `${states.length} state${
+      states.length === 1 ? "" : "s"
+    } available for ${selectedCountry.name}.`;
+  } else if (countries.length === 0) {
+    hierarchyStatus =
+      "Upload the masters to start linking countries, states, and cities.";
+  } else {
+    hierarchyStatus = "Select a country to load its linked states.";
   }
 
   return (
@@ -282,6 +556,117 @@ export default function SuperadminDashboard() {
                 CompanyTypes) for accurate parsing.
               </li>
             </ul>
+            <div className="flex flex-wrap items-center gap-2 pt-3">
+              <button
+                onClick={downloadSampleWorkbook}
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-xs font-medium hover:bg-bg disabled:opacity-60"
+                disabled={downloadingSample}
+              >
+                <Download size={16} />
+                {downloadingSample
+                  ? "Preparing sample..."
+                  : "Download sample workbook"}
+              </button>
+              <span className="text-[11px] text-muted">
+                Includes linked country, state, and city examples.
+              </span>
+            </div>
+            {sampleDownloadError && (
+              <div className="rounded-md border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">
+                {sampleDownloadError}
+              </div>
+            )}
+            <div className="mt-5 space-y-3 rounded-lg border border-border/60 bg-muted/5 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h5 className="text-sm font-semibold">Hierarchy preview</h5>
+                <span className="text-[11px] text-muted">
+                  Data pulls from the stored masters.
+                </span>
+              </div>
+              <p className="text-xs text-muted">
+                Select a country to load its states, then pick a state to see
+                the available cities.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="flex flex-col gap-1 text-xs font-medium">
+                  <span>Country</span>
+                  <select
+                    className="rounded border border-border bg-surface px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    value={selectedCountryId}
+                    onChange={(event) => setSelectedCountryId(event.target.value)}
+                    disabled={countriesLoading || countries.length === 0}
+                  >
+                    <option value="">
+                      {countriesLoading
+                        ? "Loading..."
+                        : countries.length === 0
+                        ? "No countries"
+                        : "Select country"}
+                    </option>
+                    {countries.map((country) => (
+                      <option key={country.id} value={country.id}>
+                        {country.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium">
+                  <span>State</span>
+                  <select
+                    className="rounded border border-border bg-surface px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    value={selectedStateId}
+                    onChange={(event) => setSelectedStateId(event.target.value)}
+                    disabled={statesDisabled}
+                  >
+                    <option value="">
+                      {selectedCountryId
+                        ? statesLoading
+                          ? "Loading..."
+                          : states.length === 0
+                          ? "No states"
+                          : "Select state"
+                        : "Select a country"}
+                    </option>
+                    {states.map((state) => (
+                      <option key={state.id} value={state.id}>
+                        {state.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium">
+                  <span>City</span>
+                  <select
+                    className="rounded border border-border bg-surface px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    value={selectedCityId}
+                    onChange={(event) => setSelectedCityId(event.target.value)}
+                    disabled={citiesDisabled}
+                  >
+                    <option value="">
+                      {selectedStateId
+                        ? citiesLoading
+                          ? "Loading..."
+                          : cities.length === 0
+                          ? "No cities"
+                          : "Select city"
+                        : "Select a state"}
+                    </option>
+                    {cities.map((city) => (
+                      <option key={city.id} value={city.id}>
+                        {city.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {hierarchyError ? (
+                <div className="rounded-md border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">
+                  {hierarchyError}
+                </div>
+              ) : (
+                <div className="text-xs text-muted">{hierarchyStatus}</div>
+              )}
+            </div>
           </div>
 
           <div className="space-y-3 rounded-lg border border-border p-4">

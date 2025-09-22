@@ -19,8 +19,22 @@ const CompanySchema = new mongoose.Schema(
       name: { type: String },
       email: { type: String },
       passwordHash: { type: String },
+      passwordPlain: { type: String },
       requestedAt: { type: Date },
     },
+    location: {
+      country: { type: mongoose.Schema.Types.ObjectId, ref: 'MasterCountry' },
+      countryName: { type: String },
+      state: { type: mongoose.Schema.Types.ObjectId, ref: 'MasterState' },
+      stateName: { type: String },
+      city: { type: mongoose.Schema.Types.ObjectId, ref: 'MasterCity' },
+      cityName: { type: String },
+    },
+    companyType: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CompanyTypeMaster',
+    },
+    companyTypeName: { type: String },
     roles: { type: [String], default: ['hr', 'manager', 'developer'] },
     // Leave policy (simplified): total annual leaves, monthly accrual, and per-type caps from the total
     leavePolicy: {

@@ -2,6 +2,7 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Employee = require('../models/Employee');
+const Company = require('../models/Company');
 const { auth } = require('../middleware/auth');
 const { syncLeaveBalances } = require('../utils/leaveBalances');
 const { sendMail, isEmailEnabled } = require('../utils/mailer');
@@ -23,6 +24,16 @@ router.post('/login', async (req, res) => {
   if (!employee) return res.status(400).json({ error: 'Invalid credentials' });
   const ok = await bcrypt.compare(password, employee.passwordHash);
   if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
+
+  if (employee.primaryRole !== 'SUPERADMIN' && employee.company) {
+    const company = await Company.findById(employee.company).select('status name');
+    if (!company || company.status !== 'approved') {
+      return res.status(403).json({
+        error: 'Your company is not approved. Please contact support.',
+      });
+    }
+  }
+
   await syncLeaveBalances(employee);
   // Ensure encrypted fields are decrypted for response payload
   try { employee.decryptFieldsSync(); } catch (_) {}

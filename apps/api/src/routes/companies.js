@@ -8,6 +8,10 @@ const Project = require("../models/Project");
 const Task = require("../models/Task");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
 const SalarySlip = require("../models/SalarySlip");
+const MasterCountry = require("../models/MasterCountry");
+const MasterState = require("../models/MasterState");
+const MasterCity = require("../models/MasterCity");
+const CompanyTypeMaster = require("../models/CompanyTypeMaster");
 const multer = require("multer");
 const path = require("path");
 const upload = multer({ dest: path.join(__dirname, "../../uploads") });
@@ -24,6 +28,203 @@ function startOfDay(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
   return x;
+}
+
+function scheduleApprovalEmail(companyName, email, passwordPlain) {
+  if (!isEmailEnabled() || !email) return;
+  const loginLink = process.env.CLIENT_ORIGIN
+    ? `${process.env.CLIENT_ORIGIN}/login`
+    : null;
+  const subject = `Your company has been approved: ${companyName}`;
+  const credentialLines = [`Email: ${email}`];
+  if (passwordPlain) {
+    credentialLines.push(`Password: ${passwordPlain}`);
+  } else {
+    credentialLines.push(
+      "Password: (use the password you set during registration or reset it from the login page)"
+    );
+  }
+  const credentialsText = credentialLines.join('\n');
+  const text = `Good news! Your company "${companyName}" has been approved. You can now log in.${
+    loginLink ? `\n\nLogin: ${loginLink}` : ''
+  }\n\n${credentialsText}`;
+  const htmlLogin = loginLink
+    ? `<p><a href="${loginLink}">Log in</a> to get started.</p>`
+    : '';
+  const htmlCredentials = `<p><strong>Administrator credentials</strong><br>Email: ${email}${
+    passwordPlain
+      ? `<br>Password: ${passwordPlain}`
+      : '<br>Password: Use the password you set during registration or reset it from the login page.'
+  }</p>`;
+  (async () => {
+    try {
+      await sendMail({
+        to: email,
+        subject,
+        text,
+        html: `<p>Good news! Your company <strong>${companyName}</strong> has been approved.</p>${htmlLogin}${htmlCredentials}<p style="color:#666;font-size:12px;">Automated email from HRMS</p>`,
+      });
+    } catch (err) {
+      console.warn('[companies] failed to send approval email:', err?.message || err);
+    }
+  })();
+}
+
+function scheduleRejectionEmail(companyName, email) {
+  if (!isEmailEnabled() || !email) return;
+  const subject = `Your company registration was rejected: ${companyName}`;
+  const text = `We’re sorry, but your company "${companyName}" was not approved at this time.`;
+  const html = `<p>We’re sorry, but your company <strong>${companyName}</strong> was not approved at this time.</p><p>If you believe this is an error, please contact support.</p>`;
+  (async () => {
+    try {
+      await sendMail({ to: email, subject, text, html });
+    } catch (err) {
+      console.warn('[companies] failed to send rejection email:', err?.message || err);
+    }
+  })();
+}
+
+function httpError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+async function resolveLocationAndType({
+  countryId,
+  stateId,
+  cityId,
+  companyTypeId,
+}) {
+  const ids = [countryId, stateId, cityId, companyTypeId];
+  if (ids.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+    throw httpError(400, "Invalid reference provided");
+  }
+
+  const [country, state, city, companyType] = await Promise.all([
+    MasterCountry.findById(countryId),
+    MasterState.findById(stateId),
+    MasterCity.findById(cityId),
+    CompanyTypeMaster.findById(companyTypeId),
+  ]);
+
+  if (!country) throw httpError(400, "Selected country not found");
+  if (!state || !state.country.equals(country._id)) {
+    throw httpError(
+      400,
+      "Selected state is not valid for the chosen country"
+    );
+  }
+  if (!city || !city.state.equals(state._id) || !city.country.equals(country._id)) {
+    throw httpError(
+      400,
+      "Selected city is not valid for the chosen state"
+    );
+  }
+  if (!companyType) throw httpError(400, "Selected company type not found");
+
+  return { country, state, city, companyType };
+}
+
+async function approvePendingCompany(company) {
+  if (company.status !== "pending") {
+    throw httpError(400, "Company is not pending");
+  }
+  if (!company.requestedAdmin || !company.requestedAdmin.email) {
+    throw httpError(400, "No requested admin details found");
+  }
+
+  const pendingAdmin = { ...company.requestedAdmin };
+  const existing = await Employee.findOne({ email: pendingAdmin.email });
+  if (existing) {
+    throw httpError(400, "Admin email already exists. Cannot approve.");
+  }
+
+  const admin = await Employee.create({
+    name: pendingAdmin.name,
+    email: pendingAdmin.email,
+    passwordHash: pendingAdmin.passwordHash,
+    primaryRole: "ADMIN",
+    subRoles: [],
+    company: company._id,
+  });
+
+  company.admin = admin._id;
+  company.status = "approved";
+  company.requestedAdmin = undefined;
+  await company.save();
+
+  const populated = await company.populate("admin", "name email");
+  scheduleApprovalEmail(company.name, pendingAdmin.email, pendingAdmin.passwordPlain);
+  return populated;
+}
+
+async function rejectPendingCompany(company) {
+  if (company.status !== "pending") {
+    throw httpError(400, "Company is not pending");
+  }
+  const pendingAdmin = company.requestedAdmin ? { ...company.requestedAdmin } : null;
+  company.status = "rejected";
+  if (company.requestedAdmin) {
+    company.requestedAdmin.passwordPlain = undefined;
+  }
+  await company.save();
+  const populated = await company.populate("admin", "name email");
+  if (pendingAdmin?.email) {
+    scheduleRejectionEmail(company.name, pendingAdmin.email);
+  }
+  return populated;
+}
+
+async function rejectApprovedCompany(company) {
+  if (company.status !== "approved") {
+    throw httpError(400, "Company is not approved");
+  }
+  company.status = "rejected";
+  await company.save();
+  const populated = await company.populate("admin", "name email");
+  const notify = populated.admin?.email || company.requestedAdmin?.email;
+  if (notify) scheduleRejectionEmail(company.name, notify);
+  return populated;
+}
+
+async function transitionCompanyStatus(company, nextStatus) {
+  if (nextStatus === company.status) {
+    return company.populate("admin", "name email");
+  }
+
+  if (nextStatus === "approved") {
+    if (company.status === "pending") {
+      return approvePendingCompany(company);
+    }
+    if (company.status === "rejected") {
+      if (company.requestedAdmin && company.requestedAdmin.email) {
+        return approvePendingCompany(company);
+      }
+      if (company.admin) {
+        company.status = "approved";
+        await company.save();
+        return company.populate("admin", "name email");
+      }
+      throw httpError(
+        400,
+        "Missing pending admin details. Ask the company to register again."
+      );
+    }
+    return company.populate("admin", "name email");
+  }
+
+  if (nextStatus === "rejected") {
+    if (company.status === "pending") {
+      return rejectPendingCompany(company);
+    }
+    if (company.status === "approved") {
+      return rejectApprovedCompany(company);
+    }
+    return company.populate("admin", "name email");
+  }
+
+  throw httpError(400, "Unsupported status change");
 }
 
 // Admin/Employee: get company theme
@@ -187,8 +388,26 @@ router.post("/logo-horizontal", auth, upload.single("logo"), async (req, res) =>
 // Public: company self-registration (landing page submission)
 router.post("/register", async (req, res) => {
   try {
-    const { companyName, adminName, adminEmail, adminPassword } = req.body || {};
-    if (!companyName || !adminName || !adminEmail || !adminPassword) {
+    const {
+      companyName,
+      adminName,
+      adminEmail,
+      adminPassword,
+      countryId,
+      stateId,
+      cityId,
+      companyTypeId,
+    } = req.body || {};
+    if (
+      !companyName ||
+      !adminName ||
+      !adminEmail ||
+      !adminPassword ||
+      !countryId ||
+      !stateId ||
+      !cityId ||
+      !companyTypeId
+    ) {
       return res.status(400).json({ error: "Missing fields" });
     }
     if (!isValidEmail(adminEmail)) {
@@ -196,6 +415,22 @@ router.post("/register", async (req, res) => {
     }
     if (!isValidPassword(adminPassword)) {
       return res.status(400).json({ error: "Password must be more than 5 characters" });
+    }
+
+    let country, state, city, companyType;
+    try {
+      ({ country, state, city, companyType } = await resolveLocationAndType({
+        countryId,
+        stateId,
+        cityId,
+        companyTypeId,
+      }));
+    } catch (err) {
+      const statusCode = err.statusCode || 500;
+      if (statusCode >= 500) console.error('[companies/register]', err);
+      return res
+        .status(statusCode)
+        .json({ error: err.message || 'Invalid master selections' });
     }
 
     const existingAdmin = await Employee.findOne({ email: adminEmail });
@@ -214,8 +449,19 @@ router.post("/register", async (req, res) => {
         name: adminName.trim(),
         email: adminEmail.trim(),
         passwordHash,
+        passwordPlain: adminPassword,
         requestedAt: new Date(),
       },
+      location: {
+        country: country._id,
+        countryName: country.name,
+        state: state._id,
+        stateName: state.name,
+        city: city._id,
+        cityName: city.name,
+      },
+      companyType: companyType._id,
+      companyTypeName: companyType.name,
     });
 
     // Async notifications (non-blocking)
@@ -261,8 +507,26 @@ router.post("/register", async (req, res) => {
 router.post("/", auth, async (req, res) => {
   if (req.employee.primaryRole !== "SUPERADMIN")
     return res.status(403).json({ error: "Forbidden" });
-  const { companyName, adminName, adminEmail, adminPassword } = req.body;
-  if (!companyName || !adminName || !adminEmail || !adminPassword) {
+  const {
+    companyName,
+    adminName,
+    adminEmail,
+    adminPassword,
+    countryId,
+    stateId,
+    cityId,
+    companyTypeId,
+  } = req.body || {};
+  if (
+    !companyName ||
+    !adminName ||
+    !adminEmail ||
+    !adminPassword ||
+    !countryId ||
+    !stateId ||
+    !cityId ||
+    !companyTypeId
+  ) {
     return res.status(400).json({ error: "Missing fields" });
   }
   if (!isValidEmail(adminEmail)) {
@@ -275,6 +539,20 @@ router.post("/", auth, async (req, res) => {
   if (admin) return res.status(400).json({ error: "Admin already exists" });
   const passwordHash = await bcrypt.hash(adminPassword, 10);
   const companyId = new mongoose.Types.ObjectId();
+
+  let country, state, city, companyType;
+  try {
+    ({ country, state, city, companyType } = await resolveLocationAndType({
+      countryId,
+      stateId,
+      cityId,
+      companyTypeId,
+    }));
+  } catch (err) {
+    const statusCode = err.statusCode || 500;
+    if (statusCode >= 500) console.error('[companies/create]', err);
+    return res.status(statusCode).json({ error: err.message || 'Invalid master selections' });
+  }
 
   admin = await Employee.create({
     name: adminName,
@@ -290,6 +568,17 @@ router.post("/", auth, async (req, res) => {
     _id: companyId,
     name: companyName,
     admin: admin._id,
+    status: "approved",
+    location: {
+      country: country._id,
+      countryName: country.name,
+      state: state._id,
+      stateName: state.name,
+      city: city._id,
+      cityName: city.name,
+    },
+    companyType: companyType._id,
+    companyTypeName: companyType.name,
   });
 
   res.json({ company });
@@ -303,7 +592,10 @@ router.get("/", auth, async (req, res) => {
   // Hide sensitive requestedAdmin.passwordHash from API response
   const companies = docs.map((c) => {
     const obj = c.toObject({ virtuals: false });
-    if (obj.requestedAdmin) delete obj.requestedAdmin.passwordHash;
+    if (obj.requestedAdmin) {
+      delete obj.requestedAdmin.passwordHash;
+      delete obj.requestedAdmin.passwordPlain;
+    }
     return obj;
   });
   res.json({ companies });
@@ -350,49 +642,14 @@ router.post("/:companyId/approve", auth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   const company = await Company.findById(req.params.companyId);
   if (!company) return res.status(404).json({ error: "Company not found" });
-  if (company.status !== "pending")
-    return res.status(400).json({ error: "Company is not pending" });
-  if (!company.requestedAdmin || !company.requestedAdmin.email)
-    return res.status(400).json({ error: "No requested admin details found" });
-
-  let existing = await Employee.findOne({ email: company.requestedAdmin.email });
-  if (existing)
-    return res
-      .status(400)
-      .json({ error: "Admin email already exists. Cannot approve." });
-
-  const admin = await Employee.create({
-    name: company.requestedAdmin.name,
-    email: company.requestedAdmin.email,
-    passwordHash: company.requestedAdmin.passwordHash,
-    primaryRole: "ADMIN",
-    subRoles: [],
-    company: company._id,
-  });
-
-  company.admin = admin._id;
-  company.status = "approved";
-  company.requestedAdmin = undefined;
-  await company.save();
-
-  const populated = await company.populate("admin", "name email");
-  res.json({ company: populated });
-
-  // Notify requested admin of approval
-  ;(async () => {
-    try {
-      if (!isEmailEnabled()) return;
-      const to = company.requestedAdmin?.email || populated.admin?.email;
-      if (!to) return;
-      const loginLink = process.env.CLIENT_ORIGIN ? `${process.env.CLIENT_ORIGIN}/login` : null;
-      const subject = `Your company has been approved: ${company.name}`;
-      const text = `Good news! Your company "${company.name}" has been approved. You can now log in.${loginLink ? `\n\nLogin: ${loginLink}` : ''}`;
-      const html = `<p>Good news! Your company <strong>${company.name}</strong> has been approved.</p>${loginLink ? `<p><a href="${loginLink}">Log in</a> to get started.</p>` : ''}<p style="color:#666;font-size:12px;">Automated email from HRMS</p>`;
-      await sendMail({ to, subject, text, html });
-    } catch (e) {
-      console.warn('[companies/approve] failed to send email:', e?.message || e);
-    }
-  })();
+  try {
+    const populated = await approvePendingCompany(company);
+    return res.json({ company: populated });
+  } catch (err) {
+    const statusCode = err.statusCode || 500;
+    if (statusCode >= 500) console.error('[companies/approve]', err);
+    return res.status(statusCode).json({ error: err.message || 'Failed to approve company' });
+  }
 });
 
 // Superadmin: reject a pending company registration
@@ -401,26 +658,34 @@ router.post("/:companyId/reject", auth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   const company = await Company.findById(req.params.companyId);
   if (!company) return res.status(404).json({ error: "Company not found" });
-  if (company.status !== "pending")
-    return res.status(400).json({ error: "Company is not pending" });
-  company.status = "rejected";
-  await company.save();
-  res.json({ company });
+  try {
+    const populated = await rejectPendingCompany(company);
+    return res.json({ company: populated });
+  } catch (err) {
+    const statusCode = err.statusCode || 500;
+    if (statusCode >= 500) console.error('[companies/reject]', err);
+    return res.status(statusCode).json({ error: err.message || 'Failed to reject company' });
+  }
+});
 
-  // Notify requester of rejection
-  ;(async () => {
-    try {
-      if (!isEmailEnabled()) return;
-      const to = company.requestedAdmin?.email;
-      if (!to) return;
-      const subject = `Your company registration was rejected: ${company.name}`;
-      const text = `We’re sorry, but your company "${company.name}" was not approved at this time.`;
-      const html = `<p>We’re sorry, but your company <strong>${company.name}</strong> was not approved at this time.</p><p>If you believe this is an error, please contact support.</p>`;
-      await sendMail({ to, subject, text, html });
-    } catch (e) {
-      console.warn('[companies/reject] failed to send email:', e?.message || e);
-    }
-  })();
+router.patch("/:companyId/status", auth, async (req, res) => {
+  if (req.employee.primaryRole !== "SUPERADMIN")
+    return res.status(403).json({ error: "Forbidden" });
+  const { status } = req.body || {};
+  if (!status || !["approved", "rejected"].includes(status)) {
+    return res.status(400).json({ error: "Status must be approved or rejected" });
+  }
+  const company = await Company.findById(req.params.companyId);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  try {
+    const populated = await transitionCompanyStatus(company, status);
+    return res.json({ company: populated });
+  } catch (err) {
+    const statusCode = err.statusCode || 500;
+    if (statusCode >= 500) console.error('[companies/status]', err);
+    return res.status(statusCode).json({ error: err.message || 'Failed to update company status' });
+  }
 });
 
 // Admin: list roles in their company

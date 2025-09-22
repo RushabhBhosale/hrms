@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const path = require("path");
 const fs = require("fs");
+const mongoose = require("mongoose");
 const ExcelJS = require("exceljs");
 const multer = require("multer");
 
@@ -119,6 +120,265 @@ router.get(
     } catch (err) {
       console.error("masters summary err", err);
       res.status(500).json({ error: "Failed to load master summary" });
+    }
+  }
+);
+
+router.get("/countries", auth, async (req, res) => {
+  try {
+    const { q } = req.query || {};
+    const filter = {};
+    if (typeof q === "string" && q.trim()) {
+      filter.name = { $regex: new RegExp(q.trim(), "i") };
+    }
+
+    const countries = await MasterCountry.find(filter)
+      .sort({ name: 1 })
+      .select("name isoCode phoneCode nameKey");
+
+    res.json({
+      countries: countries.map((doc) => ({
+        id: doc._id.toString(),
+        name: doc.name,
+        isoCode: doc.isoCode || null,
+        phoneCode: doc.phoneCode || null,
+        nameKey: doc.nameKey,
+      })),
+    });
+  } catch (err) {
+    console.error("masters countries err", err);
+    res.status(500).json({ error: "Failed to load countries" });
+  }
+});
+
+router.get("/states", auth, async (req, res) => {
+  try {
+    const { countryId, countryKey, q } = req.query || {};
+    const filter = {};
+    let hasCountryFilter = false;
+
+    if (typeof countryId === "string" && countryId.trim()) {
+      if (!mongoose.Types.ObjectId.isValid(countryId.trim())) {
+        return res.status(400).json({ error: "Invalid countryId." });
+      }
+      filter.country = countryId.trim();
+      hasCountryFilter = true;
+    }
+
+    if (typeof countryKey === "string" && countryKey.trim()) {
+      const key = slug(countryKey);
+      if (!key) {
+        return res.status(400).json({ error: "Invalid countryKey." });
+      }
+      filter.countryKey = key;
+      hasCountryFilter = true;
+    }
+
+    if (!hasCountryFilter) {
+      return res
+        .status(400)
+        .json({ error: "Please provide a countryId or countryKey." });
+    }
+
+    if (typeof q === "string" && q.trim()) {
+      filter.name = { $regex: new RegExp(q.trim(), "i") };
+    }
+
+    const states = await MasterState.find(filter)
+      .sort({ name: 1 })
+      .select(
+        "name nameKey stateKey country countryName countryKey isoCode"
+      );
+
+    res.json({
+      states: states.map((doc) => ({
+        id: doc._id.toString(),
+        name: doc.name,
+        nameKey: doc.nameKey,
+        stateKey: doc.stateKey,
+        isoCode: doc.isoCode || null,
+        countryId: doc.country.toString(),
+        countryName: doc.countryName,
+        countryKey: doc.countryKey,
+      })),
+    });
+  } catch (err) {
+    console.error("masters states err", err);
+    res.status(500).json({ error: "Failed to load states" });
+  }
+});
+
+router.get("/cities", auth, async (req, res) => {
+  try {
+    const { stateId, stateKey, countryId, countryKey, q } = req.query || {};
+    const filter = {};
+    let hasFilter = false;
+
+    if (typeof stateId === "string" && stateId.trim()) {
+      if (!mongoose.Types.ObjectId.isValid(stateId.trim())) {
+        return res.status(400).json({ error: "Invalid stateId." });
+      }
+      filter.state = stateId.trim();
+      hasFilter = true;
+    }
+
+    if (typeof stateKey === "string" && stateKey.trim()) {
+      const key = slug(stateKey);
+      if (!key) {
+        return res.status(400).json({ error: "Invalid stateKey." });
+      }
+      filter.stateKey = key;
+      hasFilter = true;
+    }
+
+    if (typeof countryId === "string" && countryId.trim()) {
+      if (!mongoose.Types.ObjectId.isValid(countryId.trim())) {
+        return res.status(400).json({ error: "Invalid countryId." });
+      }
+      filter.country = countryId.trim();
+      hasFilter = true;
+    }
+
+    if (typeof countryKey === "string" && countryKey.trim()) {
+      const key = slug(countryKey);
+      if (!key) {
+        return res.status(400).json({ error: "Invalid countryKey." });
+      }
+      filter.countryKey = key;
+      hasFilter = true;
+    }
+
+    if (!hasFilter) {
+      return res.status(400).json({
+        error: "Please provide a stateId/stateKey or countryId/countryKey.",
+      });
+    }
+
+    if (typeof q === "string" && q.trim()) {
+      filter.name = { $regex: new RegExp(q.trim(), "i") };
+    }
+
+    const cities = await MasterCity.find(filter)
+      .sort({ name: 1 })
+      .select(
+        "name nameKey cityKey state stateName stateKey country countryName countryKey"
+      );
+
+    res.json({
+      cities: cities.map((doc) => ({
+        id: doc._id.toString(),
+        name: doc.name,
+        nameKey: doc.nameKey,
+        cityKey: doc.cityKey,
+        stateId: doc.state.toString(),
+        stateName: doc.stateName,
+        stateKey: doc.stateKey,
+        countryId: doc.country.toString(),
+        countryName: doc.countryName,
+        countryKey: doc.countryKey,
+      })),
+    });
+  } catch (err) {
+    console.error("masters cities err", err);
+    res.status(500).json({ error: "Failed to load cities" });
+  }
+});
+
+router.get("/company-types", auth, async (req, res) => {
+  try {
+    const { q } = req.query || {};
+    const filter = {};
+    if (typeof q === "string" && q.trim()) {
+      filter.name = { $regex: new RegExp(q.trim(), "i") };
+    }
+
+    const companyTypes = await CompanyTypeMaster.find(filter)
+      .sort({ name: 1 })
+      .select("name description nameKey");
+
+    res.json({
+      companyTypes: companyTypes.map((doc) => ({
+        id: doc._id.toString(),
+        name: doc.name,
+        description: doc.description || null,
+        nameKey: doc.nameKey,
+      })),
+    });
+  } catch (err) {
+    console.error("masters company-types err", err);
+    res.status(500).json({ error: "Failed to load company types" });
+  }
+});
+
+router.get(
+  "/import/sample",
+  auth,
+  requirePrimary(["SUPERADMIN"]),
+  async (req, res) => {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "HRMS";
+      workbook.created = new Date();
+
+      const countriesSheet = workbook.addWorksheet("Countries");
+      countriesSheet.columns = [
+        { header: "Name", key: "name", width: 24 },
+        { header: "ISO Code", key: "isoCode", width: 12 },
+        { header: "Phone Code", key: "phoneCode", width: 14 },
+      ];
+      countriesSheet.addRow({
+        name: "India",
+        isoCode: "IN",
+        phoneCode: "+91",
+      });
+
+      const statesSheet = workbook.addWorksheet("States");
+      statesSheet.columns = [
+        { header: "Name", key: "name", width: 24 },
+        { header: "Country", key: "country", width: 24 },
+        { header: "ISO Code", key: "isoCode", width: 12 },
+      ];
+      statesSheet.addRow({
+        name: "Maharashtra",
+        country: "India",
+        isoCode: "MH",
+      });
+
+      const citiesSheet = workbook.addWorksheet("Cities");
+      citiesSheet.columns = [
+        { header: "Name", key: "name", width: 24 },
+        { header: "State", key: "state", width: 24 },
+        { header: "Country", key: "country", width: 24 },
+      ];
+      citiesSheet.addRow({
+        name: "Mumbai",
+        state: "Maharashtra",
+        country: "India",
+      });
+
+      const companyTypesSheet = workbook.addWorksheet("CompanyTypes");
+      companyTypesSheet.columns = [
+        { header: "Name", key: "name", width: 28 },
+        { header: "Description", key: "description", width: 36 },
+      ];
+      companyTypesSheet.addRow({
+        name: "Private Limited",
+        description: "Incorporated company with private shareholding.",
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+      res.setHeader(
+        "Content-Disposition",
+        "attachment; filename=master-data-sample.xlsx"
+      );
+      res.send(Buffer.from(buffer));
+    } catch (err) {
+      console.error("masters template err", err);
+      res.status(500).json({ error: "Failed to generate sample workbook" });
     }
   }
 );

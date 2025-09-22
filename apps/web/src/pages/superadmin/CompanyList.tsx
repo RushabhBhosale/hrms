@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { ChangeEvent, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
 type Company = {
@@ -7,6 +7,12 @@ type Company = {
   admin?: { name: string; email: string };
   status?: 'pending' | 'approved' | 'rejected';
   requestedAdmin?: { name?: string; email?: string };
+  location?: {
+    countryName?: string;
+    stateName?: string;
+    cityName?: string;
+  };
+  companyTypeName?: string | null;
 };
 
 export default function CompanyList() {
@@ -41,10 +47,9 @@ export default function CompanyList() {
 
       <div className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
         <div className="grid grid-cols-12 text-xs font-medium uppercase text-muted border-b border-border px-4 py-2">
-          <div className="col-span-4">Company</div>
-          <div className="col-span-3">Admin</div>
-          <div className="col-span-2">Status</div>
-          <div className="col-span-3 text-right">Actions</div>
+          <div className="col-span-5">Company</div>
+          <div className="col-span-4">Admin</div>
+          <div className="col-span-3 text-left sm:text-right">Status</div>
         </div>
 
         {loading ? (
@@ -62,98 +67,113 @@ export default function CompanyList() {
 }
 
 function Row({ company, onChange }: { company: Company; onChange: (v: Company[]) => void }) {
+  const normalizedStatus =
+    company.status && company.status !== 'pending' ? company.status : '';
+  const [statusValue, setStatusValue] = useState(normalizedStatus);
   const [working, setWorking] = useState(false);
   const [rowErr, setRowErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const next =
+      company.status && company.status !== 'pending' ? company.status : '';
+    setStatusValue(next);
+  }, [company.status]);
 
   async function reload() {
     const res = await api.get('/companies');
     onChange(res.data.companies || []);
   }
 
-  async function approve() {
+  async function updateStatus(nextStatus: 'approved' | 'rejected') {
     setWorking(true);
     setRowErr(null);
     try {
-      await api.post(`/companies/${company._id}/approve`);
+      await api.patch(`/companies/${company._id}/status`, { status: nextStatus });
       await reload();
     } catch (e: any) {
-      setRowErr(e?.response?.data?.error || 'Failed to approve');
+      setRowErr(
+        e?.response?.data?.error || `Failed to mark as ${nextStatus}`
+      );
+      throw e;
     } finally {
       setWorking(false);
     }
   }
 
-  async function reject() {
-    setWorking(true);
-    setRowErr(null);
+  async function onStatusChange(event: ChangeEvent<HTMLSelectElement>) {
+    const nextStatus = event.target.value as 'approved' | 'rejected';
+    const previous = statusValue;
+    setStatusValue(nextStatus);
     try {
-      await api.post(`/companies/${company._id}/reject`);
-      await reload();
-    } catch (e: any) {
-      setRowErr(e?.response?.data?.error || 'Failed to reject');
-    } finally {
-      setWorking(false);
+      await updateStatus(nextStatus);
+    } catch {
+      setStatusValue(previous);
     }
   }
+
+  const isPending = company.status === 'pending';
+  const locationParts = [
+    company.location?.cityName,
+    company.location?.stateName,
+    company.location?.countryName,
+  ].filter(Boolean);
+  const locationLabel = locationParts.join(', ');
 
   return (
-    <div className="grid grid-cols-12 items-center px-4 py-3 border-b border-border text-sm last:border-b-0">
-      <div className="col-span-4">
-        <div className="font-medium">{company.name}</div>
-        {company.status === 'pending' && company.requestedAdmin?.email && (
-          <div className="text-xs text-muted">Requested by: {company.requestedAdmin.name || 'Admin'} ({company.requestedAdmin.email})</div>
+    <div className="grid grid-cols-12 items-start gap-4 px-4 py-3 border-b border-border text-sm last:border-b-0">
+      <div className="col-span-12 sm:col-span-5 space-y-1">
+        <div className="font-medium text-base">{company.name}</div>
+        {company.companyTypeName && (
+          <div className="text-xs text-muted">
+            Type: {company.companyTypeName}
+          </div>
+        )}
+        {locationLabel && (
+          <div className="text-xs text-muted">Located in {locationLabel}</div>
+        )}
+        {isPending && company.requestedAdmin?.email && (
+          <div className="text-xs text-muted">
+            Requested by {company.requestedAdmin.name || 'Admin'} (
+            {company.requestedAdmin.email})
+          </div>
         )}
       </div>
-      <div className="col-span-3">
+      <div className="col-span-12 sm:col-span-4 space-y-1">
         {company.admin ? (
-          <span>{company.admin.name} ({company.admin.email})</span>
+          <>
+            <div className="font-medium">{company.admin.name}</div>
+            <div className="text-xs text-muted">{company.admin.email}</div>
+          </>
+        ) : company.requestedAdmin?.email ? (
+          <div className="text-xs text-muted">
+            Pending admin account ({company.requestedAdmin.email})
+          </div>
         ) : (
-          <span className="text-muted">No admin</span>
+          <span className="text-xs text-muted">No admin assigned</span>
         )}
       </div>
-      <div className="col-span-2">
-        <StatusPill status={company.status || 'approved'} />
-      </div>
-      <div className="col-span-3 flex items-center justify-end gap-2">
-        {company.status === 'pending' ? (
-          <>
-            <button
-              onClick={approve}
-              disabled={working}
-              className="inline-flex items-center h-8 px-3 rounded-md bg-success text-white disabled:opacity-60"
-            >
-              Approve
-            </button>
-            <button
-              onClick={reject}
-              disabled={working}
-              className="inline-flex items-center h-8 px-3 rounded-md border border-border hover:bg-bg"
-            >
-              Reject
-            </button>
-            {rowErr && (
-              <span className="text-xs text-error ml-2 max-w-[16rem] truncate" title={rowErr}>
-                {rowErr}
-              </span>
-            )}
-          </>
-        ) : (
-          <span className="text-xs text-muted">—</span>
+      <div className="col-span-12 sm:col-span-3 flex flex-col items-start sm:items-end gap-2">
+        <select
+          className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 sm:w-auto"
+          value={statusValue}
+          onChange={onStatusChange}
+          disabled={working}
+        >
+          <option value="" disabled={!!statusValue || working}>
+            {working ? 'Updating...' : statusValue ? 'Status set' : 'Select status'}
+          </option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        {rowErr && (
+          <span
+            className="text-xs text-error max-w-[200px] text-left sm:text-right"
+            title={rowErr}
+          >
+            {rowErr}
+          </span>
         )}
       </div>
     </div>
-  );
-}
-
-function StatusPill({ status }: { status: NonNullable<Company['status']> }) {
-  const styles = {
-    approved: 'bg-success/10 text-success border-success/20',
-    pending: 'bg-warning/10 text-warning border-warning/20',
-    rejected: 'bg-error/10 text-error border-error/20',
-  } as const;
-  return (
-    <span className={`inline-flex items-center h-6 px-2 rounded-full text-xs border ${styles[status]}`}>
-      {status}
-    </span>
   );
 }
