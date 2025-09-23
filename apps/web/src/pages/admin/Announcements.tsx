@@ -1,12 +1,9 @@
-import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "react-hot-toast";
-import {
-  AnnouncementFormValues,
-  announcementFormSchema,
-} from "../../schemas/announcement";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 
 type Announcement = {
   _id: string;
@@ -16,42 +13,67 @@ type Announcement = {
   expiresAt?: string | null;
 };
 
+const dtIsValid = (v?: string) => !v || !Number.isNaN(new Date(v).getTime());
+const dtIsFuture = (v?: string) => !v || new Date(v).getTime() > Date.now();
+
+const CreateSchema = z.object({
+  title: z.string().min(3, "Min 3 chars").max(120, "Max 120 chars"),
+  message: z.string().min(5, "Min 5 chars").max(5000, "Max 5000 chars"),
+  expiresAt: z
+    .string()
+    .optional()
+    .refine(dtIsValid, "Invalid date")
+    .refine(dtIsFuture, "Must be in the future"),
+});
+type CreateInput = z.infer<typeof CreateSchema>;
+
+const EditSchema = z.object({
+  title: z.string().min(3, "Min 3 chars").max(120, "Max 120 chars"),
+  message: z.string().min(5, "Min 5 chars").max(5000, "Max 5000 chars"),
+  expiresAt: z
+    .string()
+    .optional()
+    .refine(dtIsValid, "Invalid date")
+    .refine(dtIsFuture, "Must be in the future"),
+});
+type EditInput = z.infer<typeof EditSchema>;
+
 export default function AnnouncementsAdmin() {
   const [list, setList] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editMessage, setEditMessage] = useState("");
-  const [editExpiresAt, setEditExpiresAt] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
-
-  const form = useForm<AnnouncementFormValues>({
-    resolver: zodResolver(announcementFormSchema),
-    defaultValues: {
-      title: "",
-      message: "",
-      expiresAt: "",
-    },
-  });
 
   const {
     register,
     handleSubmit,
     reset,
-    setError: setFormError,
     formState: { errors, isSubmitting },
-  } = form;
+  } = useForm<CreateInput>({
+    resolver: zodResolver(CreateSchema),
+    defaultValues: { title: "", message: "", expiresAt: "" },
+  });
+
+  const {
+    register: registerEdit,
+    handleSubmit: handleSubmitEdit,
+    reset: resetEdit,
+    formState: { errors: editErrors },
+  } = useForm<EditInput>({
+    resolver: zodResolver(EditSchema),
+    defaultValues: { title: "", message: "", expiresAt: "" },
+  });
 
   async function load() {
     try {
-      setListError(null);
+      setError(null);
       setLoading(true);
       const res = await api.get("/announcements");
       setList(res.data.announcements || []);
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to load announcements";
-      setListError(msg);
+      setError(msg);
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -61,41 +83,6 @@ export default function AnnouncementsAdmin() {
   useEffect(() => {
     load();
   }, []);
-
-  const create = handleSubmit(async (values: AnnouncementFormValues) => {
-    try {
-      await api.post("/announcements", {
-        title: values.title.trim(),
-        message: values.message.trim(),
-        expiresAt: values.expiresAt ? new Date(values.expiresAt) : undefined,
-      });
-      reset();
-      await load();
-    } catch (e: any) {
-      const msg = e?.response?.data?.error || "Failed to create announcement";
-      setFormError("root", { type: "server", message: msg });
-      toast.error(msg);
-    }
-  });
-
-  async function remove(id: string) {
-    if (!confirm("Delete this announcement?")) return;
-    try {
-      await api.delete(`/announcements/${id}`);
-      await load();
-    } catch (e: any) {
-      const msg = e?.response?.data?.error || "Failed to delete announcement";
-      setListError(msg);
-      toast.error(msg);
-    }
-  }
-
-  function startEdit(a: Announcement) {
-    setEditingId(a._id);
-    setEditTitle(a.title);
-    setEditMessage(a.message);
-    setEditExpiresAt(a.expiresAt ? toInputDateTimeLocal(a.expiresAt) : "");
-  }
 
   function toInputDateTimeLocal(s?: string | null) {
     if (!s) return "";
@@ -110,32 +97,74 @@ export default function AnnouncementsAdmin() {
     return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
   }
 
-  async function saveEdit() {
+  async function onCreate(data: CreateInput) {
+    try {
+      await api.post("/announcements", {
+        title: data.title.trim(),
+        message: data.message.trim(),
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
+      });
+      reset();
+      await load();
+      toast.success("Announcement posted");
+    } catch (e: any) {
+      const msg = e?.response?.data?.error || "Failed to create announcement";
+      setError(msg);
+      toast.error(msg);
+    }
+  }
+
+  async function remove(id: string) {
+    if (!confirm("Delete this announcement?")) return;
+    try {
+      await api.delete(`/announcements/${id}`);
+      await load();
+      toast.success("Deleted");
+    } catch (e: any) {
+      const msg = e?.response?.data?.error || "Failed to delete announcement";
+      setError(msg);
+      toast.error(msg);
+    }
+  }
+
+  function startEdit(a: Announcement) {
+    setEditingId(a._id);
+    resetEdit({
+      title: a.title,
+      message: a.message,
+      expiresAt: a.expiresAt ? toInputDateTimeLocal(a.expiresAt) : "",
+    });
+  }
+
+  async function onSaveEdit(data: EditInput) {
     if (!editingId) return;
     try {
       setSavingEdit(true);
       await api.put(`/announcements/${editingId}`, {
-        title: editTitle.trim(),
-        message: editMessage.trim(),
-        expiresAt: editExpiresAt ? new Date(editExpiresAt) : null,
+        title: data.title.trim(),
+        message: data.message.trim(),
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
       });
       setEditingId(null);
       await load();
+      toast.success("Saved");
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to update announcement";
-      setListError(msg);
+      setError(msg);
       toast.error(msg);
     } finally {
       setSavingEdit(false);
     }
   }
 
+  const active = useMemo(() => list, [list]);
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <h2 className="text-2xl font-bold">Announcements</h2>
 
       <form
-        onSubmit={create}
+        onSubmit={handleSubmit(onCreate)}
         className="space-y-3 p-4 border border-border rounded-md bg-surface"
       >
         <div>
@@ -144,12 +173,11 @@ export default function AnnouncementsAdmin() {
             className="w-full h-10 px-3 rounded-md border border-border bg-bg"
             placeholder="Company update…"
             {...register("title")}
-            aria-invalid={errors.title ? "true" : undefined}
           />
-          {errors.title?.message && (
-            <p className="text-sm text-error mt-1" role="alert">
+          {errors.title && (
+            <div className="text-error text-xs mt-1">
               {errors.title.message}
-            </p>
+            </div>
           )}
         </div>
         <div>
@@ -158,12 +186,11 @@ export default function AnnouncementsAdmin() {
             className="w-full min-h-[120px] p-3 rounded-md border border-border bg-bg"
             placeholder="Details for all employees"
             {...register("message")}
-            aria-invalid={errors.message ? "true" : undefined}
           />
-          {errors.message?.message && (
-            <p className="text-sm text-error mt-1" role="alert">
+          {errors.message && (
+            <div className="text-error text-xs mt-1">
               {errors.message.message}
-            </p>
+            </div>
           )}
         </div>
         <div>
@@ -174,12 +201,11 @@ export default function AnnouncementsAdmin() {
             type="datetime-local"
             className="h-10 px-3 rounded-md border border-border bg-bg"
             {...register("expiresAt")}
-            aria-invalid={errors.expiresAt ? "true" : undefined}
           />
-          {errors.expiresAt?.message && (
-            <p className="text-sm text-error mt-1" role="alert">
-              {errors.expiresAt.message}
-            </p>
+          {errors.expiresAt && (
+            <div className="text-error text-xs mt-1">
+              {errors.expiresAt.message as string}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -189,11 +215,7 @@ export default function AnnouncementsAdmin() {
           >
             {isSubmitting ? "Posting…" : "Post Announcement"}
           </button>
-          {errors.root?.message && (
-            <div className="text-error text-sm" role="alert">
-              {errors.root.message}
-            </div>
-          )}
+          {error && <div className="text-error text-sm">{error}</div>}
         </div>
       </form>
 
@@ -201,62 +223,76 @@ export default function AnnouncementsAdmin() {
         <h3 className="text-xl font-semibold">Active Announcements</h3>
         {loading ? (
           <div className="text-muted">Loading…</div>
-        ) : listError ? (
-          <div className="text-error">{listError}</div>
-        ) : list.length === 0 ? (
+        ) : active.length === 0 ? (
           <div className="text-muted">No announcements</div>
         ) : (
           <ul className="space-y-3">
-            {list.map((a) => (
+            {active.map((a) => (
               <li
                 key={a._id}
                 className="p-4 border border-border rounded-md bg-surface"
               >
                 {editingId === a._id ? (
-                  <div className="space-y-3">
+                  <form
+                    onSubmit={handleSubmitEdit(onSaveEdit)}
+                    className="space-y-3"
+                  >
                     <div className="grid gap-3">
                       <div>
                         <label className="block text-xs mb-1">Title</label>
                         <input
                           className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
-                          value={editTitle}
-                          onChange={(e) => setEditTitle(e.target.value)}
+                          {...registerEdit("title")}
                         />
+                        {editErrors.title && (
+                          <div className="text-error text-xs mt-1">
+                            {editErrors.title.message}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <label className="block text-xs mb-1">Message</label>
                         <textarea
                           className="w-full rounded border border-border bg-bg px-2 py-2 text-sm min-h-24"
-                          value={editMessage}
-                          onChange={(e) => setEditMessage(e.target.value)}
+                          {...registerEdit("message")}
                         />
+                        {editErrors.message && (
+                          <div className="text-error text-xs mt-1">
+                            {editErrors.message.message}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <label className="block text-xs mb-1">Expires At</label>
                         <input
                           type="datetime-local"
                           className="h-9 rounded border border-border bg-bg px-2 text-sm"
-                          value={editExpiresAt}
-                          onChange={(e) => setEditExpiresAt(e.target.value)}
+                          {...registerEdit("expiresAt")}
                         />
+                        {editErrors.expiresAt && (
+                          <div className="text-error text-xs mt-1">
+                            {editErrors.expiresAt.message as string}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={saveEdit}
+                        type="submit"
                         disabled={savingEdit}
                         className="h-9 px-4 rounded-md bg-primary text-white text-sm disabled:opacity-60"
                       >
                         {savingEdit ? "Saving…" : "Save"}
                       </button>
                       <button
+                        type="button"
                         onClick={() => setEditingId(null)}
                         className="h-9 px-4 rounded-md border border-border text-sm"
                       >
                         Cancel
                       </button>
                     </div>
-                  </div>
+                  </form>
                 ) : (
                   <>
                     <div className="flex items-start justify-between gap-3">

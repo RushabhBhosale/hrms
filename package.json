@@ -15,17 +15,20 @@
     "electron:dist": "npm run build && electron-builder"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
     "lucide-react": "^0.541.0",
     "mongoose-field-encryption": "^7.0.1",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "react-hook-form": "^7.63.0",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
+    "cross-spawn": "^7.0.3",
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
-    "wait-on": "^8.0.0",
-    "cross-spawn": "^7.0.3",
-    "tree-kill": "^1.2.2"
+    "tree-kill": "^1.2.2",
+    "wait-on": "^8.0.0"
   },
   "build": {
     "appId": "in.rushabh.hrms",

@@ -8,6 +8,12 @@ const waitOn = require("wait-on");
 let pids = [];
 const isDev = process.env.NODE_ENV !== "production";
 
+// ---- Ports ----
+const DEV_WEB_PORT = 5174; // Vite dev
+const DEV_API_PORT = 4000; // API dev
+const PROD_WEB_PORT = 5174; // your prod/static server (adjust if different)
+const PROD_API_PORT = 4000; // API prod
+
 function spawnProc(cmd, args, cwd = process.cwd()) {
   const p = spawn(cmd, args, {
     cwd,
@@ -17,11 +23,13 @@ function spawnProc(cmd, args, cwd = process.cwd()) {
   });
   pids.push(p.pid);
   p.on("exit", (code) => {
-    if (code !== 0)
+    if (code !== 0) {
       dialog.showErrorBox(
         "Process exited",
         `${cmd} ${args.join(" ")} -> ${code}`
       );
+      app.quit();
+    }
   });
   return p;
 }
@@ -29,22 +37,35 @@ function spawnProc(cmd, args, cwd = process.cwd()) {
 async function startServices() {
   if (isDev) {
     // dev servers
-    spawnProc("npm", ["run", "dev", "-w", "apps/api"]);
-    spawnProc("npm", ["run", "dev", "-w", "apps/web"]);
-    await waitOn({ resources: ["http-get://localhost:3000"], timeout: 120000 });
-  } else {
-    // production: API first, then static/preview server on 3000
-    spawnProc("npm", ["run", "start", "-w", "apps/api"]);
+    spawnProc("npm", ["run", "dev", "-w", "apps/api"]); // -> :4000
+    spawnProc("npm", ["run", "dev", "-w", "apps/web"]); // -> :5174
+
+    // Wait for API (optional) then web (required)
     await waitOn({
-      resources: ["http-get://localhost:3001"],
+      resources: [
+        `http-get://localhost:${DEV_API_PORT}`, // comment out if API may start later
+        `http-get://localhost:${DEV_WEB_PORT}`,
+      ],
       timeout: 120000,
       interval: 500,
+      validateStatus: (status) => status >= 200 && status < 500, // accept 4xx during early boot
     });
-    spawnProc("npm", ["run", "start", "-w", "apps/web"]);
+  } else {
+    // production: start API, wait, then start static server
+    spawnProc("npm", ["run", "start", "-w", "apps/api"]); // -> :4000
     await waitOn({
-      resources: ["http-get://localhost:3000"],
+      resources: [`http-get://localhost:${PROD_API_PORT}`],
       timeout: 120000,
       interval: 500,
+      validateStatus: (s) => s >= 200 && s < 500,
+    });
+
+    spawnProc("npm", ["run", "start", "-w", "apps/web"]); // -> :3000 (adjust if needed)
+    await waitOn({
+      resources: [`http-get://localhost:${PROD_WEB_PORT}`],
+      timeout: 120000,
+      interval: 500,
+      validateStatus: (s) => s >= 200 && s < 500,
     });
   }
 }
@@ -58,7 +79,13 @@ function createWindow() {
       contextIsolation: true,
     },
   });
-  win.loadURL("http://localhost:3000");
+
+  const url = isDev
+    ? `http://localhost:${DEV_WEB_PORT}`
+    : `http://localhost:${PROD_WEB_PORT}`;
+
+  win.loadURL(url);
+  if (isDev) win.webContents.openDevTools({ mode: "detach" });
 }
 
 function cleanup() {

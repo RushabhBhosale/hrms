@@ -1,107 +1,125 @@
-import { useState, FormEvent, ChangeEvent, useMemo, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { api } from "../../lib/api";
-import {
-  isValidEmail,
-  isValidPassword,
-  isValidPhone,
-} from "../../lib/validate";
 import { Field } from "../../components/ui/Field";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 
-type FormState = {
-  name: string;
-  email: string;
-  password: string;
-  role: string;
-  address: string;
-  phone: string;
-  dob: string;
-  reportingPerson: string;
-  employeeId: string;
-  ctc: string; // value in selected unit
-  ctcMode: "monthly" | "annual";
-};
+type EmpLite = { id: string; name: string };
+
+const schema = z.object({
+  name: z.string().min(2, "Enter full name").max(120, "Too long"),
+  email: z.string().email("Invalid email"),
+  password: z.string().min(6, "Min 6 characters"),
+  role: z.string().min(1, "Select a role"),
+  address: z.string().min(3, "Too short").max(200, "Too long"),
+  phone: z.string().regex(/^\d{10}$/, "Must be 10 digits"),
+  dob: z
+    .string()
+    .min(1, "DOB is required")
+    .refine((v) => !Number.isNaN(Date.parse(v)), "Invalid date")
+    .refine((v) => new Date(v) < new Date(), "DOB must be in the past"),
+  reportingPerson: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.trim() !== "" ? v : "")),
+  employeeId: z.string().min(1, "Employee Id is required"),
+  ctc: z
+    .string()
+    .min(1, "CTC is required")
+    .refine(
+      (v) => !Number.isNaN(Number(v)) && Number(v) >= 0,
+      "Enter a valid number"
+    ),
+  ctcMode: z.enum(["monthly", "annual"]),
+});
+type FormValues = z.infer<typeof schema>;
 
 export default function AddEmployee() {
-  const [form, setForm] = useState<FormState>({
-    name: "",
-    email: "",
-    password: "",
-    role: "",
-    address: "",
-    phone: "",
-    dob: "",
-    reportingPerson: "",
-    employeeId: "",
-    ctc: "",
-    ctcMode: "annual",
-  });
-  const [docs, setDocs] = useState<FileList | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
-    []
-  );
+  const [employees, setEmployees] = useState<EmpLite[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
+  const [docs, setDocs] = useState<FileList | null>(null);
+  const form = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      name: "",
+      email: "",
+      password: "",
+      role: "",
+      address: "",
+      phone: "",
+      dob: "",
+      reportingPerson: "",
+      employeeId: "",
+      ctc: "",
+      ctcMode: "annual",
+    },
+    mode: "onSubmit",
+    reValidateMode: "onChange",
+  });
 
-  function onChange<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  }
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    formState: { errors },
+    watch,
+  } = form;
+
+  const ctc = watch("ctc");
+  const ctcMode = watch("ctcMode");
 
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get("/companies/employees");
         setEmployees(res.data.employees || []);
-      } catch {
-        // ignore
-      }
+      } catch {}
       try {
         const r = await api.get("/companies/roles");
-        setRoles(r.data.roles || []);
-        if (r.data.roles?.length)
-          setForm((f) => ({ ...f, role: r.data.roles[0] }));
-      } catch {
-        // ignore
-      }
+        const rs: string[] = r.data.roles || [];
+        setRoles(rs);
+        if (rs.length) setValue("role", rs[0], { shouldValidate: true });
+      } catch {}
     })();
-  }, []);
+  }, [setValue]);
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  const onSubmit = async (data: FormValues) => {
     setOk(null);
     setErr(null);
     try {
-      if (!isValidEmail(form.email)) {
-        setErr("Please enter a valid email");
-        return;
-      }
-      if (!isValidPassword(form.password)) {
-        setErr("Password must be more than 5 characters");
-        return;
-      }
-      if (!isValidPhone(form.phone)) {
-        setErr("Phone must be exactly 10 digits");
-        return;
-      }
-      if (!form.employeeId) {
-        setErr("Employee Id is required");
+      setSubmitting(true);
+
+      const monthlyCtc =
+        data.ctcMode === "annual" ? Number(data.ctc) / 12 : Number(data.ctc);
+
+      if (docs) {
+        const tooBig = Array.from(docs).some((f) => f.size > 10 * 1024 * 1024);
+        if (tooBig) {
+          setErr("Each document must be ≤ 10MB");
+          setSubmitting(false);
+          return;
+        }
       }
 
-      setSubmitting(true);
       const fd = new FormData();
-      // Convert CTC to monthly for backend
-      const monthlyCtc =
-        form.ctcMode === "annual" ? Number(form.ctc) / 12 : Number(form.ctc);
-      const payload: Record<string, any> = { ...form, ctc: String(monthlyCtc) };
-      // Do not send ctcMode to backend
-      delete payload.ctcMode;
-      Object.entries(payload).forEach(([k, v]) => fd.append(k, String(v)));
+      const payload = {
+        ...data,
+        ctc: String(monthlyCtc),
+      };
+      const { ctcMode: _omit, ...rest } = payload as any;
+      Object.entries(rest).forEach(([k, v]) => fd.append(k, String(v)));
       if (docs) Array.from(docs).forEach((f) => fd.append("documents", f));
+
       await api.post("/companies/employees", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setForm({
+
+      reset({
         name: "",
         email: "",
         password: "",
@@ -121,7 +139,7 @@ export default function AddEmployee() {
     } finally {
       setSubmitting(false);
     }
-  }
+  };
 
   return (
     <div className="space-y-8">
@@ -138,7 +156,7 @@ export default function AddEmployee() {
         </div>
 
         <form
-          onSubmit={submit}
+          onSubmit={handleSubmit(onSubmit)}
           className="px-6 py-5 space-y-5"
           encType="multipart/form-data"
         >
@@ -147,18 +165,24 @@ export default function AddEmployee() {
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="Jane Doe"
-                value={form.name}
-                onChange={(e) => onChange("name", e.target.value)}
+                {...register("name")}
               />
+              {errors.name && (
+                <p className="text-xs text-error mt-1">{errors.name.message}</p>
+              )}
             </Field>
             <Field label="Email">
               <input
                 type="email"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                placeholder="jane@Peracto.com"
-                value={form.email}
-                onChange={(e) => onChange("email", e.target.value)}
+                placeholder="jane@peracto.com"
+                {...register("email")}
               />
+              {errors.email && (
+                <p className="text-xs text-error mt-1">
+                  {errors.email.message}
+                </p>
+              )}
             </Field>
           </div>
 
@@ -168,16 +192,19 @@ export default function AddEmployee() {
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="••••••••"
-                value={form.password}
-                onChange={(e) => onChange("password", e.target.value)}
+                {...register("password")}
               />
+              {errors.password && (
+                <p className="text-xs text-error mt-1">
+                  {errors.password.message}
+                </p>
+              )}
             </Field>
 
             <Field label="Role">
               <select
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.role}
-                onChange={(e) => onChange("role", e.target.value)}
+                {...register("role")}
               >
                 {roles.map((r) => (
                   <option key={r} value={r}>
@@ -185,6 +212,9 @@ export default function AddEmployee() {
                   </option>
                 ))}
               </select>
+              {errors.role && (
+                <p className="text-xs text-error mt-1">{errors.role.message}</p>
+              )}
             </Field>
           </div>
 
@@ -192,8 +222,7 @@ export default function AddEmployee() {
             <Field label="Reporting Person">
               <select
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.reportingPerson}
-                onChange={(e) => onChange("reportingPerson", e.target.value)}
+                {...register("reportingPerson")}
               >
                 <option value="">None</option>
                 {employees.map((e) => (
@@ -207,9 +236,13 @@ export default function AddEmployee() {
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="EMP001"
-                value={form.employeeId}
-                onChange={(e) => onChange("employeeId", e.target.value)}
+                {...register("employeeId")}
               />
+              {errors.employeeId && (
+                <p className="text-xs text-error mt-1">
+                  {errors.employeeId.message}
+                </p>
+              )}
             </Field>
             <Field label="CTC">
               <div className="grid grid-cols-[1fr_auto] gap-2">
@@ -217,30 +250,29 @@ export default function AddEmployee() {
                   type="number"
                   className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                   placeholder={
-                    form.ctcMode === "annual" ? "e.g. 600000" : "e.g. 50000"
+                    ctcMode === "annual" ? "e.g. 600000" : "e.g. 50000"
                   }
-                  value={form.ctc}
-                  onChange={(e) => onChange("ctc", e.target.value)}
+                  {...register("ctc")}
                   min={0}
                   step="0.01"
                 />
                 <select
                   className="rounded-md border border-border bg-surface px-2"
-                  value={form.ctcMode}
-                  onChange={(e) =>
-                    onChange("ctcMode", e.target.value as "monthly" | "annual")
-                  }
+                  {...register("ctcMode")}
                 >
                   <option value="annual">Per Annum</option>
                   <option value="monthly">Monthly</option>
                 </select>
               </div>
-              {form.ctc && (
+              {ctc && (
                 <div className="text-xs text-muted mt-1">
-                  {form.ctcMode === "annual"
-                    ? `≈ Monthly: ${(Number(form.ctc) / 12 || 0).toFixed(2)}`
-                    : `≈ Annual: ${(Number(form.ctc) * 12 || 0).toFixed(2)}`}
+                  {ctcMode === "annual"
+                    ? `≈ Monthly: ${(Number(ctc) / 12 || 0).toFixed(2)}`
+                    : `≈ Annual: ${(Number(ctc) * 12 || 0).toFixed(2)}`}
                 </div>
+              )}
+              {errors.ctc && (
+                <p className="text-xs text-error mt-1">{errors.ctc.message}</p>
               )}
             </Field>
           </div>
@@ -250,18 +282,26 @@ export default function AddEmployee() {
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="Street, City, ZIP"
-                value={form.address}
-                onChange={(e) => onChange("address", e.target.value)}
+                {...register("address")}
               />
+              {errors.address && (
+                <p className="text-xs text-error mt-1">
+                  {errors.address.message}
+                </p>
+              )}
             </Field>
             <Field label="Phone">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="9876543210"
                 maxLength={10}
-                value={form.phone}
-                onChange={(e) => onChange("phone", e.target.value)}
+                {...register("phone")}
               />
+              {errors.phone && (
+                <p className="text-xs text-error mt-1">
+                  {errors.phone.message}
+                </p>
+              )}
             </Field>
           </div>
 
@@ -270,9 +310,11 @@ export default function AddEmployee() {
               <input
                 type="date"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.dob}
-                onChange={(e) => onChange("dob", e.target.value)}
+                {...register("dob")}
               />
+              {errors.dob && (
+                <p className="text-xs text-error mt-1">{errors.dob.message}</p>
+              )}
             </Field>
           </div>
 
@@ -283,9 +325,7 @@ export default function AddEmployee() {
                   type="file"
                   multiple
                   className="hidden"
-                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                    setDocs(e.target.files)
-                  }
+                  onChange={(e) => setDocs(e.target.files)}
                 />
                 <span>Click to upload or drag & drop</span>
                 <span className="text-xs">PNG, JPG, PDF up to 10MB each</span>
