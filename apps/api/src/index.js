@@ -1,3 +1,14 @@
+require("ts-node").register({
+  transpileOnly: true,
+  compilerOptions: {
+    module: "commonjs",
+    moduleResolution: "node",
+    esModuleInterop: true,
+    target: "ES2020",
+    skipLibCheck: true,
+  },
+});
+
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");

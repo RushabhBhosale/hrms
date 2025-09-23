@@ -6,6 +6,8 @@ const Task = require("../models/Task");
 const Employee = require("../models/Employee");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
 const Attendance = require("../models/Attendance");
+const { parseWithSchema } = require("../utils/zod");
+const { projectSchema } = require("../../../libs/schemas/project");
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -85,48 +87,99 @@ router.post(
     try {
       if (!canManageProjects(req.employee))
         return res.status(403).json({ error: "Forbidden" });
-      const { title, description, techStack, teamLead, members } = req.body;
-      // Estimated time handling: accept minutes or hours
-      let estimatedTimeMinutes = 0;
-      if (req.body.estimatedTimeMinutes !== undefined) {
-        const m = parseInt(req.body.estimatedTimeMinutes, 10);
-        if (isFinite(m) && m >= 0) estimatedTimeMinutes = m;
-      } else if (
-        req.body.estimatedHours !== undefined ||
-        req.body.estimatedTimeHours !== undefined
-      ) {
-        const h = parseFloat(
-          String(req.body.estimatedHours ?? req.body.estimatedTimeHours)
-        );
-        if (isFinite(h) && h >= 0) estimatedTimeMinutes = Math.round(h * 60);
-      }
-      // Optional startTime
-      let startTime;
-      if (
-        req.body.startTime !== undefined &&
-        req.body.startTime !== null &&
-        String(req.body.startTime).trim() !== ""
-      ) {
-        const d = new Date(req.body.startTime);
-        if (!isNaN(d.getTime())) startTime = d;
-      }
-      const project = await Project.create({
-        title,
-        description,
-        techStack,
-        teamLead,
-        members,
-        company: req.employee.company,
-        estimatedTimeMinutes,
+
+      const computeEstimatedMinutes = () => {
+        if (req.body.estimatedTimeMinutes !== undefined) {
+          const m = parseInt(req.body.estimatedTimeMinutes, 10);
+          if (Number.isFinite(m) && m >= 0) return m;
+        }
+        if (req.body.estimatedHours !== undefined || req.body.estimatedTimeHours !== undefined) {
+          const source =
+            req.body.estimatedHours !== undefined
+              ? req.body.estimatedHours
+              : req.body.estimatedTimeHours;
+          const hours = parseFloat(String(source));
+          if (Number.isFinite(hours) && hours >= 0) return Math.round(hours * 60);
+        }
+        return 0;
+      };
+
+      const parseStartTime = () => {
+        const value = req.body.startTime;
+        if (value === undefined || value === null) return undefined;
+        const trimmed = String(value).trim();
+        if (!trimmed) return undefined;
+        const date = new Date(trimmed);
+        return Number.isNaN(date.getTime()) ? undefined : date;
+      };
+
+      const normalizeMembers = (input) => {
+        if (!Array.isArray(input)) return [];
+        return input
+          .map((member) => {
+            if (member && typeof member === "object") {
+              if (member._id) return String(member._id);
+              return "";
+            }
+            return String(member ?? "").trim();
+          })
+          .filter(Boolean);
+      };
+
+      const normalizeTechStack = (input) => {
+        if (Array.isArray(input)) {
+          return input
+            .map((item) => String(item || "").trim())
+            .filter(Boolean);
+        }
+        if (typeof input === "string") {
+          return input
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        }
+        return [];
+      };
+
+      const teamLeadId = (() => {
+        const raw = req.body?.teamLead;
+        if (raw && typeof raw === "object") {
+          if (raw._id) return String(raw._id);
+          return "";
+        }
+        if (raw === undefined || raw === null) return "";
+        return String(raw).trim();
+      })();
+
+      const startTime = parseStartTime();
+
+      const validation = parseWithSchema(projectSchema, {
+        title:
+          typeof req.body?.title === "string" ? req.body.title.trim() : req.body?.title,
+        description: req.body?.description,
+        techStack: normalizeTechStack(req.body?.techStack),
+        teamLead: teamLeadId,
+        members: normalizeMembers(req.body?.members),
+        company: String(req.employee.company),
+        estimatedTimeMinutes: computeEstimatedMinutes(),
         ...(startTime ? { startTime } : {}),
       });
+
+      if (!validation.ok) {
+        return res
+          .status(400)
+          .json({ error: "Invalid project data", details: validation.issues });
+      }
+
+      const projectData = validation.data;
+      const project = await Project.create(projectData);
       res.json({ project });
 
       // Fire-and-forget email notification to team lead and members
       (async () => {
         try {
           if (!isEmailEnabled()) return;
-          const ids = [teamLead, ...(Array.isArray(members) ? members : [])]
+          const ids = [projectData.teamLead, ...(Array.isArray(projectData.members) ? projectData.members : [])]
             .map((x) => String(x))
             .filter((x) => x && x.length >= 12);
           if (!ids.length) return;
@@ -137,14 +190,14 @@ router.post(
             new Set(people.map((p) => p?.email).filter(Boolean))
           );
           if (!to.length) return;
-          const sub = `Assigned to Project: ${title}`;
-          const safeDesc = description
-            ? String(description).replace(/</g, "&lt;")
+          const sub = `Assigned to Project: ${projectData.title}`;
+          const safeDesc = projectData.description
+            ? String(projectData.description).replace(/</g, "&lt;")
             : "";
           const html = `
           <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; line-height:1.5;">
             <h2 style="margin:0 0 12px;">You've been added to a project</h2>
-            <p><strong>Project:</strong> ${title}</p>
+            <p><strong>Project:</strong> ${projectData.title}</p>
             ${
               safeDesc ? `<p><strong>Description:</strong> ${safeDesc}</p>` : ""
             }
@@ -158,7 +211,7 @@ router.post(
             to,
             subject: sub,
             html,
-            text: `You have been added to project: ${title}`,
+            text: `You have been added to project: ${projectData.title}`,
           });
         } catch (e) {
           console.warn(

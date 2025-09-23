@@ -9,6 +9,8 @@ const Expense = require("../models/Expense");
 const ExpenseCategory = require("../models/ExpenseCategory");
 const Counter = require("../models/Counter");
 const Company = require("../models/Company");
+const { parseWithSchema } = require("../utils/zod");
+const { expenseSchema } = require("../../../libs/schemas/expense");
 
 const uploadDir = path.join(__dirname, "../../uploads");
 const upload = multer({ dest: uploadDir });
@@ -351,7 +353,7 @@ router.post("/", upload.array("attachments", 5), async (req, res) => {
     if (!category) return res.status(400).json({ error: "Category not found" });
 
     const isRecurring = parseBoolean(req.body.isRecurring);
-    let recurring = null;
+    let recurring;
     if (isRecurring) {
       const frequency = String(req.body.frequency || "").toLowerCase();
       const startDate = normalizeDateInput(req.body.startDate);
@@ -377,7 +379,7 @@ router.post("/", upload.array("attachments", 5), async (req, res) => {
     const voucherAuthorizedBy = req.body.voucherAuthorizedBy
       ? String(req.body.voucherAuthorizedBy).trim()
       : "";
-    let voucher = null;
+    let voucher;
     if (voucherEnabled) {
       const { number, sequenceKey } = await nextVoucherNumber(
         req.employee.company
@@ -390,10 +392,10 @@ router.post("/", upload.array("attachments", 5), async (req, res) => {
       };
     }
 
-    const expense = await Expense.create({
-      company: req.employee.company,
+    const validation = parseWithSchema(expenseSchema, {
+      company: String(req.employee.company),
       date,
-      category: category._id,
+      category: String(category._id),
       categoryName: category.name,
       description: req.body.description || "",
       notes: req.body.notes || "",
@@ -404,9 +406,18 @@ router.post("/", upload.array("attachments", 5), async (req, res) => {
       recurring,
       hasVoucher: voucherEnabled,
       voucher,
-      createdBy: req.employee.id,
-      updatedBy: req.employee.id,
+      createdBy: String(req.employee.id),
+      updatedBy: String(req.employee.id),
     });
+
+    if (!validation.ok) {
+      removeFiles(attachments);
+      return res
+        .status(400)
+        .json({ error: "Invalid expense data", details: validation.issues });
+    }
+
+    const expense = await Expense.create(validation.data);
 
     if (voucherEnabled) {
       try {
@@ -502,7 +513,7 @@ router.put("/:id", upload.array("attachments", 5), async (req, res) => {
       if (!voucherEnabled && expense.hasVoucher) {
         await removeFileSafe(expense.voucher?.pdfFile);
         expense.hasVoucher = false;
-        expense.voucher = null;
+        expense.voucher = undefined;
         expense.markModified("voucher");
       } else if (voucherEnabled && !expense.hasVoucher) {
         const { number, sequenceKey } = await nextVoucherNumber(
@@ -539,7 +550,8 @@ router.put("/:id", upload.array("attachments", 5), async (req, res) => {
     expense.isRecurring = isRecurring;
 
     if (!isRecurring) {
-      expense.recurring = null;
+      expense.recurring = undefined;
+      expense.markModified("recurring");
     } else {
       const frequency = req.body.frequency
         ? String(req.body.frequency).toLowerCase()
@@ -566,6 +578,7 @@ router.put("/:id", upload.array("attachments", 5), async (req, res) => {
         nextDueDate,
         reminderDaysBefore: reminder,
       };
+      expense.markModified("recurring");
     }
 
     const removeListRaw = req.body.removeAttachments;
@@ -598,7 +611,54 @@ router.put("/:id", upload.array("attachments", 5), async (req, res) => {
       expense.attachments = [...expense.attachments, ...attachments];
     }
 
-    expense.updatedBy = req.employee.id;
+    const updatedById = String(req.employee.id);
+    const recurringData =
+      expense.isRecurring && expense.recurring
+        ? {
+            frequency: expense.recurring.frequency,
+            startDate: expense.recurring.startDate,
+            nextDueDate: expense.recurring.nextDueDate,
+            reminderDaysBefore: expense.recurring.reminderDaysBefore,
+          }
+        : undefined;
+
+    const voucherData =
+      expense.hasVoucher && expense.voucher
+        ? {
+            number: expense.voucher.number,
+            authorizedBy: expense.voucher.authorizedBy,
+            sequenceKey: expense.voucher.sequenceKey,
+            pdfFile: expense.voucher.pdfFile,
+            generatedAt: expense.voucher.generatedAt,
+          }
+        : undefined;
+
+    const validation = parseWithSchema(expenseSchema, {
+      company: String(expense.company),
+      date: expense.date,
+      category: String(expense.category),
+      categoryName: expense.categoryName,
+      description: expense.description || "",
+      notes: expense.notes || "",
+      amount: expense.amount,
+      paidBy: expense.paidBy,
+      attachments: (expense.attachments || []).map((f) => String(f)),
+      isRecurring: expense.isRecurring,
+      recurring: recurringData,
+      hasVoucher: expense.hasVoucher,
+      voucher: voucherData,
+      createdBy: expense.createdBy ? String(expense.createdBy) : undefined,
+      updatedBy: updatedById,
+    });
+
+    if (!validation.ok) {
+      removeFiles(attachments);
+      return res
+        .status(400)
+        .json({ error: "Invalid expense data", details: validation.issues });
+    }
+
+    expense.updatedBy = updatedById;
     await expense.save();
 
     if (

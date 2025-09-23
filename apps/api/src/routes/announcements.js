@@ -1,6 +1,8 @@
 const router = require("express").Router();
 const Announcement = require("../models/Announcement");
 const { auth } = require("../middleware/auth");
+const { parseWithSchema } = require("../utils/zod");
+const { announcementSchema } = require("../../../libs/schemas/announcement");
 
 function canManage(req) {
   const p = req.employee?.primaryRole;
@@ -41,22 +43,33 @@ router.get("/", auth, async (req, res) => {
 // Create announcement (ADMIN/SUPERADMIN or HR subrole)
 router.post("/", auth, async (req, res) => {
   if (!canManage(req)) return res.status(403).json({ error: "Forbidden" });
-  const { title, message, expiresAt } = req.body || {};
-  if (!title || !message)
-    return res.status(400).json({ error: "Missing title or message" });
-  const data = {
-    company: req.employee.company,
-    title: String(title).trim(),
-    message: String(message).trim(),
-    createdBy: req.employee.id,
-  };
-  if (expiresAt) {
-    const d = new Date(expiresAt);
-    if (isNaN(d.getTime()))
-      return res.status(400).json({ error: "Invalid expiresAt" });
-    data.expiresAt = d;
+  const expiresAtInput = req.body?.expiresAt;
+  const expiresAt =
+    expiresAtInput === "" || expiresAtInput === null
+      ? undefined
+      : expiresAtInput;
+
+  const validation = parseWithSchema(announcementSchema, {
+    company: String(req.employee.company),
+    title: req.body?.title,
+    message: req.body?.message,
+    expiresAt,
+    createdBy: String(req.employee.id),
+  });
+
+  if (!validation.ok) {
+    return res
+      .status(400)
+      .json({ error: "Invalid announcement data", details: validation.issues });
   }
-  const ann = await Announcement.create(data);
+
+  const payload = {
+    ...validation.data,
+    title: validation.data.title.trim(),
+    message: validation.data.message.trim(),
+  };
+
+  const ann = await Announcement.create(payload);
   res.status(201).json({ announcement: ann });
 });
 
