@@ -6,6 +6,10 @@ import { getEmployee } from "../../lib/auth";
 import type { PrimaryRole } from "../../lib/auth";
 import { Link, useNavigate } from "react-router-dom";
 
+import { useForm, Controller } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+
 type EmployeeLite = {
   id: string;
   name: string;
@@ -13,6 +17,7 @@ type EmployeeLite = {
   subRoles: string[];
   primaryRole: PrimaryRole;
 };
+
 type Project = {
   _id: string;
   title: string;
@@ -27,9 +32,33 @@ type Project = {
   active?: boolean;
 };
 
+// ---------- Zod schema for the create form ----------
+const dtIsValid = (s?: string) => !s || !Number.isNaN(new Date(s).getTime());
+
+const CreateProjectSchema = z
+  .object({
+    title: z.string().min(3, "Min 3 chars").max(120, "Max 120 chars"),
+    description: z.string().max(5000, "Max 5000 chars").optional().default(""),
+    techCsv: z.string().optional().default(""),
+    teamLead: z.string().min(1, "Select a team lead"),
+    members: z.array(z.string()).default([]),
+    estimatedHours: z.preprocess(
+      (v) => (v === "" || v == null || Number.isNaN(v) ? undefined : Number(v)),
+      z.number().min(0, "Must be ≥ 0").optional()
+    ),
+    startTime: z.string().optional().refine(dtIsValid, "Invalid date/time"),
+  })
+  .refine((d) => !d.members.includes(d.teamLead), {
+    path: ["members"],
+    message: "Team lead is already selected; remove from members",
+  });
+
+type CreateProjectValues = z.infer<typeof CreateProjectSchema>;
+
 export default function ProjectsAdmin() {
   const nav = useNavigate();
   const u = getEmployee();
+
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -37,16 +66,27 @@ export default function ProjectsAdmin() {
     {}
   );
 
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [tech, setTech] = useState("");
-  const [teamLead, setTeamLead] = useState("");
-  const [members, setMembers] = useState<string[]>([]);
-  const [estimatedHours, setEstimatedHours] = useState("");
-  const [startTime, setStartTime] = useState<string>(""); // datetime-local string
+  // ----- RHF setup for create form ----
+  const {
+    register,
+    handleSubmit,
+    control,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm({
+    resolver: zodResolver(CreateProjectSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      techCsv: "",
+      teamLead: "",
+      members: [],
+      estimatedHours: undefined,
+      startTime: "",
+    },
+  });
 
   const teamLeadOptions = useMemo(() => {
-    // prefer HR or manager as team lead (admins typically manage too, but keep current rule)
     const priority = employees.filter((e) =>
       e.subRoles?.some((r) => r === "hr" || r === "manager")
     );
@@ -78,7 +118,6 @@ export default function ProjectsAdmin() {
       setEmployees(emps.data.employees || []);
       setProjects(projList);
 
-      // Load total spent minutes per project (best-effort)
       const map: Record<string, number> = {};
       await Promise.all(
         projList.map(async (p) => {
@@ -100,33 +139,39 @@ export default function ProjectsAdmin() {
     load();
   }, []);
 
-  async function createProject(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title || !teamLead) return;
-    setLoading(true);
+  // ----- onSubmit for create form (uses zod-validated data) -----
+  const onCreate = async (data: CreateProjectValues) => {
     try {
-      const techStack = tech
+      setLoading(true);
+
+      const techStack = (data.techCsv || "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      const eh = parseFloat(estimatedHours || "0");
-      const payload: any = { title, description, techStack, teamLead, members };
-      if (isFinite(eh) && eh > 0)
-        payload.estimatedTimeMinutes = Math.round(eh * 60);
-      if (startTime && startTime.trim()) payload.startTime = startTime;
+
+      const payload: Record<string, any> = {
+        title: data.title.trim(),
+        description: (data.description || "").trim(),
+        techStack,
+        teamLead: data.teamLead,
+        members: data.members,
+      };
+
+      if (typeof data.estimatedHours === "number")
+        payload.estimatedTimeMinutes = Math.round(data.estimatedHours * 60);
+      if (data.startTime) payload.startTime = data.startTime;
+
       await api.post("/projects", payload);
-      setTitle("");
-      setDescription("");
-      setTech("");
-      setTeamLead("");
-      setMembers([]);
-      setEstimatedHours("");
-      setStartTime("");
+
+      reset();
       await load();
+      toast.success("Project created");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || "Failed to create project");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   function minutesToHours(min: number) {
     return Math.round((min / 60) * 10) / 10;
@@ -149,9 +194,9 @@ export default function ProjectsAdmin() {
         <h2 className="text-xl font-semibold">Projects</h2>
       </div>
 
-      {/* Create form */}
+      {/* Create form (RHF + Zod) */}
       <form
-        onSubmit={createProject}
+        onSubmit={handleSubmit(onCreate)}
         className="space-y-4 bg-surface border border-border rounded-md p-4"
       >
         <div className="grid md:grid-cols-2 gap-4">
@@ -159,21 +204,23 @@ export default function ProjectsAdmin() {
             <label className="block text-sm mb-1">Title</label>
             <input
               className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
               placeholder="Project title"
-              required
+              {...register("title")}
             />
+            {errors.title && (
+              <p className="text-xs text-error mt-1">{errors.title.message}</p>
+            )}
           </div>
+
           <div>
             <label className="block text-sm mb-1">Tech Stack</label>
             <input
               className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={tech}
-              onChange={(e) => setTech(e.target.value)}
               placeholder="e.g. React, Node, MongoDB"
+              {...register("techCsv")}
             />
           </div>
+
           <div>
             <label className="block text-sm mb-1">Estimated Time (hours)</label>
             <input
@@ -181,28 +228,42 @@ export default function ProjectsAdmin() {
               type="number"
               min={0}
               step={0.1}
-              value={estimatedHours}
-              onChange={(e) => setEstimatedHours(e.target.value)}
               placeholder="e.g. 120"
+              {...register("estimatedHours", { valueAsNumber: true })}
             />
+            {errors.estimatedHours && (
+              <p className="text-xs text-error mt-1">
+                {errors.estimatedHours.message as string}
+              </p>
+            )}
           </div>
+
           <div>
             <label className="block text-sm mb-1">Start Time</label>
             <input
               className="w-full h-10 rounded border border-border bg-bg px-3"
               type="datetime-local"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
+              {...register("startTime")}
             />
+            {errors.startTime && (
+              <p className="text-xs text-error mt-1">
+                {errors.startTime.message as string}
+              </p>
+            )}
           </div>
+
           <div className="md:col-span-2">
             <label className="block text-sm mb-1">Description</label>
             <textarea
               className="w-full rounded border border-border bg-bg px-3 py-2 min-h-20"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
               placeholder="Optional description"
+              {...register("description")}
             />
+            {errors.description && (
+              <p className="text-xs text-error mt-1">
+                {errors.description.message}
+              </p>
+            )}
           </div>
         </div>
 
@@ -211,9 +272,7 @@ export default function ProjectsAdmin() {
             <label className="block text-sm mb-1">Team Lead</label>
             <select
               className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={teamLead}
-              onChange={(e) => setTeamLead(e.target.value)}
-              required
+              {...register("teamLead")}
             >
               <option value="">Select team lead</option>
               {teamLeadOptions.map((e) => (
@@ -222,42 +281,56 @@ export default function ProjectsAdmin() {
                 </option>
               ))}
             </select>
+            {errors.teamLead && (
+              <p className="text-xs text-error mt-1">
+                {errors.teamLead.message}
+              </p>
+            )}
           </div>
+
+          {/* Members multi-select dropdown */}
           <div>
             <label className="block text-sm mb-1">Members</label>
-            <div className="grid grid-cols-2 gap-2 max-h-40 overflow-auto border border-border rounded p-2 bg-bg">
-              {employees.map((e) => (
-                <label
-                  key={e.id}
-                  className="inline-flex items-center gap-2 text-sm"
+            <Controller
+              control={control}
+              name="members"
+              render={({ field }) => (
+                <select
+                  multiple
+                  className="w-full rounded border border-border bg-bg p-2 min-h-[140px]"
+                  value={field.value}
+                  onChange={(ev) => {
+                    const vals = Array.from(
+                      ev.currentTarget.selectedOptions
+                    ).map((o) => o.value);
+                    field.onChange(vals);
+                  }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={members.includes(e.id)}
-                    onChange={(ev) =>
-                      setMembers((prev) =>
-                        ev.target.checked
-                          ? [...prev, e.id]
-                          : prev.filter((id) => id !== e.id)
-                      )
-                    }
-                  />
-                  <span>
-                    {e.name}{" "}
-                    <span className="text-muted">({roleLabel(e)})</span>
-                  </span>
-                </label>
-              ))}
-            </div>
+                  {employees.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name} ({roleLabel(e)})
+                    </option>
+                  ))}
+                </select>
+              )}
+            />
+            <p className="text-xs text-muted mt-1">
+              Tip: Hold Ctrl/Cmd to select multiple.
+            </p>
+            {errors.members && (
+              <p className="text-xs text-error mt-1">
+                {errors.members.message as string}
+              </p>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-3">
           <button
             className="inline-flex items-center justify-center h-10 px-4 rounded-md bg-primary text-white disabled:opacity-50"
-            disabled={loading}
+            disabled={isSubmitting || loading}
           >
-            {loading ? "Creating…" : "Create Project"}
+            {isSubmitting || loading ? "Creating…" : "Create Project"}
           </button>
         </div>
       </form>
@@ -357,11 +430,13 @@ export default function ProjectsAdmin() {
                               );
                             }
                           }}
-                          className=""
+                          className="h-8 px-3 rounded-md border border-border hover:bg-bg inline-flex items-center"
                           title={
                             p.active !== false ? "Mark Inactive" : "Mark Active"
                           }
-                        ></button>
+                        >
+                          {p.active !== false ? "Deactivate" : "Activate"}
+                        </button>
                       )}
                     </div>
                   </Td>
@@ -370,7 +445,7 @@ export default function ProjectsAdmin() {
             })}
             {projects.length === 0 && (
               <tr>
-                <td className="px-3 py-3 text-sm text-muted" colSpan={8}>
+                <td className="px-3 py-3 text-sm text-muted" colSpan={9}>
                   No projects yet.
                 </td>
               </tr>

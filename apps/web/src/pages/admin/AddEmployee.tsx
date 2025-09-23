@@ -42,7 +42,7 @@ export default function AddEmployee() {
   const [employees, setEmployees] = useState<EmpLite[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [docs, setDocs] = useState<FileList | null>(null);
-  const form = useForm<FormValues>({
+  const form = useForm({
     resolver: zodResolver(schema),
     defaultValues: {
       name: "",

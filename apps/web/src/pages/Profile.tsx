@@ -1,106 +1,195 @@
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { setAuth } from "../lib/auth";
-import { isValidEmail, isValidPassword, isValidPhone } from "../lib/validate";
 import { Field } from "../components/ui/Field";
+import { useForm, Controller } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 
-interface FormState {
-  name: string;
-  email: string;
-  phone: string;
-  address: string;
-  dob: string; // yyyy-mm-dd
-  aadharNumber: string;
-  panNumber: string;
-  bankName: string;
-  bankAccountNumber: string;
-  bankIfsc: string;
-}
+// ---------- Helpers ----------
+const strip = (v: string) => v.trim();
+const formatAadhaar = (v: string) =>
+  v
+    .replace(/\D/g, "")
+    .slice(0, 12)
+    .replace(/(\d{4})(?=\d)/g, "$1 ");
+
+// ---------- Schemas (all fields -> definite string outputs) ----------
+const ProfileSchema = z.object({
+  name: z.string().min(2, "Enter full name").max(120, "Too long"),
+  email: z.string().email("Invalid email"),
+  phone: z
+    .string()
+    .transform(strip)
+    .refine(
+      (v) => v === "" || /^\d{10}$/.test(v),
+      "Phone must be exactly 10 digits"
+    )
+    .default(""),
+  address: z.string().default(""),
+  dob: z
+    .string()
+    .transform(strip)
+    .refine((v) => v === "" || !Number.isNaN(Date.parse(v)), "Invalid date")
+    .refine(
+      (v) => v === "" || new Date(v) < new Date(),
+      "DOB must be in the past"
+    )
+    .default(""),
+  aadharNumber: z
+    .string()
+    .transform((v) => v.replace(/\D/g, "")) // keep only digits
+    .refine((v) => v === "" || /^\d{12}$/.test(v), "Aadhaar must be 12 digits")
+    .default(""),
+  panNumber: z
+    .string()
+    .transform((v) => v.toUpperCase())
+    .refine((v) => v === "" || /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v), "Invalid PAN")
+    .default(""),
+  bankName: z.string().default(""),
+  bankAccountNumber: z
+    .string()
+    .transform(strip)
+    .refine(
+      (v) => v === "" || /^[0-9]{7,18}$/.test(v.replace(/\s+/g, "")),
+      "Enter 7–18 digits"
+    )
+    .default(""),
+  bankIfsc: z
+    .string()
+    .transform((v) => v.toUpperCase())
+    .refine((v) => v === "" || /^[A-Z]{4}0[A-Z0-9]{6}$/.test(v), "Invalid IFSC")
+    .default(""),
+});
+type ProfileValues = z.output<typeof ProfileSchema>;
+
+const PasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Required"),
+    newPassword: z.string().min(6, "Min 6 characters"),
+    confirmPassword: z.string().min(6, "Min 6 characters"),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Passwords do not match",
+  });
+type PasswordValues = z.output<typeof PasswordSchema>;
 
 export default function Profile() {
-  const [form, setForm] = useState<FormState>({
-    name: "",
-    email: "",
-    phone: "",
-    address: "",
-    dob: "",
-    aadharNumber: "",
-    panNumber: "",
-    bankName: "",
-    bankAccountNumber: "",
-    bankIfsc: "",
-  });
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [pwOk, setPwOk] = useState<string | null>(null);
-  const [pwErr, setPwErr] = useState<string | null>(null);
-  const [pwLoading, setPwLoading] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
 
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    formState: { errors, isSubmitting },
+    watch,
+    control,
+  } = useForm({
+    resolver: zodResolver(ProfileSchema),
+    defaultValues: {
+      name: "",
+      email: "",
+      phone: "",
+      address: "",
+      dob: "",
+      aadharNumber: "",
+      panNumber: "",
+      bankName: "",
+      bankAccountNumber: "",
+      bankIfsc: "",
+    },
+    mode: "onSubmit",
+    reValidateMode: "onChange",
+  });
+
+  const {
+    register: registerPw,
+    handleSubmit: submitPw,
+    reset: resetPw,
+    formState: { errors: pwErrors, isSubmitting: pwLoading },
+  } = useForm<PasswordValues>({
+    resolver: zodResolver(PasswordSchema),
+    defaultValues: {
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+    },
+  });
+
+  // Load profile
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get("/auth/me");
+        console.log("hdsgdswkc", res);
         const emp = res.data.employee || {};
-        setForm({
+        reset({
           name: emp.name || "",
           email: emp.email || "",
           phone: emp.phone || "",
           address: emp.address || "",
           dob: emp.dob ? new Date(emp.dob).toISOString().slice(0, 10) : "",
           aadharNumber: emp.aadharNumber || "",
-          panNumber: emp.panNumber || "",
+          panNumber: (emp.panNumber || "").toUpperCase(),
           bankName: emp.bankDetails?.bankName || "",
           bankAccountNumber: emp.bankDetails?.accountNumber || "",
-          bankIfsc: emp.bankDetails?.ifsc || "",
+          bankIfsc: (emp.bankDetails?.ifsc || "").toUpperCase(),
         });
       } catch {
         // ignore
       }
     })();
-  }, []);
+  }, [reset]);
 
-  function onChange<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  }
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  // Submit profile
+  const onSubmit = async (data: ProfileValues) => {
     setOk(null);
     setErr(null);
     try {
-      if (!isValidEmail(form.email)) {
-        setErr("Please enter a valid email");
-        return;
-      }
-      if (form.phone && !isValidPhone(form.phone)) {
-        setErr("Phone must be exactly 10 digits");
-        return;
-      }
       await api.put("/auth/me", {
-        name: form.name,
-        email: form.email,
-        phone: form.phone,
-        address: form.address,
-        dob: form.dob,
-        aadharNumber: form.aadharNumber,
-        panNumber: form.panNumber,
-        bankName: form.bankName,
-        bankAccountNumber: form.bankAccountNumber,
-        bankIfsc: form.bankIfsc,
+        ...data,
+        bankAccountNumber: (data.bankAccountNumber || "").replace(/\s+/g, ""),
       });
-      // Refresh local auth cache with latest profile
       const me = await api.get("/auth/me");
       const token = localStorage.getItem("token") || "";
       if (token && me.data?.employee) setAuth(token, me.data.employee);
       setOk("Profile updated");
     } catch (e: any) {
-      const msg = e?.response?.data?.error || "Failed to update profile";
-      setErr(msg);
+      setErr(e?.response?.data?.error || "Failed to update profile");
     }
-  }
+  };
+
+  // Submit password
+  const onChangePassword = async (data: PasswordValues) => {
+    setErr(null);
+    setOk(null);
+    try {
+      await api.post("/auth/change-password", {
+        currentPassword: data.currentPassword,
+        newPassword: data.newPassword,
+      });
+      resetPw();
+      setOk("Password updated");
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || "Failed to change password");
+    }
+  };
+
+  // Live UI uppercase PAN/IFSC (schema already uppercases; this only improves UX)
+  const pan = watch("panNumber");
+  useEffect(() => {
+    if (pan && pan !== pan.toUpperCase())
+      setValue("panNumber", pan.toUpperCase(), { shouldValidate: true });
+  }, [pan, setValue]);
+
+  const ifsc = watch("bankIfsc");
+  useEffect(() => {
+    if (ifsc && ifsc !== ifsc.toUpperCase())
+      setValue("bankIfsc", ifsc.toUpperCase(), { shouldValidate: true });
+  }, [ifsc, setValue]);
 
   return (
     <div className="space-y-8">
@@ -120,27 +209,34 @@ export default function Profile() {
         </div>
       )}
 
+      {/* Personal Information */}
       <section className="rounded-lg border border-border bg-surface shadow-sm">
         <div className="border-b border-border px-6 py-4">
           <h3 className="text-lg font-semibold">Personal Information</h3>
         </div>
 
-        <form onSubmit={submit} className="px-6 py-5 space-y-5">
+        <form onSubmit={handleSubmit(onSubmit)} className="px-6 py-5 space-y-5">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Full Name">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.name}
-                onChange={(e) => onChange("name", e.target.value)}
+                {...register("name")}
               />
+              {errors.name && (
+                <p className="text-xs text-error mt-1">{errors.name.message}</p>
+              )}
             </Field>
             <Field label="Email">
               <input
                 type="email"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.email}
-                onChange={(e) => onChange("email", e.target.value)}
+                {...register("email")}
               />
+              {errors.email && (
+                <p className="text-xs text-error mt-1">
+                  {errors.email.message}
+                </p>
+              )}
             </Field>
           </div>
 
@@ -149,50 +245,72 @@ export default function Profile() {
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 maxLength={10}
-                value={form.phone}
-                onChange={(e) => onChange("phone", e.target.value)}
+                type="number"
+                inputMode="numeric"
+                {...register("phone")}
               />
+              {errors.phone && (
+                <p className="text-xs text-error mt-1">
+                  {errors.phone.message}
+                </p>
+              )}
             </Field>
             <Field label="Address">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.address}
-                onChange={(e) => onChange("address", e.target.value)}
+                {...register("address")}
               />
+              {errors.address && (
+                <p className="text-xs text-error mt-1">
+                  {errors.address.message}
+                </p>
+              )}
             </Field>
             <Field label="Date of Birth">
               <input
                 type="date"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.dob}
-                onChange={(e) => onChange("dob", e.target.value)}
+                {...register("dob")}
               />
+              {errors.dob && (
+                <p className="text-xs text-error mt-1">{errors.dob.message}</p>
+              )}
             </Field>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Aadhar Number">
-              <input
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.aadharNumber || ""}
-                maxLength={14}
-                onChange={(e) => {
-                  let val = e.target.value.replace(/\D/g, "");
-                  val = val.slice(0, 12);
-                  val = val.replace(/(\d{4})(?=\d)/g, "$1 ");
-                  onChange("aadharNumber", val);
-                }}
+            <Field label="Aadhaar Number">
+              <Controller
+                control={control}
+                name="aadharNumber"
+                render={({ field }) => (
+                  <input
+                    className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                    value={formatAadhaar(field.value || "")}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    inputMode="numeric"
+                    maxLength={14}
+                    placeholder="1234 5678 9012"
+                  />
+                )}
               />
+              {errors.aadharNumber && (
+                <p className="text-xs text-error mt-1">
+                  {errors.aadharNumber.message}
+                </p>
+              )}
             </Field>
             <Field label="PAN Number">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.panNumber}
                 maxLength={10}
-                onChange={(e) =>
-                  onChange("panNumber", e.target.value.toUpperCase())
-                }
+                {...register("panNumber")}
               />
+              {errors.panNumber && (
+                <p className="text-xs text-error mt-1">
+                  {errors.panNumber.message}
+                </p>
+              )}
             </Field>
           </div>
 
@@ -200,76 +318,59 @@ export default function Profile() {
             <Field label="Bank Name">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.bankName}
-                onChange={(e) => onChange("bankName", e.target.value)}
+                {...register("bankName")}
               />
+              {errors.bankName && (
+                <p className="text-xs text-error mt-1">
+                  {errors.bankName.message}
+                </p>
+              )}
             </Field>
             <Field label="Account Number">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.bankAccountNumber}
-                onChange={(e) => onChange("bankAccountNumber", e.target.value)}
+                inputMode="numeric"
+                {...register("bankAccountNumber")}
               />
+              {errors.bankAccountNumber && (
+                <p className="text-xs text-error mt-1">
+                  {errors.bankAccountNumber.message}
+                </p>
+              )}
             </Field>
             <Field label="IFSC Code">
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.bankIfsc}
-                onChange={(e) => onChange("bankIfsc", e.target.value)}
+                {...register("bankIfsc")}
               />
+              {errors.bankIfsc && (
+                <p className="text-xs text-error mt-1">
+                  {errors.bankIfsc.message}
+                </p>
+              )}
             </Field>
           </div>
 
           <div className="pt-2">
             <button
               type="submit"
-              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white"
+              disabled={isSubmitting}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
             >
-              Save
+              {isSubmitting ? "Saving…" : "Save"}
             </button>
           </div>
         </form>
       </section>
 
+      {/* Change Password */}
       <section className="rounded-lg border border-border bg-surface shadow-sm">
         <div className="border-b border-border px-6 py-4">
           <h3 className="text-lg font-semibold">Change Password</h3>
         </div>
-        {pwErr && (
-          <div className="mx-6 mt-4 rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
-            {pwErr}
-          </div>
-        )}
-        {pwOk && (
-          <div className="mx-6 mt-4 rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
-            {pwOk}
-          </div>
-        )}
+
         <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setPwErr(null);
-            setPwOk(null);
-            if (newPassword !== confirmPassword) {
-              setPwErr("Passwords do not match");
-              return;
-            }
-            setPwLoading(true);
-            try {
-              await api.post("/auth/change-password", {
-                currentPassword,
-                newPassword,
-              });
-              setPwOk("Password updated");
-              setCurrentPassword("");
-              setNewPassword("");
-              setConfirmPassword("");
-            } catch (e: any) {
-              setPwErr(e?.response?.data?.error || "Failed to change password");
-            } finally {
-              setPwLoading(false);
-            }
-          }}
+          onSubmit={submitPw(onChangePassword)}
           className="px-6 py-5 space-y-5"
         >
           <div className="grid gap-4 md:grid-cols-3">
@@ -277,39 +378,47 @@ export default function Profile() {
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                required
+                {...registerPw("currentPassword")}
               />
+              {pwErrors.currentPassword && (
+                <p className="text-xs text-error mt-1">
+                  {pwErrors.currentPassword.message}
+                </p>
+              )}
             </Field>
             <Field label="New password (min 6 chars)">
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                minLength={6}
-                required
+                {...registerPw("newPassword")}
               />
+              {pwErrors.newPassword && (
+                <p className="text-xs text-error mt-1">
+                  {pwErrors.newPassword.message}
+                </p>
+              )}
             </Field>
             <Field label="Confirm password">
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                minLength={6}
-                required
+                {...registerPw("confirmPassword")}
               />
+              {pwErrors.confirmPassword && (
+                <p className="text-xs text-error mt-1">
+                  {pwErrors.confirmPassword.message}
+                </p>
+              )}
             </Field>
           </div>
+
           <div className="pt-2">
             <button
               type="submit"
-              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white"
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
               disabled={pwLoading}
             >
-              {pwLoading ? "..." : "Update password"}
+              {pwLoading ? "…" : "Update password"}
             </button>
           </div>
         </form>
