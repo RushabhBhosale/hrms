@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { api } from "../../lib/api";
 import { toast } from "react-hot-toast";
+import {
+  AnnouncementFormValues,
+  announcementFormSchema,
+} from "../../schemas/announcement";
 
 type Announcement = {
   _id: string;
@@ -13,26 +19,39 @@ type Announcement = {
 export default function AnnouncementsAdmin() {
   const [list, setList] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [message, setMessage] = useState("");
-  const [expiresAt, setExpiresAt] = useState<string>("");
-  const [saving, setSaving] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editMessage, setEditMessage] = useState("");
   const [editExpiresAt, setEditExpiresAt] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
+  const form = useForm<AnnouncementFormValues>({
+    resolver: zodResolver(announcementFormSchema),
+    defaultValues: {
+      title: "",
+      message: "",
+      expiresAt: "",
+    },
+  });
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError: setFormError,
+    formState: { errors, isSubmitting },
+  } = form;
+
   async function load() {
     try {
-      setError(null);
+      setListError(null);
       setLoading(true);
       const res = await api.get("/announcements");
       setList(res.data.announcements || []);
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to load announcements";
-      setError(msg);
+      setListError(msg);
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -43,28 +62,21 @@ export default function AnnouncementsAdmin() {
     load();
   }, []);
 
-  async function create(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title.trim() || !message.trim()) return;
+  const create = handleSubmit(async (values: AnnouncementFormValues) => {
     try {
-      setSaving(true);
       await api.post("/announcements", {
-        title: title.trim(),
-        message: message.trim(),
-        expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+        title: values.title.trim(),
+        message: values.message.trim(),
+        expiresAt: values.expiresAt ? new Date(values.expiresAt) : undefined,
       });
-      setTitle("");
-      setMessage("");
-      setExpiresAt("");
+      reset();
       await load();
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to create announcement";
-      setError(msg);
+      setFormError("root", { type: "server", message: msg });
       toast.error(msg);
-    } finally {
-      setSaving(false);
     }
-  }
+  });
 
   async function remove(id: string) {
     if (!confirm("Delete this announcement?")) return;
@@ -73,7 +85,7 @@ export default function AnnouncementsAdmin() {
       await load();
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to delete announcement";
-      setError(msg);
+      setListError(msg);
       toast.error(msg);
     }
   }
@@ -111,7 +123,7 @@ export default function AnnouncementsAdmin() {
       await load();
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to update announcement";
-      setError(msg);
+      setListError(msg);
       toast.error(msg);
     } finally {
       setSavingEdit(false);
@@ -130,21 +142,29 @@ export default function AnnouncementsAdmin() {
           <label className="block text-sm font-medium mb-1">Title</label>
           <input
             className="w-full h-10 px-3 rounded-md border border-border bg-bg"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            required
             placeholder="Company update…"
+            {...register("title")}
+            aria-invalid={errors.title ? "true" : undefined}
           />
+          {errors.title?.message && (
+            <p className="text-sm text-error mt-1" role="alert">
+              {errors.title.message}
+            </p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Message</label>
           <textarea
             className="w-full min-h-[120px] p-3 rounded-md border border-border bg-bg"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            required
             placeholder="Details for all employees"
+            {...register("message")}
+            aria-invalid={errors.message ? "true" : undefined}
           />
+          {errors.message?.message && (
+            <p className="text-sm text-error mt-1" role="alert">
+              {errors.message.message}
+            </p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">
@@ -153,18 +173,27 @@ export default function AnnouncementsAdmin() {
           <input
             type="datetime-local"
             className="h-10 px-3 rounded-md border border-border bg-bg"
-            value={expiresAt}
-            onChange={(e) => setExpiresAt(e.target.value)}
+            {...register("expiresAt")}
+            aria-invalid={errors.expiresAt ? "true" : undefined}
           />
+          {errors.expiresAt?.message && (
+            <p className="text-sm text-error mt-1" role="alert">
+              {errors.expiresAt.message}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <button
-            disabled={saving}
+            disabled={isSubmitting}
             className="inline-flex items-center justify-center h-10 px-4 rounded-md bg-primary text-white disabled:opacity-60"
           >
-            {saving ? "Posting…" : "Post Announcement"}
+            {isSubmitting ? "Posting…" : "Post Announcement"}
           </button>
-          {error && <div className="text-error text-sm">{error}</div>}
+          {errors.root?.message && (
+            <div className="text-error text-sm" role="alert">
+              {errors.root.message}
+            </div>
+          )}
         </div>
       </form>
 
@@ -172,6 +201,8 @@ export default function AnnouncementsAdmin() {
         <h3 className="text-xl font-semibold">Active Announcements</h3>
         {loading ? (
           <div className="text-muted">Loading…</div>
+        ) : listError ? (
+          <div className="text-error">{listError}</div>
         ) : list.length === 0 ? (
           <div className="text-muted">No announcements</div>
         ) : (
