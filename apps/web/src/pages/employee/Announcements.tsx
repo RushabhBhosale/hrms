@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { api } from "../../lib/api";
-import { toast } from 'react-hot-toast';
+import { toast } from "react-hot-toast";
 import { getEmployee } from "../../lib/auth";
+import {
+  AnnouncementFormValues,
+  announcementFormSchema,
+} from "../../schemas/announcement";
 
 type Announcement = {
   _id: string;
@@ -19,10 +25,22 @@ export default function Announcements() {
   const canManage =
     !!u && (u.primaryRole === "ADMIN" || u.primaryRole === "SUPERADMIN" || (u.subRoles || []).includes("hr"));
 
-  const [title, setTitle] = useState("");
-  const [message, setMessage] = useState("");
-  const [expiresAt, setExpiresAt] = useState<string>("");
-  const [saving, setSaving] = useState(false);
+  const form = useForm<AnnouncementFormValues>({
+    resolver: zodResolver(announcementFormSchema),
+    defaultValues: {
+      title: "",
+      message: "",
+      expiresAt: "",
+    },
+  });
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError: setFormError,
+    formState: { errors, isSubmitting },
+  } = form;
 
   useEffect(() => {
     (async () => {
@@ -40,30 +58,24 @@ export default function Announcements() {
     })();
   }, []);
 
-  async function create(e: React.FormEvent) {
-    e.preventDefault();
+  const create = handleSubmit(async (values: AnnouncementFormValues) => {
     if (!canManage) return;
-    if (!title.trim() || !message.trim()) return;
     try {
-      setSaving(true);
       await api.post("/announcements", {
-        title: title.trim(),
-        message: message.trim(),
-        expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+        title: values.title.trim(),
+        message: values.message.trim(),
+        expiresAt: values.expiresAt ? new Date(values.expiresAt) : undefined,
       });
-      setTitle("");
-      setMessage("");
-      setExpiresAt("");
+      reset();
       const res = await api.get("/announcements");
       setList(res.data.announcements || []);
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to create announcement";
+      setFormError("root", { type: "server", message: msg });
       setError(msg);
       toast.error(msg);
-    } finally {
-      setSaving(false);
     }
-  }
+  });
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
@@ -74,39 +86,56 @@ export default function Announcements() {
             <label className="block text-sm font-medium mb-1">Title</label>
             <input
               className="w-full h-10 px-3 rounded-md border border-border bg-bg"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
               placeholder="Company update…"
+              {...register("title")}
+              aria-invalid={errors.title ? "true" : undefined}
             />
+            {errors.title?.message && (
+              <p className="text-sm text-error mt-1" role="alert">
+                {errors.title.message}
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Message</label>
             <textarea
               className="w-full min-h-[120px] p-3 rounded-md border border-border bg-bg"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              required
               placeholder="Details for all employees"
+              {...register("message")}
+              aria-invalid={errors.message ? "true" : undefined}
             />
+            {errors.message?.message && (
+              <p className="text-sm text-error mt-1" role="alert">
+                {errors.message.message}
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Expires At (optional)</label>
             <input
               type="datetime-local"
               className="h-10 px-3 rounded-md border border-border bg-bg"
-              value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
+              {...register("expiresAt")}
+              aria-invalid={errors.expiresAt ? "true" : undefined}
             />
+            {errors.expiresAt?.message && (
+              <p className="text-sm text-error mt-1" role="alert">
+                {errors.expiresAt.message}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button
-              disabled={saving}
+              disabled={isSubmitting}
               className="inline-flex items-center justify-center h-10 px-4 rounded-md bg-primary text-white disabled:opacity-60"
             >
-              {saving ? "Posting…" : "Post Announcement"}
+              {isSubmitting ? "Posting…" : "Post Announcement"}
             </button>
-            {error && <div className="text-error text-sm">{error}</div>}
+            {errors.root?.message && (
+              <div className="text-error text-sm" role="alert">
+                {errors.root.message}
+              </div>
+            )}
           </div>
         </form>
       )}

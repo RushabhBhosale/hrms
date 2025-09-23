@@ -65,8 +65,6 @@ router.post("/", auth, async (req, res) => {
 
   const payload = {
     ...validation.data,
-    title: validation.data.title.trim(),
-    message: validation.data.message.trim(),
   };
 
   const ann = await Announcement.create(payload);
