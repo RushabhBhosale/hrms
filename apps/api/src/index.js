@@ -1,3 +1,6 @@
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
+
 require("ts-node").register({
   transpileOnly: true,
   compilerOptions: {
@@ -12,7 +15,6 @@ require("ts-node").register({
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
-const path = require("path");
 const { connectDB } = require("./config");
 const { scheduleAutoPunchOut } = require("./jobs/autoPunchout");
 
