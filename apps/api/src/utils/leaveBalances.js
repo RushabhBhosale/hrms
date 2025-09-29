@@ -61,10 +61,13 @@ async function accrueTotalIfNeeded(employee, company, asOfDate = new Date()) {
     if (months < 0) months = 0;
 
     if (!employee.leaveUsage) employee.leaveUsage = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
-    const used = (employee.leaveUsage.paid || 0) + (employee.leaveUsage.casual || 0) + (employee.leaveUsage.sick || 0);
+    const used =
+      (employee.leaveUsage.paid || 0) +
+      (employee.leaveUsage.casual || 0) +
+      (employee.leaveUsage.sick || 0);
     const potential = rate * months;
-    const maxBase = Math.max(0, annual - used);
-    base = Math.min(Math.max(0, potential), maxBase);
+    const accrued = Math.max(0, Math.min(potential, annual));
+    base = Math.max(0, accrued - used);
   }
 
   employee.leaveAccrual = employee.leaveAccrual || {};
