@@ -23,7 +23,10 @@ export default function Announcements() {
   const [error, setError] = useState<string | null>(null);
   const u = getEmployee();
   const canManage =
-    !!u && (u.primaryRole === "ADMIN" || u.primaryRole === "SUPERADMIN" || (u.subRoles || []).includes("hr"));
+    !!u &&
+    (u.primaryRole === "ADMIN" ||
+      u.primaryRole === "SUPERADMIN" ||
+      (u.subRoles || []).includes("hr"));
 
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementFormSchema),
@@ -81,9 +84,14 @@ export default function Announcements() {
     <div className="max-w-3xl mx-auto space-y-4">
       <h2 className="text-2xl font-bold">Announcements</h2>
       {canManage && (
-        <form onSubmit={create} className="space-y-3 p-4 border border-border rounded-md bg-surface">
+        <form
+          onSubmit={create}
+          className="space-y-3 p-4 border border-border rounded-md bg-surface"
+        >
           <div>
-            <label className="block text-sm font-medium mb-1">Title</label>
+            <label className="block text-sm font-medium mb-1 required-label">
+              Title
+            </label>
             <input
               className="w-full h-10 px-3 rounded-md border border-border bg-bg"
               placeholder="Company update…"
@@ -97,7 +105,9 @@ export default function Announcements() {
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Message</label>
+            <label className="block text-sm font-medium mb-1 required-label">
+              Message
+            </label>
             <textarea
               className="w-full min-h-[120px] p-3 rounded-md border border-border bg-bg"
               placeholder="Details for all employees"
@@ -111,7 +121,9 @@ export default function Announcements() {
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Expires At (optional)</label>
+            <label className="block text-sm font-medium mb-1">
+              Expires At (optional)
+            </label>
             <input
               type="datetime-local"
               className="h-10 px-3 rounded-md border border-border bg-bg"
@@ -149,11 +161,16 @@ export default function Announcements() {
       ) : (
         <ul className="space-y-3">
           {list.map((a) => (
-            <li key={a._id} className="p-4 border border-border rounded-md bg-surface">
+            <li
+              key={a._id}
+              className="p-4 border border-border rounded-md bg-surface"
+            >
               <div className="font-semibold">{a.title}</div>
               <div className="text-sm text-muted">
                 {new Date(a.createdAt).toLocaleString()}
-                {a.expiresAt ? ` • Expires ${new Date(a.expiresAt).toLocaleString()}` : ""}
+                {a.expiresAt
+                  ? ` • Expires ${new Date(a.expiresAt).toLocaleString()}`
+                  : ""}
               </div>
               <div className="mt-2 whitespace-pre-wrap">{a.message}</div>
             </li>

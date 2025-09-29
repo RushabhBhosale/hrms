@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { clearAuth, getEmployee } from "../lib/auth";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import {
   Home,
@@ -64,7 +64,6 @@ export default function EmployeeLayout() {
   const isHR = !!u?.subRoles?.includes("hr");
   const isManager = !!u?.subRoles?.includes("manager");
 
-  // ---------- Grouped config ----------
   type Item = {
     to: string;
     label: string;
@@ -144,7 +143,6 @@ export default function EmployeeLayout() {
     ];
   }, [isHR, isManager]);
 
-  // ---------- Title from route ----------
   const title = useMemo(() => {
     for (const s of sections) {
       for (const it of s.items) {
@@ -156,7 +154,6 @@ export default function EmployeeLayout() {
     return "Employee";
   }, [pathname, sections]);
 
-  // ---------- Collapse state (persisted) ----------
   const STORAGE_KEY = "employeeSidebarOpenSections";
   const autoOpenKey = useMemo(() => {
     for (const s of sections) {
@@ -212,10 +209,9 @@ export default function EmployeeLayout() {
     .join("")
     .toUpperCase();
 
-  // ---------- Sidebar ----------
   const SidebarInner = ({ compact = false }: { compact?: boolean }) => {
     const itemIsActive = (to: string) => {
-      if (to === "/app") return pathname === "/app"; // dashboard exact
+      if (to === "/app") return pathname === "/app";
       return pathname === to || pathname.startsWith(to + "/");
     };
 
@@ -224,7 +220,6 @@ export default function EmployeeLayout() {
         className={`flex h-full ${compact ? "w-16" : "w-64"} transition-all`}
       >
         <div className="flex flex-col w-full">
-          {/* Brand */}
           <div className="flex items-center justify-center h-[66px] border-b border-border">
             <div className="font-bold text-sidebar-active tracking-wide">
               {compact ? (
@@ -243,7 +238,6 @@ export default function EmployeeLayout() {
             </div>
           </div>
 
-          {/* Nav (grouped) */}
           <nav
             className="flex-1 overflow-y-auto px-2 py-3 space-y-2 scrollbar-thin scrollbar-thumb-border/60 scrollbar-track-transparent"
             role="navigation"
@@ -251,18 +245,14 @@ export default function EmployeeLayout() {
           >
             {sections.map((section) => {
               const isOpen = compact ? false : openSections.has(section.key);
-              const hasActive = section.items.some((it) => itemIsActive(it.to));
               const maxH = isOpen ? section.items.length * 44 + 8 : 0;
 
               return (
                 <div key={section.key} className="rounded-md">
-                  {/* Section header */}
                   <button
                     type="button"
                     onClick={() => !compact && toggleSection(section.key)}
-                    className={[
-                      "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition",
-                    ].join(" ")}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition"
                     aria-expanded={isOpen}
                     aria-controls={`sect-${section.key}`}
                     title={section.label}
@@ -284,7 +274,6 @@ export default function EmployeeLayout() {
                     )}
                   </button>
 
-                  {/* Items */}
                   <div
                     id={`sect-${section.key}`}
                     className="overflow-hidden transition-[max-height] duration-300 ease-in-out"
@@ -331,43 +320,32 @@ export default function EmployeeLayout() {
               );
             })}
           </nav>
-
-          {/* User / Logout */}
-          <div className="border-t border-border p-3">
-            <div className="flex items-center gap-2 mb-2 text-sidebar-active">
-              <div className="grid place-items-center h-7 w-7 rounded-full bg-primary/15 text-primary text-xs font-semibold">
-                {initials}
-              </div>
-              {!compact && (
-                <div className="truncate">
-                  <div className="text-sm font-medium">
-                    {u?.name || "Employee"}
-                  </div>
-                  <div className="text-xs text-muted truncate">
-                    {u?.subRoles?.join(", ") || "—"}
-                  </div>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => {
-                clearAuth();
-                nav("/login");
-              }}
-              className="w-full inline-flex items-center justify-start gap-2 text-accent hover:text-secondary underline"
-            >
-              <LogOut size={16} />
-              {!compact && "Logout"}
-            </button>
-          </div>
         </div>
       </div>
     );
   };
 
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node))
+        setProfileMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProfileMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-bg text-text">
-      {/* Mobile overlay */}
       <div
         className={`fixed inset-0 bg-black/40 z-40 md:hidden transition-opacity ${
           mobileOpen ? "opacity-100" : "opacity-0 pointer-events-none"
@@ -376,7 +354,6 @@ export default function EmployeeLayout() {
       />
 
       <div className="flex">
-        {/* Desktop sidebar */}
         <aside
           className="hidden md:block bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm sticky top-0 h-screen"
           aria-label="Sidebar"
@@ -384,12 +361,10 @@ export default function EmployeeLayout() {
           <SidebarInner compact={!desktopOpen} />
         </aside>
 
-        {/* Mobile drawer */}
         <aside
-          className={`md:hidden fixed top-0 left-0 z-50 h-full bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm
-                      transform transition-transform ${
-                        mobileOpen ? "translate-x-0" : "-translate-x-full"
-                      }`}
+          className={`md:hidden fixed top-0 left-0 z-50 h-full bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm transform transition-transform ${
+            mobileOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
           aria-label="Mobile Sidebar"
         >
           <div className="flex items-center justify-between px-4 h-14 border-b border-border">
@@ -409,12 +384,9 @@ export default function EmployeeLayout() {
           </div>
         </aside>
 
-        {/* Main column */}
         <div className="flex-1 grid grid-rows-[auto_1fr] min-h-screen">
-          {/* Top bar */}
           <header className="sticky top-0 z-30 bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80 border-b border-border shadow-sm">
             <div className="h-16 px-3 md:px-6 flex items-center gap-3">
-              {/* Mobile: open drawer */}
               <button
                 onClick={() => setMobileOpen(true)}
                 className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-surface hover:bg-bg"
@@ -424,7 +396,6 @@ export default function EmployeeLayout() {
                 <Menu size={18} />
               </button>
 
-              {/* Desktop: collapse sidebar */}
               <button
                 onClick={() => setDesktopOpen((v) => !v)}
                 className="hidden md:inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-surface hover:bg-bg"
@@ -439,10 +410,63 @@ export default function EmployeeLayout() {
               </button>
 
               <h1 className="text-lg md:text-xl font-semibold">{title}</h1>
+
+              <div className="ml-auto flex items-center gap-3">
+                <div className="hidden md:block">
+                  <input
+                    placeholder="Search…"
+                    className="h-9 w-56 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
+                    aria-label="Search"
+                  />
+                </div>
+
+                <div className="relative" ref={profileRef}>
+                  <button
+                    onClick={() => setProfileMenuOpen((o) => !o)}
+                    className="flex items-center gap-2 rounded-full border border-border bg-surface pl-2 pr-2.5 h-9"
+                    aria-haspopup="menu"
+                    aria-expanded={profileMenuOpen}
+                    title={u?.name || "Account"}
+                  >
+                    <div className="grid place-items-center h-7 w-7 rounded-full bg-primary/15 text-primary text-xs font-semibold">
+                      {initials}
+                    </div>
+                    <ChevronDown size={16} className="text-muted" />
+                  </button>
+
+                  {profileMenuOpen && (
+                    <div
+                      className="absolute right-0 mt-2 w-44 rounded-md border border-border bg-surface shadow-lg z-50 py-1"
+                      role="menu"
+                    >
+                      <button
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          nav("/app/profile");
+                        }}
+                        className="w-full px-4 py-2 text-left hover:bg-sidebar-hover text-sm"
+                        role="menuitem"
+                      >
+                        Profile
+                      </button>
+                      <button
+                        onClick={() => {
+                          clearAuth();
+                          nav("/login");
+                        }}
+                        className="w-full px-4 py-2 text-left hover:bg-sidebar-hover text-sm text-accent inline-flex items-center gap-2"
+                        role="menuitem"
+                      >
+                        <LogOut size={16} />
+                        Logout
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </header>
 
-          {/* Main content */}
           <main id="main" className="p-4 md:p-8 bg-bg">
             <AnnouncementsPopup />
             <Outlet />

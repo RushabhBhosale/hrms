@@ -9,6 +9,7 @@ type FormState = {
   capsPaid: string;
   capsCasual: string;
   capsSick: string;
+  applicableFrom: string;
 };
 
 type Holiday = {
@@ -38,6 +39,7 @@ export default function LeaveSettings() {
     capsPaid: "0",
     capsCasual: "0",
     capsSick: "0",
+    applicableFrom: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
@@ -77,6 +79,7 @@ export default function LeaveSettings() {
           capsPaid: String(p.typeCaps?.paid ?? 0),
           capsCasual: String(p.typeCaps?.casual ?? 0),
           capsSick: String(p.typeCaps?.sick ?? 0),
+          applicableFrom: p.applicableFrom || "",
         });
       } catch {
         // ignore
@@ -123,6 +126,7 @@ export default function LeaveSettings() {
       await api.put("/companies/leave-policy", {
         totalAnnual: parseInt(form.totalAnnual, 10) || 0,
         ratePerMonth: parseFloat(form.ratePerMonth) || 0,
+        applicableFrom: form.applicableFrom,
         typeCaps: {
           paid: parseInt(form.capsPaid, 10) || 0,
           casual: parseInt(form.capsCasual, 10) || 0,
@@ -221,7 +225,7 @@ export default function LeaveSettings() {
 
         <form onSubmit={submit} className="px-6 py-5 space-y-5">
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Total Annual Leaves">
+            <Field label="Total Annual Leaves" required>
               <input
                 type="number"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -229,7 +233,7 @@ export default function LeaveSettings() {
                 onChange={(e) => onChange("totalAnnual", e.target.value)}
               />
             </Field>
-            <Field label="Accrual Per Month">
+            <Field label="Accrual Per Month" required>
               <input
                 type="number"
                 step="0.5"
@@ -238,11 +242,21 @@ export default function LeaveSettings() {
                 onChange={(e) => onChange("ratePerMonth", e.target.value)}
               />
             </Field>
-            <div />
+            <Field label="Leave Applicable From">
+              <>
+                <input
+                  type="month"
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                  value={form.applicableFrom}
+                  onChange={(e) => onChange("applicableFrom", e.target.value)}
+                />
+                <p className="text-xs text-muted">Month when accrual should begin.</p>
+              </>
+            </Field>
           </div>
 
           <div className="grid gap-4 md:grid-cols-3 border-t border-border pt-5 mt-2">
-            <Field label="Paid Cap (from total)">
+            <Field label="Paid Cap (from total)" required>
               <input
                 type="number"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -250,7 +264,7 @@ export default function LeaveSettings() {
                 onChange={(e) => onChange("capsPaid", e.target.value)}
               />
             </Field>
-            <Field label="Casual Cap (from total)">
+            <Field label="Casual Cap (from total)" required>
               <input
                 type="number"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -258,7 +272,7 @@ export default function LeaveSettings() {
                 onChange={(e) => onChange("capsCasual", e.target.value)}
               />
             </Field>
-            <Field label="Sick Cap (from total)">
+            <Field label="Sick Cap (from total)" required>
               <input
                 type="number"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -343,7 +357,7 @@ export default function LeaveSettings() {
             className="grid gap-4 md:grid-cols-3 items-end"
           >
             <div className="space-y-2">
-              <label className="text-sm font-medium">Date</label>
+              <label className="text-sm font-medium required-label">Date</label>
               <input
                 type="date"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -352,7 +366,7 @@ export default function LeaveSettings() {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium">Name</label>
+              <label className="text-sm font-medium required-label">Name</label>
               <input
                 type="text"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -436,17 +450,16 @@ export default function LeaveSettings() {
             className="grid gap-4 md:grid-cols-4 items-end"
           >
             <div className="space-y-2">
-              <label className="text-sm font-medium">Date</label>
+              <label className="text-sm font-medium required-label">Date</label>
               <input
                 type="date"
                 value={ovForm.date}
                 onChange={(e) => onOvChange("date", e.target.value)}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                required
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Type</label>
+              <label className="text-sm font-medium required-label">Type</label>
               <select
                 value={ovForm.type}
                 onChange={(e) =>

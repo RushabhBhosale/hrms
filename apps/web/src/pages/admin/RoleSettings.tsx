@@ -73,19 +73,30 @@ export default function RoleSettings() {
           <h3 className="text-lg font-semibold">Add Role</h3>
         </div>
         <form onSubmit={addRole} className="px-6 py-5 flex gap-2">
-          <input
-            className="flex-1 rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value)}
-            placeholder="e.g. designer"
-          />
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-md bg-primary px-4 py-2 text-white disabled:opacity-50"
-          >
-            {submitting ? "Adding…" : "Add"}
-          </button>
+          <div className="flex-1 space-y-1">
+            <label
+              className="text-sm font-medium required-label"
+              htmlFor="new-role-input"
+            >
+              Role name
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="new-role-input"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value)}
+                placeholder="e.g. designer"
+              />
+              <button
+                type="submit"
+                disabled={submitting}
+                className="rounded-md bg-primary px-4 py-2 text-white disabled:opacity-50"
+              >
+                {submitting ? "Adding…" : "Add"}
+              </button>
+            </div>
+          </div>
         </form>
         <div className="px-6 pb-5">
           <ul className="list-disc pl-6 space-y-1">
@@ -96,10 +107,15 @@ export default function RoleSettings() {
               <li key={r} className="flex items-center gap-2">
                 {editing === r ? (
                   <form onSubmit={saveRole} className="flex items-center gap-2">
+                    <label className="sr-only" htmlFor="edit-role-input">
+                      Role name
+                    </label>
                     <input
+                      id="edit-role-input"
                       className="rounded-md border border-border bg-surface px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-primary"
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}
+                      required
                     />
                     <button
                       type="submit"

@@ -260,7 +260,7 @@ export default function LeaveRequest() {
         <form onSubmit={submit} className="px-6 py-5 space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Type</label>
+              <label className="text-sm font-medium required-label">Type</label>
               <select
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={form.type}
@@ -278,7 +278,9 @@ export default function LeaveRequest() {
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Start date</label>
+              <label className="text-sm font-medium required-label">
+                Start date
+              </label>
               <input
                 type="date"
                 min={todayISO}
@@ -290,7 +292,9 @@ export default function LeaveRequest() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">End date</label>
+              <label className="text-sm font-medium required-label">
+                End date
+              </label>
               <input
                 type="date"
                 min={form.startDate || todayISO}

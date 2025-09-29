@@ -8,6 +8,12 @@ export type LeaveBalances = {
   sick: number;
 };
 
+export type LeaveTypeCaps = {
+  paid: number;
+  casual: number;
+  sick: number;
+};
+
 export type BankDetails = {
   accountNumber?: string;
   bankName?: string;
@@ -26,6 +32,7 @@ export type Employee = {
   company?: string;
   leaveBalances: LeaveBalances;
   totalLeaveAvailable?: number;
+  leaveTypeCaps?: LeaveTypeCaps;
   employeeId?: string;
   aadharNumber?: string;
   panNumber?: string;

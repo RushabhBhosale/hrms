@@ -1,8 +1,10 @@
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
-import { isValidPhone } from "../../lib/validate";
-import { toast } from 'react-hot-toast';
+import { toast } from "react-hot-toast";
+import { useForm, Controller } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 
 type Employee = {
   id: string;
@@ -14,19 +16,130 @@ type Employee = {
   subRoles: string[];
   address?: string;
   phone?: string;
+  personalEmail?: string;
+  bloodGroup?: string;
+  joiningDate?: string;
   employeeId?: string;
   ctc?: number;
   aadharNumber?: string;
   panNumber?: string;
   bankDetails?: { accountNumber?: string; bankName?: string; ifsc?: string };
+  leaveBalances?: {
+    paid?: number;
+    casual?: number;
+    sick?: number;
+    unpaid?: number;
+  };
+  totalLeaveAvailable?: number;
 };
+
+const BLOOD_GROUP_OPTIONS = [
+  "A+",
+  "A-",
+  "B+",
+  "B-",
+  "AB+",
+  "AB-",
+  "O+",
+  "O-",
+] as const;
+
+const detailsSchema = z.object({
+  phone: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() ?? "")
+    .refine((v) => v === "" || /^\d{10}$/.test(v), {
+      message: "Phone must be exactly 10 digits",
+    }),
+  dob: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() ?? "")
+    .refine((v) => v === "" || !Number.isNaN(Date.parse(v)), {
+      message: "Invalid date",
+    }),
+  email: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() ?? "")
+    .refine((v) => v === "" || z.string().email().safeParse(v).success, {
+      message: "Invalid email",
+    }),
+  personalEmail: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() ?? "")
+    .refine((v) => v === "" || z.string().email().safeParse(v).success, {
+      message: "Invalid personal email",
+    }),
+  address: z
+    .string()
+    .optional()
+    .transform((v) => v ?? ""),
+  joiningDate: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() ?? "")
+    .refine((v) => v === "" || !Number.isNaN(Date.parse(v)), {
+      message: "Invalid date",
+    }),
+  bloodGroup: z
+    .string()
+    .optional()
+    .transform((v) => v ?? "")
+    .refine(
+      (v) => v === "" || (BLOOD_GROUP_OPTIONS as readonly string[]).includes(v),
+      {
+        message: "Invalid blood group",
+      }
+    ),
+  aadharNumber: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() ?? "")
+    .refine((v) => v === "" || /^[0-9]{8,16}$/.test(v), {
+      message: "Aadhar should be 8–16 digits",
+    }),
+  panNumber: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().toUpperCase() ?? "")
+    .refine((v) => v === "" || /^[A-Z0-9]{8,20}$/.test(v), {
+      message: "PAN should be 8–20 alphanumerics",
+    }),
+  bankAcc: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() ?? ""),
+  bankName: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() ?? ""),
+  ifsc: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().toUpperCase() ?? "")
+    .refine(
+      (v) => v === "" || /^[A-Z]{4}0[A-Z0-9]{6}$/.test(v) || v.length === 0,
+      { message: "Invalid IFSC" }
+    ),
+  ctc: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? 0 : Number(v)),
+    z.number().min(0, "CTC must be ≥ 0")
+  ),
+});
+
+type DetailsForm = z.infer<typeof detailsSchema>;
 
 export default function EmployeeDetails() {
   const { id } = useParams();
   const nav = useNavigate();
+
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [report, setReport] = useState<{
     workedDays: number;
@@ -34,6 +147,7 @@ export default function EmployeeDetails() {
   } | null>(null);
   const [rLoading, setRLoading] = useState(false);
   const [rErr, setRErr] = useState<string | null>(null);
+
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
     []
   );
@@ -41,50 +155,75 @@ export default function EmployeeDetails() {
   const [uLoading, setULoading] = useState(false);
   const [uErr, setUErr] = useState<string | null>(null);
   const [uOk, setUOk] = useState<string | null>(null);
+
   const [role, setRole] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
   const [roleLoading, setRoleLoading] = useState(false);
   const [roleErr, setRoleErr] = useState<string | null>(null);
   const [roleOk, setRoleOk] = useState<string | null>(null);
 
-  // Editable fields
-  const [address, setAddress] = useState("");
-  const [phone, setPhone] = useState("");
-  const [dobEdit, setDobEdit] = useState("");
-  const [ctc, setCtc] = useState<string>("0");
+  const [adjustAmount, setAdjustAmount] = useState("");
+  const [adjustLoading, setAdjustLoading] = useState(false);
+  const [adjustErr, setAdjustErr] = useState<string | null>(null);
+  const [adjustOk, setAdjustOk] = useState<string | null>(null);
+
   const [ctcMode, setCtcMode] = useState<"monthly" | "annual">("annual");
-  const [aadhar, setAadhar] = useState("");
-  const [pan, setPan] = useState("");
-  const [bankAcc, setBankAcc] = useState("");
-  const [bankName, setBankName] = useState("");
-  const [ifsc, setIfsc] = useState("");
-  const [saveLoading, setSaveLoading] = useState(false);
-  const [saveErr, setSaveErr] = useState<string | null>(null);
-  const [saveOk, setSaveOk] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    control,
+    watch,
+    formState: { errors, isSubmitting, isDirty },
+  } = useForm({
+    resolver: zodResolver(detailsSchema),
+    mode: "onChange",
+    defaultValues: {
+      phone: "",
+      dob: "",
+      email: "",
+      personalEmail: "",
+      address: "",
+      joiningDate: "",
+      bloodGroup: "",
+      aadharNumber: "",
+      panNumber: "",
+      bankAcc: "",
+      bankName: "",
+      ifsc: "",
+      ctc: 0,
+    },
+  });
+
+  const formValues = watch();
 
   useEffect(() => {
     async function load() {
       try {
         setLoading(true);
         const res = await api.get(`/documents/${id}`);
-        setEmployee(res.data.employee);
-        setReportingPerson(res.data.employee?.reportingPerson?.id || "");
-        setRole(res.data.employee?.subRoles?.[0] || "");
-        // Prime edit fields
-        setAddress(res.data.employee?.address || "");
-        setPhone(res.data.employee?.phone || "");
-        setDobEdit(
-          res.data.employee?.dob
-            ? String(res.data.employee?.dob).slice(0, 10)
-            : ""
-        );
-        setCtc(String(res.data.employee?.ctc ?? 0)); // monthly from backend
+        const e: Employee = res.data.employee;
+        setEmployee(e);
+        setReportingPerson(e?.reportingPerson?.id || "");
+        setRole(e?.subRoles?.[0] || "");
+
+        reset({
+          phone: e.phone || "",
+          dob: e.dob ? String(e.dob).slice(0, 10) : "",
+          email: e.email || "",
+          personalEmail: e.personalEmail || "",
+          address: e.address || "",
+          joiningDate: e.joiningDate ? String(e.joiningDate).slice(0, 10) : "",
+          bloodGroup: e.bloodGroup || "",
+          aadharNumber: e.aadharNumber || "",
+          panNumber: e.panNumber || "",
+          bankAcc: e.bankDetails?.accountNumber || "",
+          bankName: e.bankDetails?.bankName || "",
+          ifsc: e.bankDetails?.ifsc || "",
+          ctc: Number.isFinite(e.ctc) ? e.ctc! : 0, // backend monthly
+        });
         setCtcMode("monthly");
-        setAadhar(res.data.employee?.aadharNumber || "");
-        setPan(res.data.employee?.panNumber || "");
-        setBankAcc(res.data.employee?.bankDetails?.accountNumber || "");
-        setBankName(res.data.employee?.bankDetails?.bankName || "");
-        setIfsc(res.data.employee?.bankDetails?.ifsc || "");
       } catch (e: any) {
         const msg = e?.response?.data?.error || "Failed to load employee";
         setErr(msg);
@@ -94,22 +233,18 @@ export default function EmployeeDetails() {
       }
     }
     load();
-  }, [id]);
+  }, [id, reset]);
 
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get("/companies/employees");
         setEmployees(res.data.employees || []);
-      } catch {
-        // ignore
-      }
+      } catch {}
       try {
         const r = await api.get("/companies/roles");
         setRoles(r.data.roles || []);
-      } catch {
-        // ignore
-      }
+      } catch {}
     })();
   }, []);
 
@@ -135,7 +270,7 @@ export default function EmployeeDetails() {
     if (!role && roles.length) setRole(roles[0]);
   }, [roles, role]);
 
-  async function updateReporting(e: FormEvent) {
+  async function updateReporting(e: React.FormEvent) {
     e.preventDefault();
     if (!id) return;
     try {
@@ -155,7 +290,7 @@ export default function EmployeeDetails() {
     }
   }
 
-  async function updateRole(e: FormEvent) {
+  async function updateRole(e: React.FormEvent) {
     e.preventDefault();
     if (!id) return;
     try {
@@ -174,49 +309,113 @@ export default function EmployeeDetails() {
     }
   }
 
-  async function saveDetails(e: FormEvent) {
+  async function adjustLeaveBalance(e: React.FormEvent) {
     e.preventDefault();
     if (!id) return;
+    const trimmed = adjustAmount.trim();
+    if (!trimmed) {
+      setAdjustErr("Enter an amount to adjust");
+      setAdjustOk(null);
+      return;
+    }
+    const value = Number(trimmed);
+    if (!Number.isFinite(value)) {
+      setAdjustErr("Amount must be a number (use negative to deduct)");
+      setAdjustOk(null);
+      return;
+    }
     try {
-      setSaveLoading(true);
-      setSaveErr(null);
-      setSaveOk(null);
-      if (phone && !isValidPhone(phone)) {
-        setSaveErr('Phone must be exactly 10 digits');
-        return;
-      }
-      const monthlyCtc = ctcMode === "annual" ? Number(ctc) / 12 : Number(ctc);
-      const payload = {
-        address,
-        phone,
-        dob: dobEdit || undefined,
-        ctc: monthlyCtc,
-        aadharNumber: aadhar,
-        panNumber: pan,
-        bankDetails: { accountNumber: bankAcc, bankName, ifsc },
-      };
-      await api.put(`/companies/employees/${id}`, payload);
-      setSaveOk("Details updated");
+      setAdjustLoading(true);
+      setAdjustErr(null);
+      setAdjustOk(null);
+      const res = await api.post(`/companies/employees/${id}/leave-adjust`, {
+        amount: value,
+      });
+      const updated = res.data?.employee || {};
       setEmployee((prev) =>
         prev
           ? {
               ...prev,
-              address,
-              phone,
-              dob: dobEdit || prev.dob,
-              ctc: monthlyCtc,
-              aadharNumber: aadhar,
-              panNumber: pan,
-              bankDetails: { accountNumber: bankAcc, bankName, ifsc },
+              totalLeaveAvailable:
+                updated.totalLeaveAvailable ?? prev.totalLeaveAvailable,
+              leaveBalances: {
+                paid:
+                  updated.leaveBalances?.paid ?? prev.leaveBalances?.paid ?? 0,
+                casual:
+                  updated.leaveBalances?.casual ??
+                  prev.leaveBalances?.casual ??
+                  0,
+                sick:
+                  updated.leaveBalances?.sick ?? prev.leaveBalances?.sick ?? 0,
+                unpaid:
+                  updated.leaveBalances?.unpaid ??
+                  prev.leaveBalances?.unpaid ??
+                  0,
+              },
             }
           : prev
       );
+      const abs = Math.abs(value);
+      const suffix = abs === 1 ? " leave" : " leaves";
+      setAdjustOk(
+        value >= 0 ? `Added ${abs}${suffix}` : `Deducted ${abs}${suffix}`
+      );
+      setAdjustAmount("");
     } catch (e: any) {
-      const msg = e?.response?.data?.error || "Failed to save details";
-      setSaveErr(msg);
+      const msg = e?.response?.data?.error || "Failed to adjust leave balance";
+      setAdjustErr(msg);
       toast.error(msg);
     } finally {
-      setSaveLoading(false);
+      setAdjustLoading(false);
+    }
+  }
+
+  async function onSaveDetails(values: DetailsForm) {
+    if (!id) return;
+    try {
+      const monthlyCtc =
+        ctcMode === "annual"
+          ? Number(values.ctc || 0) / 12
+          : Number(values.ctc || 0);
+      const payload = {
+        address: values.address || undefined,
+        phone: values.phone || undefined,
+        dob: values.dob || undefined,
+        joiningDate: values.joiningDate || undefined,
+        email: values.email || undefined,
+        personalEmail: values.personalEmail || undefined,
+        bloodGroup: values.bloodGroup || undefined,
+        ctc: monthlyCtc,
+        aadharNumber: values.aadharNumber || undefined,
+        panNumber: values.panNumber || undefined,
+        bankDetails: {
+          accountNumber: values.bankAcc || "",
+          bankName: values.bankName || "",
+          ifsc: values.ifsc || "",
+        },
+      };
+      await api.put(`/companies/employees/${id}`, payload);
+      setEmployee((prev) =>
+        prev
+          ? {
+              ...prev,
+              address: payload.address,
+              phone: payload.phone,
+              dob: payload.dob,
+              joiningDate: payload.joiningDate,
+              email: payload.email ?? prev.email,
+              personalEmail: payload.personalEmail,
+              bloodGroup: payload.bloodGroup,
+              ctc: monthlyCtc,
+              aadharNumber: payload.aadharNumber,
+              panNumber: payload.panNumber,
+              bankDetails: payload.bankDetails,
+            }
+          : prev
+      );
+      toast.success("Details updated");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || "Failed to save details");
     }
   }
 
@@ -240,63 +439,223 @@ export default function EmployeeDetails() {
   if (err) return <div className="text-error">{err}</div>;
   if (!employee) return <div>Not found</div>;
 
+  const joiningDateLabel =
+    employee.joiningDate &&
+    !Number.isNaN(new Date(employee.joiningDate).getTime())
+      ? new Date(employee.joiningDate).toLocaleDateString()
+      : "";
+  const leaveBalances = {
+    paid: employee.leaveBalances?.paid ?? 0,
+    casual: employee.leaveBalances?.casual ?? 0,
+    sick: employee.leaveBalances?.sick ?? 0,
+    unpaid: employee.leaveBalances?.unpaid ?? 0,
+  };
+  const totalLeaveBalance = employee.totalLeaveAvailable ?? 0;
+
   return (
     <div className="space-y-8">
-      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-2xl font-semibold">{employee?.name}</h2>
           <div className="text-sm text-muted">{employee?.email}</div>
-          {employee?.employeeId && (
+          {/* {employee?.employeeId && (
             <div className="text-xs text-muted mt-1">
               Employee ID: {employee?.employeeId}
             </div>
           )}
+          {employee?.personalEmail && (
+            <div className="text-xs text-muted mt-1">
+              Personal Email: {employee.personalEmail}
+            </div>
+          )}
+          {joiningDateLabel && (
+            <div className="text-xs text-muted mt-1">
+              Joining Date: {joiningDateLabel}
+            </div>
+          )}
+          {employee?.bloodGroup && (
+            <div className="text-xs text-muted mt-1">
+              Blood Group: {employee.bloodGroup}
+            </div>
+          )} */}
         </div>
-        <button
+        {/* <button
           onClick={deleteEmployee}
           className="h-9 px-3 rounded-md border border-error text-error hover:bg-error/10"
         >
           Delete Employee
-        </button>
+        </button> */}
       </div>
 
-      {/* Details card */}
+      {/* Personal & Job Details (order adjusted: phone, dob → email, personal email → others) */}
       <form
-        onSubmit={saveDetails}
+        onSubmit={handleSubmit(onSaveDetails)}
         className="space-y-4 bg-surface border border-border rounded-md p-4"
       >
         <div className="flex items-center justify-between">
           <h3 className="font-semibold">Personal & Job Details</h3>
-          {saveErr && <div className="text-sm text-error">{saveErr}</div>}
-          {saveOk && <div className="text-sm text-success">{saveOk}</div>}
+          <div className="text-xs text-muted">
+            {isDirty ? "Unsaved changes" : ""}
+          </div>
         </div>
+
+        {/* Row 1: Phone, DOB */}
         <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm mb-1">Phone</label>
+            <input
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.phone ? "border-error" : "border-border"
+              }`}
+              placeholder="10-digit number"
+              {...register("phone")}
+            />
+            {errors.phone && (
+              <p className="text-xs text-error">{errors.phone.message}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Date of Birth</label>
+            <input
+              type="date"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.dob ? "border-error" : "border-border"
+              }`}
+              {...register("dob")}
+            />
+            {errors.dob && (
+              <p className="text-xs text-error">{errors.dob.message}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Row 2: Work Email, Personal Email */}
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm mb-1">Work Email</label>
+            <input
+              type="email"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.email ? "border-error" : "border-border"
+              }`}
+              placeholder="name@company.com"
+              {...register("email")}
+            />
+            {errors.email && (
+              <p className="text-xs text-error">{errors.email.message}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Personal Email</label>
+            <input
+              type="email"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.personalEmail ? "border-error" : "border-border"
+              }`}
+              placeholder="name@gmail.com"
+              {...register("personalEmail")}
+            />
+            {errors.personalEmail && (
+              <p className="text-xs text-error">
+                {errors.personalEmail.message}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Others */}
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm mb-1">Address</label>
+            <input
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.address ? "border-error" : "border-border"
+              }`}
+              {...register("address")}
+            />
+            {errors.address && (
+              <p className="text-xs text-error">{errors.address.message}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Joining Date</label>
+            <input
+              type="date"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.joiningDate ? "border-error" : "border-border"
+              }`}
+              {...register("joiningDate")}
+            />
+            {errors.joiningDate && (
+              <p className="text-xs text-error">{errors.joiningDate.message}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Blood Group</label>
+            <Controller
+              control={control}
+              name="bloodGroup"
+              render={({ field }) => (
+                <select
+                  className={`w-full h-10 rounded border px-3 bg-bg ${
+                    errors.bloodGroup ? "border-error" : "border-border"
+                  }`}
+                  {...field}
+                >
+                  <option value="">Select</option>
+                  {BLOOD_GROUP_OPTIONS.map((bg) => (
+                    <option key={bg} value={bg}>
+                      {bg}
+                    </option>
+                  ))}
+                </select>
+              )}
+            />
+            {errors.bloodGroup && (
+              <p className="text-xs text-error">{errors.bloodGroup.message}</p>
+            )}
+          </div>
+
+          {/* CTC + Mode */}
           <div>
             <label className="block text-sm mb-1">CTC</label>
             <div className="grid grid-cols-[1fr_auto] gap-2">
               <input
                 type="number"
                 step="0.01"
-                className="w-full h-10 rounded border border-border bg-bg px-3"
-                value={ctc}
-                onChange={(e) => setCtc(e.target.value)}
+                className={`w-full h-10 rounded border px-3 bg-bg ${
+                  errors.ctc ? "border-error" : "border-border"
+                }`}
                 placeholder={
                   ctcMode === "annual" ? "Annual CTC" : "Monthly CTC"
                 }
+                {...register("ctc")}
               />
               <select
                 className="h-10 rounded border border-border bg-bg px-2"
                 value={ctcMode}
                 onChange={(e) => {
                   const next = e.target.value as "monthly" | "annual";
-                  // Convert current value to the target unit for user convenience
-                  const n = Number(ctc);
+                  const n = Number(formValues.ctc || 0);
                   if (Number.isFinite(n)) {
-                    if (ctcMode === "monthly" && next === "annual")
-                      setCtc(String(n * 12));
-                    if (ctcMode === "annual" && next === "monthly")
-                      setCtc(String(n / 12));
+                    if (ctcMode === "monthly" && next === "annual") {
+                      // push converted value into RHF
+                      const val = (n * 12).toFixed(2);
+                      (document.activeElement as HTMLElement)?.blur();
+                      // quick set via reset to preserve other values
+                      reset(
+                        { ...formValues, ctc: Number(val) },
+                        { keepDirty: true }
+                      );
+                    }
+                    if (ctcMode === "annual" && next === "monthly") {
+                      const val = (n / 12).toFixed(2);
+                      (document.activeElement as HTMLElement)?.blur();
+                      reset(
+                        { ...formValues, ctc: Number(val) },
+                        { keepDirty: true }
+                      );
+                    }
                   }
                   setCtcMode(next);
                 }}
@@ -305,40 +664,22 @@ export default function EmployeeDetails() {
                 <option value="monthly">Monthly</option>
               </select>
             </div>
-            {ctc && (
+            {errors.ctc && (
+              <p className="text-xs text-error">
+                {errors.ctc.message as string}
+              </p>
+            )}
+            {formValues.ctc !== undefined && (
               <div className="text-xs text-muted mt-1">
                 {ctcMode === "annual"
-                  ? `≈ Monthly: ${(Number(ctc) / 12 || 0).toFixed(2)}`
-                  : `≈ Annual: ${(Number(ctc) * 12 || 0).toFixed(2)}`}
+                  ? `≈ Monthly: ${((Number(formValues.ctc) || 0) / 12).toFixed(
+                      2
+                    )}`
+                  : `≈ Annual: ${(Number(formValues.ctc) * 12 || 0).toFixed(
+                      2
+                    )}`}
               </div>
             )}
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Phone</label>
-            <input
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="Phone number"
-            />
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Date of Birth</label>
-            <input
-              type="date"
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={dobEdit}
-              onChange={(e) => setDobEdit(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Address</label>
-            <input
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="Address"
-            />
           </div>
         </div>
 
@@ -346,20 +687,28 @@ export default function EmployeeDetails() {
           <div>
             <label className="block text-sm mb-1">Aadhar Number</label>
             <input
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={aadhar}
-              onChange={(e) => setAadhar(e.target.value)}
-              placeholder="Aadhar"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.aadharNumber ? "border-error" : "border-border"
+              }`}
+              {...register("aadharNumber")}
             />
+            {errors.aadharNumber && (
+              <p className="text-xs text-error">
+                {errors.aadharNumber.message}
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm mb-1">PAN Number</label>
             <input
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={pan}
-              onChange={(e) => setPan(e.target.value)}
-              placeholder="PAN"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.panNumber ? "border-error" : "border-border"
+              }`}
+              {...register("panNumber")}
             />
+            {errors.panNumber && (
+              <p className="text-xs text-error">{errors.panNumber.message}</p>
+            )}
           </div>
         </div>
 
@@ -367,44 +716,134 @@ export default function EmployeeDetails() {
           <div>
             <label className="block text-sm mb-1">Bank Account</label>
             <input
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={bankAcc}
-              onChange={(e) => setBankAcc(e.target.value)}
-              placeholder="Account number"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.bankAcc ? "border-error" : "border-border"
+              }`}
+              {...register("bankAcc")}
             />
+            {errors.bankAcc && (
+              <p className="text-xs text-error">
+                {errors.bankAcc.message as string}
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm mb-1">Bank Name</label>
             <input
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={bankName}
-              onChange={(e) => setBankName(e.target.value)}
-              placeholder="Bank name"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.bankName ? "border-error" : "border-border"
+              }`}
+              {...register("bankName")}
             />
+            {errors.bankName && (
+              <p className="text-xs text-error">
+                {errors.bankName.message as string}
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm mb-1">IFSC</label>
             <input
-              className="w-full h-10 rounded border border-border bg-bg px-3"
-              value={ifsc}
-              onChange={(e) => setIfsc(e.target.value)}
-              placeholder="IFSC code"
+              className={`w-full h-10 rounded border px-3 bg-bg ${
+                errors.ifsc ? "border-error" : "border-border"
+              }`}
+              {...register("ifsc")}
             />
+            {errors.ifsc && (
+              <p className="text-xs text-error">{errors.ifsc.message}</p>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-3">
           <button
             type="submit"
-            disabled={saveLoading}
+            disabled={isSubmitting}
             className="inline-flex items-center justify-center h-10 px-4 rounded-md bg-primary text-white disabled:opacity-50"
           >
-            {saveLoading ? "Saving…" : "Save Changes"}
+            {isSubmitting ? "Saving…" : "Save Changes"}
           </button>
         </div>
       </form>
 
-      {/* Role card */}
+      {/* Leave Balance */}
+      <section className="space-y-4 bg-surface border border-border rounded-md p-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Leave Balance</h3>
+          {adjustErr && <div className="text-sm text-error">{adjustErr}</div>}
+          {adjustOk && <div className="text-sm text-success">{adjustOk}</div>}
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-md border border-border/60 bg-muted/10 p-4">
+            <div className="text-xs uppercase tracking-wide text-muted">
+              Total Available
+            </div>
+            <div className="text-3xl font-semibold mt-1">
+              {totalLeaveBalance}
+            </div>
+            {totalLeaveBalance < 0 && (
+              <div className="text-xs text-error mt-2">
+                Negative balance indicates overuse.
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border border-border/60 bg-bg p-4 text-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <span>Paid remaining</span>
+              <span>{leaveBalances.paid}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Casual remaining</span>
+              <span>{leaveBalances.casual}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Sick remaining</span>
+              <span>{leaveBalances.sick}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted pt-2 border-t border-border/40">
+              <span>Unpaid taken</span>
+              <span>{leaveBalances.unpaid}</span>
+            </div>
+          </div>
+        </div>
+        <form
+          onSubmit={adjustLeaveBalance}
+          className="flex flex-wrap items-center gap-3"
+        >
+          <input
+            type="number"
+            step="0.5"
+            className="h-10 rounded-md border border-border bg-bg px-3"
+            placeholder="e.g. 2 or -1.5"
+            value={adjustAmount}
+            onChange={(e) => {
+              setAdjustAmount(e.target.value);
+              if (adjustErr) setAdjustErr(null);
+              if (adjustOk) setAdjustOk(null);
+            }}
+          />
+          <button
+            type="submit"
+            disabled={adjustLoading}
+            className="inline-flex items-center justify-center h-10 rounded-md bg-primary px-4 text-white disabled:opacity-60"
+          >
+            {adjustLoading ? "Updating…" : "Apply"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdjustAmount("")}
+            disabled={adjustLoading || !adjustAmount}
+            className="h-10 rounded-md border border-border px-3 text-sm disabled:opacity-50"
+          >
+            Clear
+          </button>
+        </form>
+        <div className="text-xs text-muted">
+          Use positive to credit, negative to deduct.
+        </div>
+      </section>
+
+      {/* Role */}
       <section className="space-y-3 bg-surface border border-border rounded-md p-4">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold">Role</h3>
@@ -433,7 +872,7 @@ export default function EmployeeDetails() {
         </form>
       </section>
 
-      {/* Reporting person card */}
+      {/* Reporting Person */}
       <section className="space-y-3 bg-surface border border-border rounded-md p-4">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold">Reporting Person</h3>

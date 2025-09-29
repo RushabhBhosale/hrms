@@ -40,6 +40,7 @@ const CompanySchema = new mongoose.Schema(
     leavePolicy: {
       totalAnnual: { type: Number, default: 0 },
       ratePerMonth: { type: Number, default: 0 },
+      applicableFrom: { type: Date },
       typeCaps: {
         paid: { type: Number, default: 0 },
         casual: { type: Number, default: 0 },
@@ -66,6 +67,16 @@ const CompanySchema = new mongoose.Schema(
       success: { type: String },
       warning: { type: String },
       error: { type: String },
+    },
+    smtp: {
+      enabled: { type: Boolean, default: false },
+      host: { type: String },
+      port: { type: Number },
+      secure: { type: Boolean, default: false },
+      user: { type: String },
+      pass: { type: String },
+      from: { type: String },
+      replyTo: { type: String },
     }
   },
   { timestamps: true }

@@ -201,7 +201,7 @@ export default function ProjectsAdmin() {
       >
         <div className="grid md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm mb-1">Title</label>
+            <label className="block text-sm mb-1 required-label">Title</label>
             <input
               className="w-full h-10 rounded border border-border bg-bg px-3"
               placeholder="Project title"
@@ -269,7 +269,9 @@ export default function ProjectsAdmin() {
 
         <div className="grid md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm mb-1">Team Lead</label>
+            <label className="block text-sm mb-1 required-label">
+              Team Lead
+            </label>
             <select
               className="w-full h-10 rounded border border-border bg-bg px-3"
               {...register("teamLead")}

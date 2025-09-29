@@ -9,7 +9,7 @@ const Task = require("../models/Task");
 const AttendanceOverride = require("../models/AttendanceOverride");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
-const { runAutoPunchOut } = require("../jobs/autoPunchout");
+const { runAutoPunchOut } = require("../jobs/autoPunchOut");
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -71,13 +71,12 @@ router.post("/punch", auth, async (req, res) => {
   if (didPunchOut) {
     (async () => {
       try {
-        if (!isEmailEnabled()) return;
-
-        // Load employee and reporting person
         const emp = await Employee.findById(req.employee.id)
           .select("name email company reportingPerson")
           .lean();
         if (!emp) return;
+        const companyId = emp.company;
+        if (!(await isEmailEnabled(companyId))) return;
         if (!emp.reportingPerson) return; // no reporting person configured
         const rp = await Employee.findById(emp.reportingPerson)
           .select("name email")
@@ -180,6 +179,7 @@ router.post("/punch", auth, async (req, res) => {
 
         const subject = `Daily Status: ${emp.name} — ${dateStr}`;
         await sendMail({
+          companyId,
           to: rp.email,
           subject,
           html,

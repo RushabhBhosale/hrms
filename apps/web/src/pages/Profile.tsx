@@ -198,7 +198,7 @@ export default function Profile() {
         <p className="text-sm text-muted">Update your details.</p>
       </div>
 
-      {err && (
+      {/* {err && (
         <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
@@ -207,7 +207,7 @@ export default function Profile() {
         <div className="rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
           {ok}
         </div>
-      )}
+      )} */}
 
       {/* Personal Information */}
       <section className="rounded-lg border border-border bg-surface shadow-sm">
@@ -217,7 +217,7 @@ export default function Profile() {
 
         <form onSubmit={handleSubmit(onSubmit)} className="px-6 py-5 space-y-5">
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Full Name">
+            <Field label="Full Name" required>
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 {...register("name")}
@@ -226,7 +226,7 @@ export default function Profile() {
                 <p className="text-xs text-error mt-1">{errors.name.message}</p>
               )}
             </Field>
-            <Field label="Email">
+            <Field label="Email" required>
               <input
                 type="email"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -374,11 +374,12 @@ export default function Profile() {
           className="px-6 py-5 space-y-5"
         >
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Current password">
+            <Field label="Current password" required>
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 {...registerPw("currentPassword")}
+                required
               />
               {pwErrors.currentPassword && (
                 <p className="text-xs text-error mt-1">
@@ -386,11 +387,12 @@ export default function Profile() {
                 </p>
               )}
             </Field>
-            <Field label="New password (min 6 chars)">
+            <Field label="New password (min 6 chars)" required>
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 {...registerPw("newPassword")}
+                required
               />
               {pwErrors.newPassword && (
                 <p className="text-xs text-error mt-1">
@@ -398,11 +400,12 @@ export default function Profile() {
                 </p>
               )}
             </Field>
-            <Field label="Confirm password">
+            <Field label="Confirm password" required>
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 {...registerPw("confirmPassword")}
+                required
               />
               {pwErrors.confirmPassword && (
                 <p className="text-xs text-error mt-1">

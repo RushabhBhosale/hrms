@@ -1,8 +1,8 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { api } from '../../lib/api';
-import { Link } from 'react-router-dom';
-import { getEmployee } from '../../lib/auth';
-import type { PrimaryRole } from '../../lib/auth';
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { api } from "../../lib/api";
+import { Link } from "react-router-dom";
+import { getEmployee } from "../../lib/auth";
+import type { PrimaryRole } from "../../lib/auth";
 
 type EmployeeLite = {
   id: string;
@@ -26,28 +26,28 @@ type Project = {
 export default function MyProjects() {
   const viewer = getEmployee();
   const canCreate =
-    viewer?.primaryRole === 'ADMIN' ||
-    viewer?.primaryRole === 'SUPERADMIN' ||
-    viewer?.subRoles?.includes('hr');
+    viewer?.primaryRole === "ADMIN" ||
+    viewer?.primaryRole === "SUPERADMIN" ||
+    viewer?.subRoles?.includes("hr");
   const [projects, setProjects] = useState<Project[]>([]);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [tech, setTech] = useState('');
-  const [teamLead, setTeamLead] = useState('');
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [tech, setTech] = useState("");
+  const [teamLead, setTeamLead] = useState("");
   const [members, setMembers] = useState<string[]>([]);
-  const [estimatedHours, setEstimatedHours] = useState('');
-  const [startTime, setStartTime] = useState('');
+  const [estimatedHours, setEstimatedHours] = useState("");
+  const [startTime, setStartTime] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
     try {
       const [projRes, empRes] = await Promise.all([
-        api.get('/projects'),
-        api.get('/companies/employees'),
+        api.get("/projects"),
+        api.get("/companies/employees"),
       ]);
       setProjects(projRes.data.projects || []);
       setEmployees(empRes.data.employees || []);
@@ -67,36 +67,36 @@ export default function MyProjects() {
 
   const teamLeadOptions = useMemo(() => {
     const priority = employees.filter((e) =>
-      e.subRoles?.some((role) => role === 'hr' || role === 'manager')
+      e.subRoles?.some((role) => role === "hr" || role === "manager")
     );
     const others = employees.filter(
-      (e) => !e.subRoles?.some((role) => role === 'hr' || role === 'manager')
+      (e) => !e.subRoles?.some((role) => role === "hr" || role === "manager")
     );
     return [...priority, ...others];
   }, [employees]);
 
   function roleLabel(e: EmployeeLite) {
     if (e.subRoles?.length) return e.subRoles[0];
-    if (e.primaryRole === 'ADMIN') return 'admin';
-    if (e.primaryRole === 'SUPERADMIN') return 'superadmin';
-    return 'employee';
+    if (e.primaryRole === "ADMIN") return "admin";
+    if (e.primaryRole === "SUPERADMIN") return "superadmin";
+    return "employee";
   }
 
   async function createProject(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!canCreate) return;
     if (!title.trim() || !teamLead) {
-      setCreateError('Please provide a title and team lead.');
+      setCreateError("Please provide a title and team lead.");
       return;
     }
     setCreateError(null);
     setSaving(true);
     try {
       const techStack = tech
-        .split(',')
+        .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      const hours = parseFloat(estimatedHours || '0');
+      const hours = parseFloat(estimatedHours || "0");
       const payload: any = {
         title: title.trim(),
         description,
@@ -108,17 +108,17 @@ export default function MyProjects() {
         payload.estimatedTimeMinutes = Math.round(hours * 60);
       }
       if (startTime && startTime.trim()) payload.startTime = startTime;
-      await api.post('/projects', payload);
-      setTitle('');
-      setDescription('');
-      setTech('');
-      setTeamLead('');
+      await api.post("/projects", payload);
+      setTitle("");
+      setDescription("");
+      setTech("");
+      setTeamLead("");
       setMembers([]);
-      setEstimatedHours('');
-      setStartTime('');
+      setEstimatedHours("");
+      setStartTime("");
       await load();
     } catch (err: any) {
-      setCreateError(err?.response?.data?.error || 'Failed to create project');
+      setCreateError(err?.response?.data?.error || "Failed to create project");
     } finally {
       setSaving(false);
     }
@@ -129,10 +129,14 @@ export default function MyProjects() {
   }
 
   function fmtDate(s?: string) {
-    if (!s) return '-';
+    if (!s) return "-";
     const d = new Date(s);
-    if (isNaN(d.getTime())) return '-';
-    return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+    if (isNaN(d.getTime())) return "-";
+    return d.toLocaleDateString([], {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   }
 
   return (
@@ -146,13 +150,12 @@ export default function MyProjects() {
         >
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="block text-sm mb-1">Title</label>
+              <label className="block text-sm mb-1 required-label">Title</label>
               <input
                 className="w-full h-10 rounded border border-border bg-bg px-3"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Project title"
-                required
               />
             </div>
             <div>
@@ -165,7 +168,9 @@ export default function MyProjects() {
               />
             </div>
             <div>
-              <label className="block text-sm mb-1">Estimated Time (hours)</label>
+              <label className="block text-sm mb-1">
+                Estimated Time (hours)
+              </label>
               <input
                 className="w-full h-10 rounded border border-border bg-bg px-3"
                 type="number"
@@ -198,12 +203,13 @@ export default function MyProjects() {
 
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="block text-sm mb-1">Team Lead</label>
+              <label className="block text-sm mb-1 required-label">
+                Team Lead
+              </label>
               <select
                 className="w-full h-10 rounded border border-border bg-bg px-3"
                 value={teamLead}
                 onChange={(e) => setTeamLead(e.target.value)}
-                required
               >
                 <option value="">Select team lead</option>
                 {teamLeadOptions.map((emp) => (
@@ -233,7 +239,7 @@ export default function MyProjects() {
                       }
                     />
                     <span>
-                      {emp.name}{' '}
+                      {emp.name}{" "}
                       <span className="text-muted">({roleLabel(emp)})</span>
                     </span>
                   </label>
@@ -253,7 +259,7 @@ export default function MyProjects() {
               className="inline-flex items-center justify-center h-10 px-4 rounded-md bg-primary text-white disabled:opacity-50"
               disabled={saving}
             >
-              {saving ? 'Creating…' : 'Create Project'}
+              {saving ? "Creating…" : "Create Project"}
             </button>
           </div>
         </form>
@@ -261,19 +267,34 @@ export default function MyProjects() {
 
       <div className="grid gap-3">
         {projects.map((p) => (
-          <div key={p._id} className="border border-border bg-surface rounded-md p-4">
+          <div
+            key={p._id}
+            className="border border-border bg-surface rounded-md p-4"
+          >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-semibold">{p.title}</div>
-                {p.description && <div className="text-sm text-muted mt-1">{p.description}</div>}
-                {!!(p.techStack?.length) && (
-                  <div className="mt-2 text-xs text-muted">Tech: {p.techStack?.join(', ')}</div>
+                {p.description && (
+                  <div className="text-sm text-muted mt-1">{p.description}</div>
+                )}
+                {!!p.techStack?.length && (
+                  <div className="mt-2 text-xs text-muted">
+                    Tech: {p.techStack?.join(", ")}
+                  </div>
                 )}
                 <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
-                  <span className="text-muted">Start: {fmtDate(p.createdAt)}</span>
-                  <span className="text-muted">Est: {minutesToHours(p.estimatedTimeMinutes || 0)} h</span>
-                  <span className="text-muted">Lead: {empMap.get(String(p.teamLead)) || '—'}</span>
-                  <span className="text-muted">Members: {p.members?.length || 0}</span>
+                  <span className="text-muted">
+                    Start: {fmtDate(p.createdAt)}
+                  </span>
+                  <span className="text-muted">
+                    Est: {minutesToHours(p.estimatedTimeMinutes || 0)} h
+                  </span>
+                  <span className="text-muted">
+                    Lead: {empMap.get(String(p.teamLead)) || "—"}
+                  </span>
+                  <span className="text-muted">
+                    Members: {p.members?.length || 0}
+                  </span>
                 </div>
               </div>
               <Link

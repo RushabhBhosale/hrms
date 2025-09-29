@@ -242,9 +242,9 @@ export default function ProjectDetails() {
     try {
       const resp = await api.put(`/projects/${id}`, { active: next });
       setProject(resp.data.project);
-      toast.success(next ? 'Project marked Active' : 'Project marked Inactive');
+      toast.success(next ? "Project marked Active" : "Project marked Inactive");
     } catch (e: any) {
-      toast.error(e?.response?.data?.error || 'Failed to update project');
+      toast.error(e?.response?.data?.error || "Failed to update project");
     }
   }
 
@@ -534,9 +534,7 @@ export default function ProjectDetails() {
                   className="px-3 py-1 rounded border border-border bg-bg"
                 >
                   <div className="text-sm">{m.name}</div>
-                  <div className="text-xs text-muted">
-                    {roleLabel(m)}
-                  </div>
+                  <div className="text-xs text-muted">{roleLabel(m)}</div>
                 </div>
               ))}
             </div>
@@ -769,16 +767,22 @@ export default function ProjectDetails() {
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-medium">Project Status</div>
                   <div className="flex items-center gap-2">
-                    <span className={`text-xs px-2 py-0.5 rounded border ${
-                      (project.active !== false) ? 'border-secondary/30 text-secondary bg-secondary/10' : 'border-muted/40 text-muted'
-                    }`}>
-                      {(project.active !== false) ? 'Active' : 'Inactive'}
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded border ${
+                        project.active !== false
+                          ? "border-secondary/30 text-secondary bg-secondary/10"
+                          : "border-muted/40 text-muted"
+                      }`}
+                    >
+                      {project.active !== false ? "Active" : "Inactive"}
                     </span>
                     <button
                       onClick={() => toggleActive(!(project.active !== false))}
                       className="h-9 px-3 rounded-md border border-border text-sm hover:bg-surface"
                     >
-                      {(project.active !== false) ? 'Mark Inactive' : 'Mark Active'}
+                      {project.active !== false
+                        ? "Mark Inactive"
+                        : "Mark Active"}
                     </button>
                   </div>
                 </div>
@@ -796,26 +800,30 @@ export default function ProjectDetails() {
         >
           <div className="font-medium">Add Task</div>
           <div className="grid md:grid-cols-2 gap-3">
-            <input
-              className="h-10 rounded border border-border bg-bg px-3"
-              placeholder="Task title"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              required
-            />
-            <select
-              className="h-10 rounded border border-border bg-bg px-3"
-              value={assignee}
-              onChange={(e) => setAssignee(e.target.value)}
-              required
-            >
-              <option value="">Assign to...</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+            <div className="space-y-1">
+              <label className="text-sm required-label">Task title</label>
+              <input
+                className="h-10 w-full rounded border border-border bg-bg px-3"
+                placeholder="Task title"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm required-label">Assignee</label>
+              <select
+                className="h-10 w-full rounded border border-border bg-bg px-3"
+                value={assignee}
+                onChange={(e) => setAssignee(e.target.value)}
+              >
+                <option value="">Assign to...</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <select
               className="h-10 rounded border border-border bg-bg px-3"
               value={priority}

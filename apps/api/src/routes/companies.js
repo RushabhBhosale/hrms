@@ -12,11 +12,9 @@ const MasterCountry = require("../models/MasterCountry");
 const MasterState = require("../models/MasterState");
 const MasterCity = require("../models/MasterCity");
 const CompanyTypeMaster = require("../models/CompanyTypeMaster");
-const multer = require("multer");
-const path = require("path");
-const upload = multer({ dest: path.join(__dirname, "../../uploads") });
-const { syncLeaveBalances } = require("../utils/leaveBalances");
-const { sendMail, isEmailEnabled } = require("../utils/mailer");
+const { upload } = require("../utils/uploads");
+const { syncLeaveBalances, accrueTotalIfNeeded } = require("../utils/leaveBalances");
+const { sendMail, isEmailEnabled, invalidateCompanyTransporter } = require("../utils/mailer");
 const { isValidEmail, isValidPassword, isValidPhone, normalizePhone } = require("../utils/validate");
 
 // Utility: simple hex validation
@@ -30,8 +28,58 @@ function startOfDay(d) {
   return x;
 }
 
-function scheduleApprovalEmail(companyName, email, passwordPlain) {
-  if (!isEmailEnabled() || !email) return;
+function parseApplicableMonth(value) {
+  if (!value) return undefined;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), 1));
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const match = trimmed.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+    if (!match) return undefined;
+    const year = Number(match[1]);
+    const monthIdx = Number(match[2]) - 1;
+    return new Date(Date.UTC(year, monthIdx, 1));
+  }
+  return undefined;
+}
+
+function formatApplicableMonth(date) {
+  if (!date) return "";
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return "";
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function parseBooleanInput(value, fallback = false) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+const BLOOD_GROUPS = new Set(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
+
+function normalizeBloodGroup(v) {
+  if (typeof v !== "string") return undefined;
+  const upper = v.trim().toUpperCase();
+  if (!upper) return undefined;
+  return BLOOD_GROUPS.has(upper) ? upper : undefined;
+}
+
+function scheduleApprovalEmail(companyOrName, email, passwordPlain) {
+  if (!email) return;
+  const companyId = companyOrName && companyOrName._id ? companyOrName._id : null;
+  const companyName =
+    (companyOrName && companyOrName.name) ||
+    (typeof companyOrName === 'string' ? companyOrName : 'Company');
   const loginLink = process.env.CLIENT_ORIGIN
     ? `${process.env.CLIENT_ORIGIN}/login`
     : null;
@@ -58,7 +106,9 @@ function scheduleApprovalEmail(companyName, email, passwordPlain) {
   }</p>`;
   (async () => {
     try {
+      if (!(await isEmailEnabled(companyId))) return;
       await sendMail({
+        companyId,
         to: email,
         subject,
         text,
@@ -70,14 +120,19 @@ function scheduleApprovalEmail(companyName, email, passwordPlain) {
   })();
 }
 
-function scheduleRejectionEmail(companyName, email) {
-  if (!isEmailEnabled() || !email) return;
+function scheduleRejectionEmail(companyOrName, email) {
+  if (!email) return;
+  const companyId = companyOrName && companyOrName._id ? companyOrName._id : null;
+  const companyName =
+    (companyOrName && companyOrName.name) ||
+    (typeof companyOrName === 'string' ? companyOrName : 'Company');
   const subject = `Your company registration was rejected: ${companyName}`;
   const text = `We’re sorry, but your company "${companyName}" was not approved at this time.`;
   const html = `<p>We’re sorry, but your company <strong>${companyName}</strong> was not approved at this time.</p><p>If you believe this is an error, please contact support.</p>`;
   (async () => {
     try {
-      await sendMail({ to: email, subject, text, html });
+      if (!(await isEmailEnabled(companyId))) return;
+      await sendMail({ companyId, to: email, subject, text, html });
     } catch (err) {
       console.warn('[companies] failed to send rejection email:', err?.message || err);
     }
@@ -155,7 +210,7 @@ async function approvePendingCompany(company) {
   await company.save();
 
   const populated = await company.populate("admin", "name email");
-  scheduleApprovalEmail(company.name, pendingAdmin.email, pendingAdmin.passwordPlain);
+  scheduleApprovalEmail(company, pendingAdmin.email, pendingAdmin.passwordPlain);
   return populated;
 }
 
@@ -171,7 +226,7 @@ async function rejectPendingCompany(company) {
   await company.save();
   const populated = await company.populate("admin", "name email");
   if (pendingAdmin?.email) {
-    scheduleRejectionEmail(company.name, pendingAdmin.email);
+    scheduleRejectionEmail(company, pendingAdmin.email);
   }
   return populated;
 }
@@ -184,7 +239,7 @@ async function rejectApprovedCompany(company) {
   await company.save();
   const populated = await company.populate("admin", "name email");
   const notify = populated.admin?.email || company.requestedAdmin?.email;
-  if (notify) scheduleRejectionEmail(company.name, notify);
+  if (notify) scheduleRejectionEmail(company, notify);
   return populated;
 }
 
@@ -337,6 +392,110 @@ router.put("/profile", auth, async (req, res) => {
   } });
 });
 
+// Admin: get SMTP configuration
+router.get("/smtp", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const company = await Company.findOne({ admin: req.employee.id }).select('smtp');
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  const smtp = company.smtp || {};
+  res.json({
+    smtp: {
+      enabled: !!smtp.enabled,
+      host: smtp.host || '',
+      port: typeof smtp.port === 'number' ? smtp.port : 587,
+      secure: !!smtp.secure,
+      user: smtp.user || '',
+      from: smtp.from || '',
+      replyTo: smtp.replyTo || '',
+      passwordSet: !!smtp.pass,
+    },
+  });
+});
+
+// Admin: update SMTP configuration
+router.put("/smtp", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const company = await Company.findOne({ admin: req.employee.id }).select('smtp');
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const body = req.body || {};
+  const enabled = parseBooleanInput(body.enabled, false);
+
+  if (!enabled) {
+    company.smtp = { enabled: false };
+    await company.save();
+    invalidateCompanyTransporter(company._id);
+    return res.json({
+      smtp: {
+        enabled: false,
+        host: '',
+        port: 587,
+        secure: false,
+        user: '',
+        from: '',
+        replyTo: '',
+        passwordSet: false,
+      },
+    });
+  }
+
+  const host = typeof body.host === 'string' ? body.host.trim() : '';
+  if (!host) return res.status(400).json({ error: 'SMTP host is required' });
+
+  const portRaw = body.port !== undefined ? body.port : 587;
+  const portNum = parseInt(portRaw, 10);
+  if (!Number.isFinite(portNum) || portNum <= 0 || portNum > 65535) {
+    return res.status(400).json({ error: 'SMTP port must be between 1 and 65535' });
+  }
+
+  const secure = parseBooleanInput(body.secure, portNum === 465);
+  const user = typeof body.user === 'string' ? body.user.trim() : '';
+  const from = typeof body.from === 'string' ? body.from.trim() : '';
+  const replyTo = typeof body.replyTo === 'string' ? body.replyTo.trim() : '';
+
+  let nextPass = (company.smtp && company.smtp.pass) || undefined;
+  if (Object.prototype.hasOwnProperty.call(body, 'password')) {
+    const raw = body.password;
+    if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+      nextPass = undefined;
+    } else if (typeof raw === 'string') {
+      nextPass = raw;
+    } else {
+      return res.status(400).json({ error: 'Invalid password value' });
+    }
+  }
+
+  company.smtp = {
+    enabled: true,
+    host,
+    port: portNum,
+    secure,
+    user: user || undefined,
+    from: from || undefined,
+    replyTo: replyTo || undefined,
+    pass: nextPass,
+  };
+  await company.save();
+  invalidateCompanyTransporter(company._id);
+
+  res.json({
+    smtp: {
+      enabled: true,
+      host,
+      port: portNum,
+      secure,
+      user: user || '',
+      from: from || '',
+      replyTo: replyTo || '',
+      passwordSet: !!nextPass,
+    },
+  });
+});
+
 // Admin: upload or replace company logo
 router.post("/logo", auth, upload.single("logo"), async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
@@ -397,6 +556,7 @@ router.post("/register", async (req, res) => {
       stateId,
       cityId,
       companyTypeId,
+      leaveApplicableFrom,
     } = req.body || {};
     if (
       !companyName ||
@@ -442,6 +602,11 @@ router.post("/register", async (req, res) => {
 
     const passwordHash = await bcrypt.hash(adminPassword, 10);
 
+    const applicableFromDate = parseApplicableMonth(leaveApplicableFrom);
+    if (leaveApplicableFrom && !applicableFromDate) {
+      return res.status(400).json({ error: "Invalid leave applicable date" });
+    }
+
     const company = await Company.create({
       name: companyName.trim(),
       status: "pending",
@@ -462,12 +627,20 @@ router.post("/register", async (req, res) => {
       },
       companyType: companyType._id,
       companyTypeName: companyType.name,
+      leavePolicy: applicableFromDate
+        ? {
+            applicableFrom: applicableFromDate,
+            totalAnnual: 0,
+            ratePerMonth: 0,
+            typeCaps: { paid: 0, casual: 0, sick: 0 },
+          }
+        : undefined,
     });
 
     // Async notifications (non-blocking)
     ;(async () => {
       try {
-        if (isEmailEnabled()) {
+        if (await isEmailEnabled()) {
           // Notify platform superadmins
           const supers = await Employee.find({ primaryRole: 'SUPERADMIN' }).select('email name');
           const to = (supers || []).map((u) => u.email).filter(Boolean);
@@ -486,7 +659,7 @@ router.post("/register", async (req, res) => {
           const subject2 = `Registration received: ${company.name}`;
           const text2 = `Thanks for registering ${company.name}. Your request is pending approval. We will notify you once reviewed.`;
           const html2 = `<p>Thanks for registering <strong>${company.name}</strong>.</p><p>Your request is pending approval. We will notify you once reviewed.</p>`;
-          await sendMail({ to: adminEmail.trim(), subject: subject2, text: text2, html: html2 });
+          await sendMail({ companyId: company._id, to: adminEmail.trim(), subject: subject2, text: text2, html: html2 });
         }
       } catch (e) {
         console.warn('[companies/register] failed to send email:', e?.message || e);
@@ -749,10 +922,13 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     role,
     address,
     phone,
+    personalEmail,
+    bloodGroup,
     dob,
     reportingPerson,
     employeeId,
     ctc,
+    joiningDate,
   } = req.body;
   if (!name || !email || !password || !role || !employeeId)
     return res.status(400).json({ error: "Missing fields" });
@@ -760,6 +936,31 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
   if (!isValidPassword(password)) return res.status(400).json({ error: "Password must be more than 5 characters" });
   if (phone !== undefined && phone !== null && String(phone).trim() !== "") {
     if (!isValidPhone(phone)) return res.status(400).json({ error: "Phone must be exactly 10 digits" });
+  }
+  let personalEmailNormalized;
+  if (personalEmail !== undefined && personalEmail !== null && String(personalEmail).trim() !== "") {
+    personalEmailNormalized = String(personalEmail).trim();
+    if (!isValidEmail(personalEmailNormalized)) {
+      return res.status(400).json({ error: "Invalid personal email" });
+    }
+  }
+  const hasBloodGroup =
+    bloodGroup !== undefined &&
+    bloodGroup !== null &&
+    String(bloodGroup).trim() !== "";
+  const normalizedBloodGroup = hasBloodGroup
+    ? normalizeBloodGroup(bloodGroup)
+    : undefined;
+  if (hasBloodGroup && !normalizedBloodGroup) {
+    return res.status(400).json({ error: "Invalid blood group" });
+  }
+  let parsedJoiningDate;
+  if (joiningDate !== undefined && joiningDate !== null && String(joiningDate).trim() !== "") {
+    const jd = new Date(joiningDate);
+    if (Number.isNaN(jd.getTime())) {
+      return res.status(400).json({ error: "Invalid joining date" });
+    }
+    parsedJoiningDate = jd;
   }
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
@@ -791,18 +992,25 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     company: company._id,
     address,
     phone: phone ? normalizePhone(phone) : undefined,
+    personalEmail: personalEmailNormalized,
+    bloodGroup: normalizedBloodGroup,
     dob: dob ? new Date(dob) : undefined,
+    joiningDate: parsedJoiningDate,
     employeeId,
     ctc: Number.isFinite(Number(ctc)) ? Number(ctc) : 0,
     documents,
     reportingPerson: reporting ? reporting._id : undefined,
     leaveBalances,
   });
+  try { employee.decryptFieldsSync(); } catch (_) {}
   res.json({
     employee: {
       id: employee._id,
       name: employee.name,
       email: employee.email,
+      personalEmail: employee.personalEmail || '',
+      bloodGroup: employee.bloodGroup || '',
+      joiningDate: employee.joiningDate,
       subRoles: employee.subRoles,
     },
   });
@@ -821,6 +1029,7 @@ router.get("/leave-policy", auth, async (req, res) => {
     leavePolicy: {
       totalAnnual: lp.totalAnnual || 0,
       ratePerMonth: lp.ratePerMonth || 0,
+      applicableFrom: formatApplicableMonth(lp.applicableFrom),
       typeCaps: {
         paid: lp.typeCaps?.paid || 0,
         casual: lp.typeCaps?.casual || 0,
@@ -872,7 +1081,7 @@ router.put("/work-hours", auth, async (req, res) => {
 router.put("/leave-policy", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { totalAnnual, ratePerMonth, typeCaps } = req.body || {};
+  const { totalAnnual, ratePerMonth, typeCaps, applicableFrom } = req.body || {};
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   const total = Number(totalAnnual) || 0;
@@ -885,13 +1094,56 @@ router.put("/leave-policy", auth, async (req, res) => {
   if (total < 0 || rpm < 0) return res.status(400).json({ error: "Invalid totals" });
   const sumCaps = caps.paid + caps.casual + caps.sick;
   if (sumCaps > total) return res.status(400).json({ error: "Type caps cannot exceed total annual leaves" });
+  const previousApplicable = company.leavePolicy?.applicableFrom || undefined;
+  let applicableFromDate = previousApplicable;
+  if (applicableFrom === null) {
+    applicableFromDate = undefined;
+  } else if (typeof applicableFrom !== 'undefined') {
+    const parsed = parseApplicableMonth(applicableFrom);
+    if (!parsed && typeof applicableFrom === 'string' && applicableFrom.trim()) {
+      return res.status(400).json({ error: "Invalid leave applicable date" });
+    }
+    applicableFromDate = parsed ?? previousApplicable;
+  }
   company.leavePolicy = {
     totalAnnual: total,
     ratePerMonth: rpm,
+    applicableFrom: applicableFromDate,
     typeCaps: caps,
   };
   await company.save();
-  res.json({ leavePolicy: company.leavePolicy });
+  const updated = company.leavePolicy || {};
+
+  ;(async () => {
+    try {
+      const employees = await Employee.find({ company: company._id }).select(
+        "company totalLeaveAvailable leaveUsage leaveAccrual joiningDate createdAt"
+      );
+      for (const emp of employees) {
+        try {
+          await accrueTotalIfNeeded(emp, company, new Date());
+          await syncLeaveBalances(emp);
+        } catch (err) {
+          console.warn('[companies/leave-policy] failed to sync employee', String(emp._id), err?.message || err);
+        }
+      }
+    } catch (err) {
+      console.warn('[companies/leave-policy] failed to refresh employees', err?.message || err);
+    }
+  })();
+
+  res.json({
+    leavePolicy: {
+      totalAnnual: updated.totalAnnual || 0,
+      ratePerMonth: updated.ratePerMonth || 0,
+      applicableFrom: formatApplicableMonth(updated.applicableFrom),
+      typeCaps: {
+        paid: updated.typeCaps?.paid || 0,
+        casual: updated.typeCaps?.casual || 0,
+        sick: updated.typeCaps?.sick || 0,
+      },
+    },
+  });
 });
 
 // Admin: list bank holidays
@@ -1077,6 +1329,9 @@ router.put("/employees/:id", auth, async (req, res) => {
     address,
     phone,
     dob,
+    joiningDate,
+    personalEmail,
+    bloodGroup,
     ctc,
     aadharNumber,
     panNumber,
@@ -1106,6 +1361,33 @@ router.put("/employees/:id", auth, async (req, res) => {
     if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid DOB' });
     employee.dob = d;
   }
+  if (joiningDate !== undefined) {
+    if (joiningDate === null || String(joiningDate).trim() === '') {
+      employee.joiningDate = undefined;
+    } else {
+      const jd = new Date(joiningDate);
+      if (isNaN(jd.getTime())) return res.status(400).json({ error: 'Invalid joining date' });
+      employee.joiningDate = jd;
+    }
+  }
+  if (personalEmail !== undefined) {
+    if (personalEmail === null || String(personalEmail).trim() === '') {
+      employee.personalEmail = undefined;
+    } else {
+      const trimmed = String(personalEmail).trim();
+      if (!isValidEmail(trimmed)) return res.status(400).json({ error: 'Invalid personal email' });
+      employee.personalEmail = trimmed;
+    }
+  }
+  if (bloodGroup !== undefined) {
+    if (bloodGroup === null || String(bloodGroup).trim() === '') {
+      employee.bloodGroup = undefined;
+    } else {
+      const normalized = normalizeBloodGroup(bloodGroup);
+      if (!normalized) return res.status(400).json({ error: 'Invalid blood group' });
+      employee.bloodGroup = normalized;
+    }
+  }
   if (ctc !== undefined) {
     const n = Number(ctc);
     if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'Invalid CTC' });
@@ -1121,13 +1403,21 @@ router.put("/employees/:id", auth, async (req, res) => {
   }
 
   await employee.save();
+  await accrueTotalIfNeeded(employee, company, new Date());
+  await syncLeaveBalances(employee);
   try { employee.decryptFieldsSync(); } catch (_) {}
+  const responsePersonalEmail = employee.personalEmail || '';
+  const responseBloodGroup = employee.bloodGroup || '';
+  const responseJoiningDate = employee.joiningDate || null;
   res.json({
     employee: {
       id: employee._id,
       address: employee.address || '',
       phone: employee.phone || '',
       dob: employee.dob,
+      joiningDate: responseJoiningDate,
+      personalEmail: responsePersonalEmail,
+      bloodGroup: responseBloodGroup,
       ctc: employee.ctc || 0,
       aadharNumber: employee.aadharNumber || '',
       panNumber: employee.panNumber || '',
@@ -1135,6 +1425,47 @@ router.put("/employees/:id", auth, async (req, res) => {
         accountNumber: employee.bankDetails?.accountNumber || '',
         bankName: employee.bankDetails?.bankName || '',
         ifsc: employee.bankDetails?.ifsc || '',
+      },
+    },
+  });
+});
+
+// Admin: adjust an employee's total leave balance (supports positive or negative deltas)
+router.post("/employees/:id/leave-adjust", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const { amount } = req.body || {};
+  const delta = Number(amount);
+  if (!Number.isFinite(delta)) {
+    return res.status(400).json({ error: "Amount must be a number" });
+  }
+
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const employee = await Employee.findById(req.params.id);
+  if (!employee || !employee.company.equals(company._id))
+    return res.status(404).json({ error: "Employee not found" });
+
+  await accrueTotalIfNeeded(employee, company, new Date());
+  const current = Number(employee.totalLeaveAvailable) || 0;
+  employee.totalLeaveAvailable = current + delta;
+  employee.leaveAccrual = employee.leaveAccrual || {};
+  const existingAdjustment = Number(employee.leaveAccrual.manualAdjustment) || 0;
+  employee.leaveAccrual.manualAdjustment = existingAdjustment + delta;
+  await employee.save();
+  await syncLeaveBalances(employee);
+
+  res.json({
+    employee: {
+      id: employee._id,
+      totalLeaveAvailable: employee.totalLeaveAvailable || 0,
+      leaveBalances: employee.leaveBalances || {
+        paid: 0,
+        casual: 0,
+        sick: 0,
+        unpaid: 0,
       },
     },
   });

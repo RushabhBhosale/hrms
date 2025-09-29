@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
 import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
 import { RoleBadge } from "../../components/ui/RoleBadge";
@@ -14,6 +14,7 @@ type CompanyEmployee = {
 };
 
 export default function EmployeeList() {
+  const navigate = useNavigate();
   const [employees, setEmployees] = useState<CompanyEmployee[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -27,7 +28,11 @@ export default function EmployeeList() {
     try {
       setLoading(true);
       const res = await api.get("/companies/employees");
-      setEmployees(res.data.employees || []);
+
+      const employees = res.data.employees?.filter(
+        (emp: any) => emp.primaryRole !== "ADMIN"
+      );
+      setEmployees(employees || []);
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to load employees");
     } finally {
@@ -113,10 +118,10 @@ export default function EmployeeList() {
             className="h-10 w-72 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
           />
           <button
-            onClick={load}
+            onClick={() => navigate("/admin/employees/add")}
             className="h-10 rounded-md bg-primary px-4 text-white"
           >
-            Refresh
+            Add
           </button>
         </div>
       </div>

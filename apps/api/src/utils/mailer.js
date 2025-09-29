@@ -1,8 +1,112 @@
 const nodemailer = require('nodemailer');
+const Company = require('../models/Company');
 
-let _transporter = null;
+let _defaultTransporter = undefined;
+const companyTransporters = new Map();
 
-function createTransporter() {
+function parseBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n'].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+function sanitizeString(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function buildTransportOptions(config = {}) {
+  const host = sanitizeString(config.host);
+  if (!host) return null;
+
+  const portRaw = config.port !== undefined ? config.port : undefined;
+  const portParsed = parseInt(portRaw, 10);
+  const port = Number.isFinite(portParsed) && portParsed > 0 ? portParsed : 587;
+
+  let secure = config.secure;
+  if (secure === undefined || secure === null || secure === '') {
+    secure = port === 465;
+  } else {
+    secure = parseBoolean(secure, port === 465);
+  }
+
+  const user = sanitizeString(config.user);
+  let pass = config.pass;
+  if (typeof pass === 'string') {
+    pass = pass.trim().replace(/\s+/g, '');
+  } else if (!pass) {
+    pass = undefined;
+  }
+
+  const debug = parseBoolean(config.debug);
+
+  const options = {
+    host,
+    port,
+    secure,
+    logger: debug,
+    debug,
+  };
+
+  if (user) {
+    options.auth = { user, pass };
+  }
+
+  return options;
+}
+
+function computeDefaultFrom(config = {}, user) {
+  let from = sanitizeString(config.from);
+  const host = sanitizeString(config.host).toLowerCase();
+
+  if (!from && user) {
+    from = user;
+  }
+
+  if (host.includes('gmail') && user) {
+    if (from) {
+      const match = from.match(/^([^<]+)</);
+      const name = match ? match[1].trim() : null;
+      from = name ? `${name} <${user}>` : user;
+    } else {
+      from = user;
+    }
+  }
+
+  return from;
+}
+
+function createTransporterFromConfig(config = {}, { label } = {}) {
+  const options = buildTransportOptions(config);
+  if (!options) return null;
+
+  const transporter = nodemailer.createTransport(options);
+  transporter._defaultFrom = computeDefaultFrom(config, options.auth?.user);
+  transporter._defaultReplyTo = sanitizeString(config.replyTo) || undefined;
+  transporter._label = label || 'default';
+
+  transporter
+    .verify()
+    .then(() => {
+      console.log(
+        `[mailer] SMTP ready (${transporter._label}) on ${options.host}:${options.port} (secure=${options.secure})`
+      );
+    })
+    .catch((err) => {
+      console.warn(
+        `[mailer] SMTP verify failed (${transporter._label}):`,
+        err?.message || err
+      );
+    });
+
+  return transporter;
+}
+
+function createDefaultTransporter() {
   const {
     SMTP_HOST,
     SMTP_PORT,
@@ -10,6 +114,8 @@ function createTransporter() {
     SMTP_USER,
     SMTP_PASS,
     SMTP_FROM,
+    SMTP_REPLY_TO,
+    SMTP_DEBUG,
   } = process.env;
 
   if (!SMTP_HOST) {
@@ -17,71 +123,80 @@ function createTransporter() {
     return null;
   }
 
-  const port = SMTP_PORT ? parseInt(SMTP_PORT, 10) : 587;
-  const secure = String(SMTP_SECURE || '').toLowerCase() === 'true' || port === 465;
+  return createTransporterFromConfig(
+    {
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+      from: SMTP_FROM,
+      replyTo: SMTP_REPLY_TO,
+      debug: SMTP_DEBUG,
+    },
+    { label: 'default' }
+  );
+}
 
-  // Some providers (e.g., Gmail app passwords) are shown with spaces; strip them.
-  const sanitizedPass = SMTP_PASS ? SMTP_PASS.replace(/\s+/g, '') : undefined;
-
-  const transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port,
-    secure,
-    auth: SMTP_USER ? { user: SMTP_USER, pass: sanitizedPass } : undefined,
-    logger: String(process.env.SMTP_DEBUG || '').toLowerCase() === 'true',
-    debug: String(process.env.SMTP_DEBUG || '').toLowerCase() === 'true',
-  });
-
-  // Default From: use provided, else SMTP user. For Gmail, prefer SMTP_USER to avoid alias issues.
-  const isGmail = String(SMTP_HOST || '').toLowerCase().includes('gmail');
-  let defaultFrom = SMTP_FROM || SMTP_USER || undefined;
-  if (isGmail && SMTP_USER) {
-    // For Gmail, enforce the actual Gmail address, but preserve display name if provided
-    if (SMTP_FROM) {
-      const m = String(SMTP_FROM).match(/^([^<]+)</);
-      const name = m ? m[1].trim() : null;
-      defaultFrom = name ? `${name} <${SMTP_USER}>` : SMTP_USER;
-    } else {
-      defaultFrom = SMTP_USER;
-    }
+function getDefaultTransporter() {
+  if (_defaultTransporter === undefined) {
+    _defaultTransporter = createDefaultTransporter();
   }
-  transporter._defaultFrom = defaultFrom;
+  return _defaultTransporter;
+}
 
-  // Proactive verification (non-fatal): helps surface auth/connection errors at startup
-  transporter.verify().then(() => {
-    console.log(`[mailer] SMTP ready on ${SMTP_HOST}:${port} (secure=${secure})`);
-  }).catch((e) => {
-    console.warn('[mailer] SMTP verify failed:', e?.message || e);
-  });
+async function getCompanyTransporter(companyId) {
+  if (!companyId) return null;
+  const key = String(companyId);
+  if (companyTransporters.has(key)) {
+    return companyTransporters.get(key);
+  }
+
+  let company;
+  try {
+    company = await Company.findById(key).select('smtp').lean();
+  } catch (err) {
+    console.warn('[mailer] Failed to load company for SMTP:', err?.message || err);
+    companyTransporters.set(key, null);
+    return null;
+  }
+
+  const smtp = company?.smtp;
+  if (!smtp || !smtp.enabled || !sanitizeString(smtp.host)) {
+    companyTransporters.set(key, null);
+    return null;
+  }
+
+  const transporter = createTransporterFromConfig(
+    {
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.secure,
+      user: smtp.user,
+      pass: smtp.pass,
+      from: smtp.from,
+      replyTo: smtp.replyTo,
+    },
+    { label: `company:${key}` }
+  );
+
+  if (!transporter) {
+    companyTransporters.set(key, null);
+    return null;
+  }
+
+  companyTransporters.set(key, transporter);
   return transporter;
 }
 
-function getTransporter() {
-  if (_transporter === null) {
-    _transporter = createTransporter();
-  }
-  return _transporter;
+async function resolveTransporter(companyId) {
+  const companyTransporter = await getCompanyTransporter(companyId);
+  if (companyTransporter) return companyTransporter;
+  return getDefaultTransporter();
 }
 
-function isEmailEnabled() {
-  return !!getTransporter();
-}
-
-/**
- * Send an email via SMTP.
- * @param {Object} opts
- * @param {string|string[]} opts.to - Recipient(s)
- * @param {string} opts.subject - Subject line
- * @param {string} [opts.text] - Plain text content
- * @param {string} [opts.html] - HTML content
- * @param {string|string[]} [opts.cc]
- * @param {string|string[]} [opts.bcc]
- * @param {string} [opts.from]
- * @param {Array} [opts.attachments]
- * @returns {Promise<object>} nodemailer sendMail info
- */
 async function sendMail(opts) {
-  const transporter = getTransporter();
+  const transporter = await resolveTransporter(opts.companyId);
   if (!transporter) {
     console.warn('[mailer] Email skipped: transporter not available');
     return { skipped: true };
@@ -89,7 +204,7 @@ async function sendMail(opts) {
 
   let from = opts.from || transporter._defaultFrom;
   if (!from) {
-    console.warn('[mailer] Email skipped: missing FROM address (set SMTP_FROM or SMTP_USER)');
+    console.warn('[mailer] Email skipped: missing FROM address');
     return { skipped: true };
   }
 
@@ -102,9 +217,45 @@ async function sendMail(opts) {
     text: opts.text,
     html: opts.html,
     attachments: opts.attachments,
+    replyTo: opts.replyTo || transporter._defaultReplyTo,
   };
 
   return transporter.sendMail(mailOptions);
 }
 
-module.exports = { sendMail, isEmailEnabled };
+async function isEmailEnabled(companyId) {
+  const transporter = await resolveTransporter(companyId);
+  return !!transporter;
+}
+
+function invalidateCompanyTransporter(companyId) {
+  if (!companyId) return;
+  const key = String(companyId);
+  const cached = companyTransporters.get(key);
+  if (cached && typeof cached.close === 'function') {
+    try {
+      cached.close();
+    } catch (_) {}
+  }
+  companyTransporters.delete(key);
+}
+
+async function testSMTPConnection(config = {}) {
+  const options = buildTransportOptions(config);
+  if (!options) {
+    throw new Error('SMTP host is required');
+  }
+  const transporter = nodemailer.createTransport(options);
+  try {
+    await transporter.verify();
+  } finally {
+    if (typeof transporter.close === 'function') transporter.close();
+  }
+}
+
+module.exports = {
+  sendMail,
+  isEmailEnabled,
+  invalidateCompanyTransporter,
+  testSMTPConnection,
+};

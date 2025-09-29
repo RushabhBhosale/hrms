@@ -1,15 +1,16 @@
 const router = require("express").Router();
-const multer = require("multer");
-const path = require("path");
 const Employee = require("../models/Employee");
 const { auth } = require("../middleware/auth");
 const { requirePrimary } = require("../middleware/roles");
+const { syncLeaveBalances } = require("../utils/leaveBalances");
 
-const upload = multer({ dest: path.join(__dirname, "../../uploads") });
+const { upload } = require("../utils/uploads");
 
 // Employee: list own documents
 router.get("/", auth, async (req, res) => {
-  const emp = await Employee.findById(req.employee.id).select("documents").lean();
+  const emp = await Employee.findById(req.employee.id)
+    .select("documents")
+    .lean();
   res.json({ documents: emp?.documents || [] });
 });
 
@@ -30,61 +31,45 @@ router.get(
   auth,
   requirePrimary(["ADMIN", "SUPERADMIN"]),
   async (req, res) => {
-    const doc = await Employee.findById(req.params.id)
-      .select(
-        [
-          // base fields for UI
-          "name",
-          "email",
-          "dob",
-          "documents",
-          "reportingPerson",
-          "subRoles",
-          "address",
-          "phone",
-          "employeeId",
-          "ctc",
-          "aadharNumber",
-          "panNumber",
-          "bankDetails",
-          // encryption markers required for proper decryption
-          "__enc_address",
-          "__enc_phone",
-          "__enc_dob",
-          "__enc_dob_d",
-          "__enc_aadharNumber",
-          "__enc_panNumber",
-          "__enc_bankDetails",
-          "__enc_bankDetails_d",
-          "__enc_ctc",
-          "__enc_ctc_d",
-        ].join(" ")
-      )
-      .populate("reportingPerson", "name");
+    const doc = await Employee.findById(req.params.id);
+    console.log(":=dshjdsc", doc);
     if (!doc) return res.status(404).json({ error: "Not found" });
-    try { doc.decryptFieldsSync(); } catch (_) {}
-    const emp = doc.toObject();
+    await syncLeaveBalances(doc);
+    try {
+      doc.decryptFieldsSync();
+    } catch (_) {}
+    const reporting = doc.reportingPerson
+      ? { id: doc.reportingPerson._id, name: doc.reportingPerson.name }
+      : null;
     res.json({
       employee: {
-        id: emp._id,
-        name: emp.name,
-        email: emp.email,
-        dob: emp.dob,
-        documents: emp.documents,
-        reportingPerson: emp.reportingPerson
-          ? { id: emp.reportingPerson._id, name: emp.reportingPerson.name }
-          : null,
-        subRoles: emp.subRoles || [],
-        address: emp.address || "",
-        phone: emp.phone || "",
-        employeeId: emp.employeeId || "",
-        ctc: emp.ctc || 0,
-        aadharNumber: emp.aadharNumber || "",
-        panNumber: emp.panNumber || "",
+        id: doc._id,
+        name: doc.name,
+        email: doc.email,
+        dob: doc.dob,
+        documents: doc.documents,
+        reportingPerson: reporting,
+        subRoles: doc.subRoles || [],
+        address: doc.address || "",
+        phone: doc.phone || "",
+        personalEmail: doc.personalEmail || "",
+        bloodGroup: doc.bloodGroup || "",
+        employeeId: doc.employeeId || "",
+        ctc: doc.ctc || 0,
+        joiningDate: doc.joiningDate,
+        totalLeaveAvailable: doc.totalLeaveAvailable || 0,
+        leaveBalances: {
+          paid: doc.leaveBalances?.paid || 0,
+          casual: doc.leaveBalances?.casual || 0,
+          sick: doc.leaveBalances?.sick || 0,
+          unpaid: doc.leaveBalances?.unpaid || 0,
+        },
+        aadharNumber: doc.aadharNumber || "",
+        panNumber: doc.panNumber || "",
         bankDetails: {
-          accountNumber: emp.bankDetails?.accountNumber || "",
-          bankName: emp.bankDetails?.bankName || "",
-          ifsc: emp.bankDetails?.ifsc || "",
+          accountNumber: doc.bankDetails?.accountNumber || "",
+          bankName: doc.bankDetails?.bankName || "",
+          ifsc: doc.bankDetails?.ifsc || "",
         },
       },
     });

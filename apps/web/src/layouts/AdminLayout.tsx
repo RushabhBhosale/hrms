@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { clearAuth, getEmployee } from "../lib/auth";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import {
   LayoutDashboard,
@@ -22,6 +22,7 @@ import {
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
+  UserCircle2Icon,
 } from "lucide-react";
 import AnnouncementsPopup from "../components/AnnouncementsPopup";
 
@@ -63,7 +64,6 @@ export default function AdminLayout() {
     })();
   }, []);
 
-  // ------- Groups -------
   type Item = {
     to: string;
     label: string;
@@ -82,7 +82,7 @@ export default function AdminLayout() {
         key: "people",
         label: "People",
         items: [
-          { to: "/admin/employees/add", label: "Add Employee", icon: UserPlus },
+          // { to: "/admin/employees/add", label: "Add Employee", icon: UserPlus },
           { to: "/admin/employees", label: "Employee List", icon: Users },
           { to: "/admin/roles", label: "Roles", icon: UserCog },
           { to: "/admin/profile", label: "Profile", icon: User },
@@ -148,7 +148,6 @@ export default function AdminLayout() {
     []
   );
 
-  // Title from route
   const title = useMemo(() => {
     for (const s of sections) {
       for (const it of s.items) {
@@ -168,7 +167,6 @@ export default function AdminLayout() {
     return "Admin";
   }, [pathname, sections]);
 
-  // ------- Collapsible state (persisted) -------
   const STORAGE_KEY = "adminSidebarOpenSections";
   const autoOpenKey = useMemo(() => {
     for (const s of sections) {
@@ -222,7 +220,6 @@ export default function AdminLayout() {
       return n;
     });
 
-  // ------- small helpers -------
   const initials = (u?.name || "Admin")
     .split(" ")
     .slice(0, 2)
@@ -230,7 +227,6 @@ export default function AdminLayout() {
     .join("")
     .toUpperCase();
 
-  // ------- Sidebar -------
   const SidebarInner = ({ compact = false }: { compact?: boolean }) => {
     const itemIsActive = (to: string) => {
       if (to === "/admin") return pathname === "/admin";
@@ -247,7 +243,6 @@ export default function AdminLayout() {
         className={`flex h-full ${compact ? "w-16" : "w-64"} transition-all`}
       >
         <div className="flex flex-col w-full">
-          {/* Brand */}
           <div className="flex items-center justify-center h-[66px] border-b border-border">
             <div className="font-bold text-sidebar-active tracking-wide">
               {compact ? (
@@ -266,7 +261,6 @@ export default function AdminLayout() {
             </div>
           </div>
 
-          {/* Nav (grouped) */}
           <nav
             className="flex-1 overflow-y-auto px-2 py-3 space-y-2 scrollbar-thin scrollbar-thumb-border/60 scrollbar-track-transparent"
             role="navigation"
@@ -274,18 +268,14 @@ export default function AdminLayout() {
           >
             {sections.map((section) => {
               const isOpen = compact ? false : openSections.has(section.key);
-              const hasActive = section.items.some((it) => itemIsActive(it.to));
-              const maxH = isOpen ? section.items.length * 44 + 8 : 0; // animate height
+              const maxH = isOpen ? section.items.length * 44 + 8 : 0;
 
               return (
                 <div key={section.key} className="rounded-md">
-                  {/* Section header */}
                   <button
                     type="button"
                     onClick={() => !compact && toggleSection(section.key)}
-                    className={[
-                      "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition",
-                    ].join(" ")}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition"
                     aria-expanded={isOpen}
                     aria-controls={`sect-${section.key}`}
                     title={section.label}
@@ -307,7 +297,6 @@ export default function AdminLayout() {
                     )}
                   </button>
 
-                  {/* Items */}
                   <div
                     id={`sect-${section.key}`}
                     className="overflow-hidden transition-[max-height] duration-300 ease-in-out"
@@ -330,7 +319,6 @@ export default function AdminLayout() {
                             ].join(" ")}
                             title={label}
                           >
-                            {/* active left bar */}
                             {active && (
                               <span
                                 className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-0.5 rounded bg-primary"
@@ -341,8 +329,6 @@ export default function AdminLayout() {
                             {!compact && (
                               <span className="truncate">{label}</span>
                             )}
-
-                            {/* compact tooltip */}
                             {compact && (
                               <span className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap rounded-md border border-border bg-surface px-2 py-1 text-xs shadow-lg">
                                 {label}
@@ -357,37 +343,32 @@ export default function AdminLayout() {
               );
             })}
           </nav>
-
-          {/* User / Logout */}
-          <div className="border-t border-border p-3">
-            <div className="flex items-center gap-2 mb-2 text-sidebar-active">
-              {/* Avatar w/ fallback */}
-              <div className="grid place-items-center h-7 w-7 rounded-full bg-primary/15 text-primary text-xs font-semibold">
-                {initials}
-              </div>
-              {!compact && (
-                <span className="truncate">{u?.name || "Admin"}</span>
-              )}
-            </div>
-            <button
-              onClick={() => {
-                clearAuth();
-                nav("/login");
-              }}
-              className="w-full inline-flex items-center justify-start gap-2 text-accent hover:text-secondary underline"
-            >
-              <LogOut size={16} />
-              {!compact && "Logout"}
-            </button>
-          </div>
         </div>
       </div>
     );
   };
 
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node))
+        setProfileMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProfileMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-bg text-text">
-      {/* Mobile overlay */}
       <div
         className={`fixed inset-0 bg-black/40 z-40 md:hidden transition-opacity ${
           mobileOpen ? "opacity-100" : "opacity-0 pointer-events-none"
@@ -396,7 +377,6 @@ export default function AdminLayout() {
       />
 
       <div className="flex">
-        {/* Desktop sidebar */}
         <aside
           className="hidden md:block bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm sticky top-0 h-screen"
           aria-label="Sidebar"
@@ -404,12 +384,10 @@ export default function AdminLayout() {
           <SidebarInner compact={!desktopOpen} />
         </aside>
 
-        {/* Mobile drawer */}
         <aside
-          className={`md:hidden fixed top-0 left-0 z-50 h-full bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm
-                      transform transition-transform ${
-                        mobileOpen ? "translate-x-0" : "-translate-x-full"
-                      }`}
+          className={`md:hidden fixed top-0 left-0 z-50 h-full bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm transform transition-transform ${
+            mobileOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
           aria-label="Mobile Sidebar"
         >
           <div className="flex items-center justify-between px-4 h-14 border-b border-border">
@@ -429,12 +407,9 @@ export default function AdminLayout() {
           </div>
         </aside>
 
-        {/* Main column */}
         <div className="flex-1 grid grid-rows-[auto_1fr] min-h-screen">
-          {/* Top bar */}
           <header className="sticky top-0 z-30 bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80 border-b border-border shadow-sm">
             <div className="h-16 px-3 md:px-6 flex items-center gap-3">
-              {/* Mobile: open drawer */}
               <button
                 onClick={() => setMobileOpen(true)}
                 className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-surface hover:bg-bg"
@@ -444,7 +419,6 @@ export default function AdminLayout() {
                 <Menu size={18} />
               </button>
 
-              {/* Desktop: collapse sidebar */}
               <button
                 onClick={() => setDesktopOpen((v) => !v)}
                 className="hidden md:inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-surface hover:bg-bg"
@@ -468,14 +442,55 @@ export default function AdminLayout() {
                     aria-label="Search"
                   />
                 </div>
-                <div className="h-9 px-3 rounded-md border border-border bg-surface text-muted flex items-center">
-                  {u?.email || "admin@example.com"}
+
+                <div className="relative" ref={profileRef}>
+                  <button
+                    onClick={() => setProfileMenuOpen((o) => !o)}
+                    className="flex items-center gap-2 rounded-full border border-border bg-surface pl-2 pr-2.5 h-9"
+                    aria-haspopup="menu"
+                    aria-expanded={profileMenuOpen}
+                    title={u?.name || "Account"}
+                  >
+                    <div className="grid place-items-center h-7 w-7 rounded-full bg-primary/15 text-primary text-xs font-semibold">
+                      {initials}
+                    </div>
+                    <ChevronDown size={16} className="text-muted" />
+                  </button>
+
+                  {profileMenuOpen && (
+                    <div
+                      className="absolute right-0 mt-2 w-44 rounded-md border border-border bg-surface shadow-lg z-50 py-1"
+                      role="menu"
+                    >
+                      <button
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          nav("/admin/profile");
+                        }}
+                        className="w-full px-4 py-2 text-left hover:bg-sidebar-hover text-sm  inline-flex items-center gap-2"
+                        role="menuitem"
+                      >
+                        <UserCircle2Icon size={16} />
+                        Profile
+                      </button>
+                      <button
+                        onClick={() => {
+                          clearAuth();
+                          nav("/login");
+                        }}
+                        className="w-full px-4 py-2 text-left hover:bg-sidebar-hover text-sm text-accent inline-flex items-center gap-2"
+                        role="menuitem"
+                      >
+                        <LogOut size={16} />
+                        Logout
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </header>
 
-          {/* Main content */}
           <main id="main" className="p-4 md:p-8 bg-bg">
             <AnnouncementsPopup />
             <Outlet />

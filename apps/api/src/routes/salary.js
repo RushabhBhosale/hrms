@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const { auth } = require("../middleware/auth");
 const { requirePrimary, requireAnySub } = require("../middleware/roles");
+const { uploadsDir } = require("../utils/uploads");
 const Company = require("../models/Company");
 const Employee = require("../models/Employee");
 const SalaryTemplate = require("../models/SalaryTemplate");
@@ -734,7 +735,7 @@ async function renderSlipPDF({
     const logoFile =
       company?.logoHorizontal || company?.logo || company?.logoSquare;
     if (logoFile) {
-      const logoPath = path.join(__dirname, "../../uploads", String(logoFile));
+      const logoPath = path.join(uploadsDir, String(logoFile));
       if (fs.existsSync(logoPath)) {
         doc.image(logoPath, margin + 10, headerY + 10, {
           fit: [140, 36],

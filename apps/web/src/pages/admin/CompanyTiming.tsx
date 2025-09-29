@@ -136,7 +136,7 @@ export default function CompanyTiming() {
           className="px-6 py-5 space-y-5"
         >
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Start Time">
+            <Field label="Start Time" required>
               <input
                 type="time"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -150,7 +150,7 @@ export default function CompanyTiming() {
               )}
             </Field>
 
-            <Field label="End Time">
+            <Field label="End Time" required>
               <input
                 type="time"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -162,7 +162,7 @@ export default function CompanyTiming() {
               )}
             </Field>
 
-            <Field label="Grace Minutes">
+            <Field label="Grace Minutes" required>
               <input
                 type="number"
                 min={0}
@@ -170,6 +170,7 @@ export default function CompanyTiming() {
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 {...register("graceMinutes", { valueAsNumber: true })}
                 aria-invalid={!!errors.graceMinutes}
+                required
               />
               {errors.graceMinutes && (
                 <p className="text-xs text-error mt-1">

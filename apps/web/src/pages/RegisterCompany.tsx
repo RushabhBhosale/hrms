@@ -50,6 +50,7 @@ export default function RegisterCompany() {
   const [citiesLoading, setCitiesLoading] = useState(false);
   const [companyTypesLoading, setCompanyTypesLoading] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [leaveApplicableFrom, setLeaveApplicableFrom] = useState("");
 
   // Clear error feedback when user edits any input so stale errors don't linger
   function clearError() {
@@ -71,7 +72,8 @@ export default function RegisterCompany() {
     } catch (err: any) {
       console.error(err);
       setOptionsError(
-        err?.response?.data?.error || "Failed to load countries. Please try again."
+        err?.response?.data?.error ||
+          "Failed to load countries. Please try again."
       );
       setCountries([]);
       setSelectedCountry("");
@@ -106,7 +108,8 @@ export default function RegisterCompany() {
     } catch (err: any) {
       console.error(err);
       setOptionsError(
-        err?.response?.data?.error || "Failed to load states for the selected country."
+        err?.response?.data?.error ||
+          "Failed to load states for the selected country."
       );
       setStates([]);
       setSelectedState("");
@@ -137,7 +140,8 @@ export default function RegisterCompany() {
     } catch (err: any) {
       console.error(err);
       setOptionsError(
-        err?.response?.data?.error || "Failed to load cities for the selected state."
+        err?.response?.data?.error ||
+          "Failed to load cities for the selected state."
       );
       setCities([]);
       setSelectedCity("");
@@ -203,7 +207,10 @@ export default function RegisterCompany() {
     const matches = countries.filter((country) =>
       country.name.toLowerCase().includes(query)
     );
-    if (selectedCountry && !matches.some((item) => item.id === selectedCountry)) {
+    if (
+      selectedCountry &&
+      !matches.some((item) => item.id === selectedCountry)
+    ) {
       const selected = countries.find((item) => item.id === selectedCountry);
       if (selected) matches.unshift(selected);
     }
@@ -290,6 +297,7 @@ export default function RegisterCompany() {
         stateId: selectedState,
         cityId: selectedCity,
         companyTypeId: selectedCompanyType,
+        leaveApplicableFrom,
       });
       setSuccess(
         "Thanks! Your registration was submitted. A superadmin will review it shortly."
@@ -307,6 +315,7 @@ export default function RegisterCompany() {
       setStateQuery("");
       setCityQuery("");
       setCompanyTypeQuery("");
+      setLeaveApplicableFrom("");
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to submit registration";
       setError(msg);
@@ -322,7 +331,7 @@ export default function RegisterCompany() {
       <header className="sticky top-0 z-30 bg-surface/70 backdrop-blur border-b border-border">
         <div className="mx-auto max-w-6xl px-4 h-16 flex items-center justify-between">
           <Link to="/" className="text-xl font-extrabold tracking-wide">
-            HRMS
+            <img src="/peracto_logo.png" className="w-[170px]" />
           </Link>
           <div className="flex items-center gap-3 text-sm">
             <Link
@@ -396,7 +405,7 @@ export default function RegisterCompany() {
                 }}
               />
 
-              <div className="grid gap-4 md:grid-cols-2">
+              {/* <div className="grid gap-4 md:grid-cols-2">
                 <Field
                   label="Company Type Search"
                   value={companyTypeQuery}
@@ -435,24 +444,27 @@ export default function RegisterCompany() {
                   }}
                   placeholder="Search city"
                 />
-              </div>
+              </div> */}
 
               <div className="space-y-3 rounded-md border border-border/60 bg-muted/10 p-4">
                 <div className="text-sm font-semibold">Company location</div>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <label className="space-y-1.5 text-sm font-medium">
-                    <span>Country</span>
+                  <div className="flex flex-col">
+                    <label className="space-y-1.5 text-sm font-medium required-label">
+                      <span>Country</span>
+                    </label>
+
                     <select
-                    className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    value={selectedCountry}
-                    onChange={(event) => {
-                      clearError();
-                      setOptionsError(null);
-                      setSelectedCountry(event.target.value);
-                      setStateQuery("");
-                      setCityQuery("");
-                    }}
-                    disabled={countriesLoading || loading}
+                      className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      value={selectedCountry}
+                      onChange={(event) => {
+                        clearError();
+                        setOptionsError(null);
+                        setSelectedCountry(event.target.value);
+                        setStateQuery("");
+                        setCityQuery("");
+                      }}
+                      disabled={countriesLoading || loading}
                     >
                       <option value="">
                         {countriesLoading
@@ -467,18 +479,21 @@ export default function RegisterCompany() {
                         </option>
                       ))}
                     </select>
-                  </label>
-                  <label className="space-y-1.5 text-sm font-medium">
-                    <span>State</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <label className="space-y-1.5 text-sm font-medium required-label">
+                      <span>State</span>
+                    </label>
+
                     <select
-                    className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    value={selectedState}
-                    onChange={(event) => {
-                      clearError();
-                      setOptionsError(null);
-                      setSelectedState(event.target.value);
-                      setCityQuery("");
-                    }}
+                      className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      value={selectedState}
+                      onChange={(event) => {
+                        clearError();
+                        setOptionsError(null);
+                        setSelectedState(event.target.value);
+                        setCityQuery("");
+                      }}
                       disabled={!selectedCountry || statesLoading || loading}
                     >
                       <option value="">
@@ -496,9 +511,12 @@ export default function RegisterCompany() {
                         </option>
                       ))}
                     </select>
-                  </label>
-                  <label className="space-y-1.5 text-sm font-medium">
-                    <span>City</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <label className="space-y-1.5 text-sm font-medium required-label">
+                      <span>City</span>
+                    </label>
+
                     <select
                       className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                       value={selectedCity}
@@ -524,10 +542,12 @@ export default function RegisterCompany() {
                         </option>
                       ))}
                     </select>
-                  </label>
+                  </div>
                 </div>
-                <label className="block space-y-1.5 text-sm font-medium">
-                  <span>Company type</span>
+                <div className="flex flex-col">
+                  <label className="block space-y-1.5 text-sm font-medium required-label">
+                    <span>Company type</span>
+                  </label>
                   <select
                     className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                     value={selectedCompanyType}
@@ -551,12 +571,27 @@ export default function RegisterCompany() {
                       </option>
                     ))}
                   </select>
-                </label>
+                </div>
                 {optionsError && (
                   <div className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
                     {optionsError}
                   </div>
                 )}
+              </div>
+
+              <div className="space-y-2">
+                <Field
+                  label="Leave Applicable From"
+                  type="month"
+                  value={leaveApplicableFrom}
+                  onChange={(v) => {
+                    clearError();
+                    setLeaveApplicableFrom(v);
+                  }}
+                />
+                <p className="text-xs text-muted">
+                  Optional: choose the starting month for monthly leave accrual.
+                </p>
               </div>
 
               <button
@@ -600,16 +635,22 @@ function Field({
   onChange,
   placeholder,
   type = "text",
+  required = false,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   type?: string;
+  required?: boolean;
 }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-sm font-medium">{label}</label>
+      <label
+        className={`text-sm font-medium ${required ? "required-label" : ""}`}
+      >
+        {label}
+      </label>
       <input
         className="w-full rounded-md border border-border bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
         placeholder={placeholder}

@@ -1,11 +1,11 @@
 const router = require("express").Router();
 const path = require("path");
 const fs = require("fs");
-const multer = require("multer");
 const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
 
 const { auth } = require("../middleware/auth");
+const { upload, uploadsDir } = require("../utils/uploads");
 const { requirePrimary, requireAnySub } = require("../middleware/roles");
 const Invoice = require("../models/Invoice");
 const Counter = require("../models/Counter");
@@ -13,8 +13,6 @@ const Employee = require("../models/Employee");
 const Company = require("../models/Company");
 const Project = require("../models/Project");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
-
-const upload = multer({ dest: path.join(__dirname, "../../uploads") });
 
 // Helper: allow ADMIN/SUPERADMIN or HR subrole
 function allowAdminOrHR(req, res, next) {
@@ -111,7 +109,7 @@ function drawInvoice(doc, inv) {
       inv.company?.logo ||
       inv.company?.logoSquare;
     if (logoFile) {
-      const logoPath = path.join(__dirname, "../../uploads", String(logoFile));
+      const logoPath = path.join(uploadsDir, String(logoFile));
       if (fs.existsSync(logoPath)) {
         doc.image(logoPath, margin + 10, headerY + 10, {
           fit: [160, 36],
@@ -155,7 +153,7 @@ function drawInvoice(doc, inv) {
   doc.text("Bill To", billX + PAD, y);
   try {
     if (inv.partyLogo) {
-      const lp = path.join(__dirname, "../../uploads", String(inv.partyLogo));
+      const lp = path.join(uploadsDir, String(inv.partyLogo));
       if (fs.existsSync(lp))
         doc.image(lp, billX + PAD, y + 18, { fit: [90, 28] });
     }
@@ -598,13 +596,13 @@ router.post("/:id/email", auth, allowAdminOrHR, async (req, res) => {
       inv.company?.logo ||
       inv.company?.logoSquare;
     const clientLogoFile = inv.partyLogo
-      ? path.join(__dirname, "../../uploads", String(inv.partyLogo))
+      ? path.join(uploadsDir, String(inv.partyLogo))
       : null;
     const attachments = [
       { filename: `${inv.invoiceNumber}.pdf`, content: pdfBuffer },
     ];
     if (logoFile) {
-      const logoPath = path.join(__dirname, "../../uploads", String(logoFile));
+      const logoPath = path.join(uploadsDir, String(logoFile));
       if (fs.existsSync(logoPath))
         attachments.push({
           filename: "logo.png",
@@ -749,11 +747,12 @@ router.post("/:id/email", auth, allowAdminOrHR, async (req, res) => {
     const subject = `${inv.company?.name || "Company"} Invoice ${
       inv.invoiceNumber
     }`;
-    if (!isEmailEnabled())
+    const companyId = req.employee.company;
+    if (!(await isEmailEnabled(companyId)))
       return res
         .status(200)
         .json({ skipped: true, message: "Email not configured" });
-    await sendMail({ to, subject, html, attachments });
+    await sendMail({ companyId, to, subject, html, attachments });
     if (inv.status === "draft") {
       inv.status = "sent";
       await inv.save();
@@ -1119,9 +1118,7 @@ router.get("/reports/export-pdf", auth, allowAdminOrHR, async (req, res) => {
       const logoFile =
         company?.logoHorizontal || company?.logo || company?.logoSquare;
       if (logoFile) {
-        const logoPath = path.join(
-          __dirname,
-          "../../uploads",
+        const logoPath = path.join(uploadsDir,
           String(logoFile)
         );
         if (fs.existsSync(logoPath)) {

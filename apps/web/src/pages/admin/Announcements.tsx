@@ -168,7 +168,9 @@ export default function AnnouncementsAdmin() {
         className="space-y-3 p-4 border border-border rounded-md bg-surface"
       >
         <div>
-          <label className="block text-sm font-medium mb-1">Title</label>
+          <label className="block text-sm font-medium mb-1 required-label">
+            Title
+          </label>
           <input
             className="w-full h-10 px-3 rounded-md border border-border bg-bg"
             placeholder="Company update…"
@@ -181,7 +183,9 @@ export default function AnnouncementsAdmin() {
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Message</label>
+          <label className="block text-sm font-medium mb-1 required-label">
+            Message
+          </label>
           <textarea
             className="w-full min-h-[120px] p-3 rounded-md border border-border bg-bg"
             placeholder="Details for all employees"
@@ -239,7 +243,9 @@ export default function AnnouncementsAdmin() {
                   >
                     <div className="grid gap-3">
                       <div>
-                        <label className="block text-xs mb-1">Title</label>
+                        <label className="block text-xs mb-1 required-label">
+                          Title
+                        </label>
                         <input
                           className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
                           {...registerEdit("title")}
@@ -251,7 +257,9 @@ export default function AnnouncementsAdmin() {
                         )}
                       </div>
                       <div>
-                        <label className="block text-xs mb-1">Message</label>
+                        <label className="block text-xs mb-1 required-label">
+                          Message
+                        </label>
                         <textarea
                           className="w-full rounded border border-border bg-bg px-2 py-2 text-sm min-h-24"
                           {...registerEdit("message")}

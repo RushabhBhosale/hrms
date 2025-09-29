@@ -1,26 +1,17 @@
-import { useEffect, useMemo, useState, FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { api } from "../../lib/api";
+import { useNavigate } from "react-router-dom";
+import {
+  CompanyCreateSchema,
+  type CompanyCreateValues,
+} from "../../schemas/company";
 
-type CountryOption = {
-  id: string;
-  name: string;
-};
-
-type StateOption = {
-  id: string;
-  name: string;
-};
-
-type CityOption = {
-  id: string;
-  name: string;
-};
-
-type CompanyTypeOption = {
-  id: string;
-  name: string;
-};
-
+type CountryOption = { id: string; name: string };
+type StateOption = { id: string; name: string };
+type CityOption = { id: string; name: string };
+type CompanyTypeOption = { id: string; name: string };
 type Company = {
   _id: string;
   name: string;
@@ -28,25 +19,17 @@ type Company = {
 };
 
 export default function AddCompany() {
+  const navigate = useNavigate();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [submittingExisting, setSubmittingExisting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  const [companyName, setCompanyName] = useState("");
-  const [adminName, setAdminName] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
   const [countries, setCountries] = useState<CountryOption[]>([]);
   const [states, setStates] = useState<StateOption[]>([]);
   const [cities, setCities] = useState<CityOption[]>([]);
   const [companyTypes, setCompanyTypes] = useState<CompanyTypeOption[]>([]);
-  const [selectedCountry, setSelectedCountry] = useState("");
-  const [selectedState, setSelectedState] = useState("");
-  const [selectedCity, setSelectedCity] = useState("");
-  const [selectedCompanyType, setSelectedCompanyType] = useState("");
   const [countryQuery, setCountryQuery] = useState("");
   const [stateQuery, setStateQuery] = useState("");
   const [cityQuery, setCityQuery] = useState("");
@@ -57,27 +40,41 @@ export default function AddCompany() {
   const [companyTypesLoading, setCompanyTypesLoading] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
 
-  const [existingCompany, setExistingCompany] = useState("");
-  const [newAdminName, setNewAdminName] = useState("");
-  const [newAdminEmail, setNewAdminEmail] = useState("");
-  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    formState: { errors, isSubmitting, isValid },
+    watch,
+  } = useForm<CompanyCreateValues>({
+    resolver: zodResolver(CompanyCreateSchema),
+    defaultValues: {
+      companyName: "",
+      adminName: "",
+      adminEmail: "",
+      adminPassword: "",
+      countryId: "",
+      stateId: "",
+      cityId: "",
+      companyTypeId: "",
+    },
+    mode: "onChange",
+  });
+
+  const countryId = watch("countryId");
+  const stateId = watch("stateId");
 
   function resetAlerts() {
     setErr(null);
     setOk(null);
   }
 
-  // Clear banners on any field edit to avoid sticky errors
-  function clearBanners() {
-    if (err) setErr(null);
-    if (ok) setOk(null);
-  }
-
   async function load() {
     try {
       setLoading(true);
       const res = await api.get("/companies");
-      setCompanies(res.data.companies);
+      setCompanies(res.data.companies || []);
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to load companies");
     } finally {
@@ -94,86 +91,67 @@ export default function AddCompany() {
       setCountriesLoading(true);
       setOptionsError(null);
       const res = await api.get("/masters/countries");
-      const list = Array.isArray(res.data?.countries)
-        ? (res.data.countries as CountryOption[])
-        : [];
-      setCountries(list);
-      setSelectedCountry((prev) =>
-        prev && list.some((item) => item.id === prev) ? prev : ""
+      setCountries(
+        Array.isArray(res.data?.countries) ? res.data.countries : []
       );
     } catch (error: any) {
-      console.error(error);
       setOptionsError(
         error?.response?.data?.error || "Failed to load countries"
       );
       setCountries([]);
-      setSelectedCountry("");
+      setValue("countryId", "");
       setStates([]);
-      setSelectedState("");
+      setValue("stateId", "");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
     } finally {
       setCountriesLoading(false);
     }
   }
 
-  async function loadStates(countryId: string) {
-    if (!countryId) {
+  async function loadStates(countryIdParam: string) {
+    if (!countryIdParam) {
       setStates([]);
-      setSelectedState("");
+      setValue("stateId", "");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
       return;
     }
     try {
       setStatesLoading(true);
       setOptionsError(null);
-      const res = await api.get("/masters/states", { params: { countryId } });
-      const list = Array.isArray(res.data?.states)
-        ? (res.data.states as StateOption[])
-        : [];
-      setStates(list);
-      setSelectedState((prev) =>
-        prev && list.some((item) => item.id === prev) ? prev : ""
-      );
+      const res = await api.get("/masters/states", {
+        params: { countryId: countryIdParam },
+      });
+      setStates(Array.isArray(res.data?.states) ? res.data.states : []);
     } catch (error: any) {
-      console.error(error);
-      setOptionsError(
-        error?.response?.data?.error || "Failed to load states"
-      );
+      setOptionsError(error?.response?.data?.error || "Failed to load states");
       setStates([]);
-      setSelectedState("");
+      setValue("stateId", "");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
     } finally {
       setStatesLoading(false);
     }
   }
 
-  async function loadCities(stateId: string) {
-    if (!stateId) {
+  async function loadCities(stateIdParam: string) {
+    if (!stateIdParam) {
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
       return;
     }
     try {
       setCitiesLoading(true);
       setOptionsError(null);
-      const res = await api.get("/masters/cities", { params: { stateId } });
-      const list = Array.isArray(res.data?.cities)
-        ? (res.data.cities as CityOption[])
-        : [];
-      setCities(list);
-      setSelectedCity((prev) =>
-        prev && list.some((item) => item.id === prev) ? prev : ""
-      );
+      const res = await api.get("/masters/cities", {
+        params: { stateId: stateIdParam },
+      });
+      setCities(Array.isArray(res.data?.cities) ? res.data.cities : []);
     } catch (error: any) {
-      console.error(error);
-      setOptionsError(
-        error?.response?.data?.error || "Failed to load cities"
-      );
+      setOptionsError(error?.response?.data?.error || "Failed to load cities");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
     } finally {
       setCitiesLoading(false);
     }
@@ -184,20 +162,15 @@ export default function AddCompany() {
       setCompanyTypesLoading(true);
       setOptionsError(null);
       const res = await api.get("/masters/company-types");
-      const list = Array.isArray(res.data?.companyTypes)
-        ? (res.data.companyTypes as CompanyTypeOption[])
-        : [];
-      setCompanyTypes(list);
-      setSelectedCompanyType((prev) =>
-        prev && list.some((item) => item.id === prev) ? prev : ""
+      setCompanyTypes(
+        Array.isArray(res.data?.companyTypes) ? res.data.companyTypes : []
       );
     } catch (error: any) {
-      console.error(error);
       setOptionsError(
         error?.response?.data?.error || "Failed to load company types"
       );
       setCompanyTypes([]);
-      setSelectedCompanyType("");
+      setValue("companyTypeId", "");
     } finally {
       setCompanyTypesLoading(false);
     }
@@ -209,156 +182,116 @@ export default function AddCompany() {
   }, []);
 
   useEffect(() => {
-    if (!selectedCountry) {
+    if (!countryId) {
       setStates([]);
-      setSelectedState("");
+      setValue("stateId", "");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
       return;
     }
-    loadStates(selectedCountry);
+    setValue("stateId", "");
+    setValue("cityId", "");
+    loadStates(countryId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCountry]);
+  }, [countryId]);
 
   useEffect(() => {
-    if (!selectedState) {
+    if (!stateId) {
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
       return;
     }
-    loadCities(selectedState);
+    setValue("cityId", "");
+    loadCities(stateId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedState]);
+  }, [stateId]);
 
   const filteredCountries = useMemo(() => {
-    const query = countryQuery.trim().toLowerCase();
-    if (!query) return countries;
-    const matches = countries.filter((country) =>
-      country.name.toLowerCase().includes(query)
-    );
-    if (selectedCountry && !matches.some((item) => item.id === selectedCountry)) {
-      const selected = countries.find((item) => item.id === selectedCountry);
-      if (selected) matches.unshift(selected);
+    const q = countryQuery.trim().toLowerCase();
+    const list = !q
+      ? countries
+      : countries.filter((c) => c.name.toLowerCase().includes(q));
+    if (watch("countryId") && !list.some((i) => i.id === watch("countryId"))) {
+      const sel = countries.find((i) => i.id === watch("countryId"));
+      if (sel) list.unshift(sel);
     }
-    return matches;
-  }, [countries, countryQuery, selectedCountry]);
+    return list;
+  }, [countries, countryQuery, watch]);
 
   const filteredStates = useMemo(() => {
-    const query = stateQuery.trim().toLowerCase();
-    if (!query) return states;
-    const matches = states.filter((state) =>
-      state.name.toLowerCase().includes(query)
-    );
-    if (selectedState && !matches.some((item) => item.id === selectedState)) {
-      const selected = states.find((item) => item.id === selectedState);
-      if (selected) matches.unshift(selected);
+    const q = stateQuery.trim().toLowerCase();
+    const list = !q
+      ? states
+      : states.filter((s) => s.name.toLowerCase().includes(q));
+    if (watch("stateId") && !list.some((i) => i.id === watch("stateId"))) {
+      const sel = states.find((i) => i.id === watch("stateId"));
+      if (sel) list.unshift(sel);
     }
-    return matches;
-  }, [states, stateQuery, selectedState]);
+    return list;
+  }, [states, stateQuery, watch]);
 
   const filteredCities = useMemo(() => {
-    const query = cityQuery.trim().toLowerCase();
-    if (!query) return cities;
-    const matches = cities.filter((city) =>
-      city.name.toLowerCase().includes(query)
-    );
-    if (selectedCity && !matches.some((item) => item.id === selectedCity)) {
-      const selected = cities.find((item) => item.id === selectedCity);
-      if (selected) matches.unshift(selected);
+    const q = cityQuery.trim().toLowerCase();
+    const list = !q
+      ? cities
+      : cities.filter((c) => c.name.toLowerCase().includes(q));
+    if (watch("cityId") && !list.some((i) => i.id === watch("cityId"))) {
+      const sel = cities.find((i) => i.id === watch("cityId"));
+      if (sel) list.unshift(sel);
     }
-    return matches;
-  }, [cities, cityQuery, selectedCity]);
+    return list;
+  }, [cities, cityQuery, watch]);
 
   const filteredCompanyTypes = useMemo(() => {
-    const query = companyTypeQuery.trim().toLowerCase();
-    if (!query) return companyTypes;
-    const matches = companyTypes.filter((type) =>
-      type.name.toLowerCase().includes(query)
-    );
+    const q = companyTypeQuery.trim().toLowerCase();
+    const list = !q
+      ? companyTypes
+      : companyTypes.filter((t) => t.name.toLowerCase().includes(q));
     if (
-      selectedCompanyType &&
-      !matches.some((item) => item.id === selectedCompanyType)
+      watch("companyTypeId") &&
+      !list.some((i) => i.id === watch("companyTypeId"))
     ) {
-      const selected = companyTypes.find(
-        (item) => item.id === selectedCompanyType
-      );
-      if (selected) matches.unshift(selected);
+      const sel = companyTypes.find((i) => i.id === watch("companyTypeId"));
+      if (sel) list.unshift(sel);
     }
-    return matches;
-  }, [companyTypes, companyTypeQuery, selectedCompanyType]);
+    return list;
+  }, [companyTypes, companyTypeQuery, watch]);
 
-  const companiesWithoutAdmin = useMemo(
-    () => companies.filter((c) => !c.admin),
-    [companies]
-  );
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  const onSubmit = async (data: CompanyCreateValues) => {
     resetAlerts();
     setOptionsError(null);
     setSubmitting(true);
     try {
       await api.post("/companies", {
-        companyName: companyName.trim(),
-        adminName: adminName.trim(),
-        adminEmail: adminEmail.trim(),
-        adminPassword,
-        countryId: selectedCountry,
-        stateId: selectedState,
-        cityId: selectedCity,
-        companyTypeId: selectedCompanyType,
+        companyName: data.companyName.trim(),
+        adminName: data.adminName.trim(),
+        adminEmail: data.adminEmail.trim(),
+        adminPassword: data.adminPassword,
+        countryId: data.countryId,
+        stateId: data.stateId,
+        cityId: data.cityId,
+        companyTypeId: data.companyTypeId,
       });
-      setCompanyName("");
-      setAdminName("");
-      setAdminEmail("");
-      setAdminPassword("");
-      setSelectedCountry("");
-      setSelectedState("");
-      setSelectedCity("");
-      setSelectedCompanyType("");
+      reset();
       setCountryQuery("");
       setStateQuery("");
       setCityQuery("");
       setCompanyTypeQuery("");
       setOk("Company and admin created");
+      navigate("/superadmin/companies");
       await load();
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to create company");
     } finally {
       setSubmitting(false);
     }
-  }
-
-  async function submitExisting(e: FormEvent) {
-    e.preventDefault();
-    resetAlerts();
-    setSubmittingExisting(true);
-    try {
-      await api.post(`/companies/${existingCompany}/admin`, {
-        adminName: newAdminName.trim(),
-        adminEmail: newAdminEmail.trim(),
-        adminPassword: newAdminPassword,
-      });
-      setExistingCompany("");
-      setNewAdminName("");
-      setNewAdminEmail("");
-      setNewAdminPassword("");
-      setOk("Admin assigned to company");
-      await load();
-    } catch (e: any) {
-      setErr(e?.response?.data?.error || "Failed to assign admin");
-    } finally {
-      setSubmittingExisting(false);
-    }
-  }
+  };
 
   return (
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Companies</h2>
-        <p className="text-sm text-muted">
-          Create a company or assign an admin.
-        </p>
+        <p className="text-sm text-muted">Create a company.</p>
       </div>
 
       {err && (
@@ -377,103 +310,152 @@ export default function AddCompany() {
           <div className="border-b border-border px-6 py-4">
             <h3 className="text-lg font-semibold">Create Company</h3>
           </div>
-          <form onSubmit={submit} className="px-6 py-5 space-y-4">
-            <Field
-              label="Company Name"
-              value={companyName}
-              onChange={(v) => {
-                clearBanners();
-                setCompanyName(v);
-              }}
-              placeholder="Peracto Corp"
-            />
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field
-                label="Admin Name"
-                value={adminName}
-                onChange={(v) => {
-                  clearBanners();
-                  setAdminName(v);
-                }}
-                placeholder="Jane Doe"
+
+          <form
+            onSubmit={handleSubmit(onSubmit)}
+            className="px-6 py-5 space-y-4"
+          >
+            <div className="space-y-2">
+              <label className="text-sm font-medium required-label">
+                Company Name
+              </label>
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Peracto Corp"
+                {...register("companyName")}
               />
-              <Field
-                label="Admin Email"
-                type="email"
-                value={adminEmail}
-                onChange={(v) => {
-                  clearBanners();
-                  setAdminEmail(v);
-                }}
-                placeholder="jane@Peracto.com"
-              />
+              {errors.companyName && (
+                <p className="text-xs text-error mt-1">
+                  {errors.companyName.message}
+                </p>
+              )}
             </div>
-            <Field
-              label="Admin Password"
-              type="password"
-              value={adminPassword}
-              onChange={(v) => {
-                clearBanners();
-                setAdminPassword(v);
-              }}
-              placeholder="••••••••"
-            />
+
             <div className="grid gap-4 md:grid-cols-2">
-              <Field
-                label="Company Type Search"
-                value={companyTypeQuery}
-                onChange={(v) => {
-                  setOptionsError(null);
-                  setCompanyTypeQuery(v);
-                }}
-                placeholder="Search company type"
-              />
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field
-                  label="Country Search"
-                  value={countryQuery}
-                  onChange={(v) => {
-                    setOptionsError(null);
-                    setCountryQuery(v);
-                  }}
-                  placeholder="Search country"
+              <div className="space-y-2">
+                <label className="text-sm font-medium required-label">
+                  Admin Name
+                </label>
+                <input
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="Jane Doe"
+                  {...register("adminName")}
                 />
-                <Field
-                  label="State Search"
-                  value={stateQuery}
-                  onChange={(v) => {
-                    setOptionsError(null);
-                    setStateQuery(v);
-                  }}
-                  placeholder="Search state"
+                {errors.adminName && (
+                  <p className="text-xs text-error mt-1">
+                    {errors.adminName.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium required-label">
+                  Admin Email
+                </label>
+                <input
+                  type="email"
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="jane@peracto.com"
+                  {...register("adminEmail")}
                 />
+                {errors.adminEmail && (
+                  <p className="text-xs text-error mt-1">
+                    {errors.adminEmail.message}
+                  </p>
+                )}
               </div>
             </div>
-            <Field
-              label="City Search"
-              value={cityQuery}
-              onChange={(v) => {
-                setOptionsError(null);
-                setCityQuery(v);
-              }}
-              placeholder="Search city"
-            />
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium required-label">
+                Admin Password
+              </label>
+              <input
+                type="password"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="••••••••"
+                {...register("adminPassword")}
+              />
+              {errors.adminPassword && (
+                <p className="text-xs text-error mt-1">
+                  {errors.adminPassword.message}
+                </p>
+              )}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  Company Type Search
+                </label>
+                <input
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="Search company type"
+                  value={companyTypeQuery}
+                  onChange={(e) => {
+                    setOptionsError(null);
+                    setCompanyTypeQuery(e.target.value);
+                  }}
+                />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Country Search</label>
+                  <input
+                    className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Search country"
+                    value={countryQuery}
+                    onChange={(e) => {
+                      setOptionsError(null);
+                      setCountryQuery(e.target.value);
+                    }}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">State Search</label>
+                  <input
+                    className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Search state"
+                    value={stateQuery}
+                    onChange={(e) => {
+                      setOptionsError(null);
+                      setStateQuery(e.target.value);
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">City Search</label>
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Search city"
+                value={cityQuery}
+                onChange={(e) => {
+                  setOptionsError(null);
+                  setCityQuery(e.target.value);
+                }}
+              />
+            </div>
+
             <div className="space-y-3 rounded-md border border-border/60 bg-muted/10 p-4">
               <div className="text-sm font-semibold">Company location</div>
               <div className="grid gap-3 md:grid-cols-3">
-                <label className="space-y-1.5 text-sm font-medium">
+                <label className="space-y-1.5 text-sm font-medium required-label">
                   <span>Country</span>
                   <select
                     className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    value={selectedCountry}
-                    onChange={(event) => {
-                      clearBanners();
-                      setOptionsError(null);
-                      setSelectedCountry(event.target.value);
-                      setStateQuery("");
-                      setCityQuery("");
-                    }}
                     disabled={countriesLoading || loading}
+                    {...register("countryId", {
+                      onChange: () => {
+                        setOptionsError(null);
+                        setValue("stateId", "");
+                        setValue("cityId", "");
+                      },
+                    })}
                   >
                     <option value="">
                       {countriesLoading
@@ -488,28 +470,33 @@ export default function AddCompany() {
                       </option>
                     ))}
                   </select>
+                  {errors.countryId && (
+                    <p className="text-xs text-error mt-1">
+                      {errors.countryId.message}
+                    </p>
+                  )}
                 </label>
-                <label className="space-y-1.5 text-sm font-medium">
+
+                <label className="space-y-1.5 text-sm font-medium required-label">
                   <span>State</span>
                   <select
                     className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    value={selectedState}
-                    onChange={(event) => {
-                      clearBanners();
-                      setOptionsError(null);
-                      setSelectedState(event.target.value);
-                      setCityQuery("");
-                    }}
-                    disabled={!selectedCountry || statesLoading || loading}
+                    disabled={!countryId || statesLoading || loading}
+                    {...register("stateId", {
+                      onChange: () => {
+                        setOptionsError(null);
+                        setValue("cityId", "");
+                      },
+                    })}
                   >
                     <option value="">
-                      {!selectedCountry
-                        ? 'Select a country first'
+                      {!countryId
+                        ? "Select a country first"
                         : statesLoading
-                        ? 'Loading states...'
+                        ? "Loading states..."
                         : filteredStates.length === 0
-                        ? 'No matches'
-                        : 'Select state'}
+                        ? "No matches"
+                        : "Select state"}
                     </option>
                     {filteredStates.map((state) => (
                       <option key={state.id} value={state.id}>
@@ -517,27 +504,28 @@ export default function AddCompany() {
                       </option>
                     ))}
                   </select>
+                  {errors.stateId && (
+                    <p className="text-xs text-error mt-1">
+                      {errors.stateId.message}
+                    </p>
+                  )}
                 </label>
-                <label className="space-y-1.5 text-sm font-medium">
+
+                <label className="space-y-1.5 text-sm font-medium required-label">
                   <span>City</span>
                   <select
                     className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    value={selectedCity}
-                    onChange={(event) => {
-                      clearBanners();
-                      setOptionsError(null);
-                      setSelectedCity(event.target.value);
-                    }}
-                    disabled={!selectedState || citiesLoading || loading}
+                    disabled={!stateId || citiesLoading || loading}
+                    {...register("cityId")}
                   >
                     <option value="">
-                      {!selectedState
-                        ? 'Select a state first'
+                      {!stateId
+                        ? "Select a state first"
                         : citiesLoading
-                        ? 'Loading cities...'
+                        ? "Loading cities..."
                         : filteredCities.length === 0
-                        ? 'No matches'
-                        : 'Select city'}
+                        ? "No matches"
+                        : "Select city"}
                     </option>
                     {filteredCities.map((city) => (
                       <option key={city.id} value={city.id}>
@@ -545,26 +533,27 @@ export default function AddCompany() {
                       </option>
                     ))}
                   </select>
+                  {errors.cityId && (
+                    <p className="text-xs text-error mt-1">
+                      {errors.cityId.message}
+                    </p>
+                  )}
                 </label>
               </div>
-              <label className="block space-y-1.5 text-sm font-medium">
+
+              <label className="block space-y-1.5 text-sm font-medium required-label">
                 <span>Company type</span>
                 <select
                   className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  value={selectedCompanyType}
-                  onChange={(event) => {
-                    clearBanners();
-                    setOptionsError(null);
-                    setSelectedCompanyType(event.target.value);
-                  }}
                   disabled={companyTypesLoading || loading}
+                  {...register("companyTypeId")}
                 >
                   <option value="">
                     {companyTypesLoading
-                      ? 'Loading company types...'
+                      ? "Loading company types..."
                       : filteredCompanyTypes.length === 0
-                      ? 'No matches'
-                      : 'Select company type'}
+                      ? "No matches"
+                      : "Select company type"}
                   </option>
                   {filteredCompanyTypes.map((type) => (
                     <option key={type.id} value={type.id}>
@@ -572,114 +561,34 @@ export default function AddCompany() {
                     </option>
                   ))}
                 </select>
+                {errors.companyTypeId && (
+                  <p className="text-xs text-error mt-1">
+                    {errors.companyTypeId.message}
+                  </p>
+                )}
               </label>
+
               {optionsError && (
                 <div className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
                   {optionsError}
                 </div>
               )}
             </div>
+
             <div className="pt-2">
               <button
                 type="submit"
-                disabled={
-                  submitting ||
-                  !companyName ||
-                  !adminName ||
-                  !adminEmail ||
-                  !adminPassword ||
-                  !selectedCountry ||
-                  !selectedState ||
-                  !selectedCity ||
-                  !selectedCompanyType
-                }
+                disabled={submitting || isSubmitting}
                 className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
               >
-                {submitting ? "Creating…" : "Add Company"}
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section className="rounded-lg border border-border bg-surface shadow-sm">
-          <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold">Assign Admin</h3>
-            <span className="text-xs text-muted">
-              {loading
-                ? "Loading…"
-                : `${companiesWithoutAdmin.length} without admin`}
-            </span>
-          </div>
-          <form onSubmit={submitExisting} className="px-6 py-5 space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Company</label>
-              <select
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={existingCompany}
-                onChange={(e) => {
-                  clearBanners();
-                  setExistingCompany(e.target.value);
-                }}
-              >
-                <option value="">Select Company</option>
-                {companiesWithoutAdmin.map((c) => (
-                  <option key={c._id} value={c._id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field
-                label="Admin Name"
-                value={newAdminName}
-                onChange={(v) => {
-                  clearBanners();
-                  setNewAdminName(v);
-                }}
-                placeholder="John Smith"
-              />
-              <Field
-                label="Admin Email"
-                type="email"
-                value={newAdminEmail}
-                onChange={(v) => {
-                  clearBanners();
-                  setNewAdminEmail(v);
-                }}
-                placeholder="john@Peracto.com"
-              />
-            </div>
-            <Field
-              label="Admin Password"
-              type="password"
-              value={newAdminPassword}
-              onChange={(v) => {
-                clearBanners();
-                setNewAdminPassword(v);
-              }}
-              placeholder="••••••••"
-            />
-            <div className="pt-2">
-              <button
-                type="submit"
-                disabled={
-                  submittingExisting ||
-                  !existingCompany ||
-                  !newAdminName ||
-                  !newAdminEmail ||
-                  !newAdminPassword
-                }
-                className="inline-flex items-center justify-center rounded-md bg-secondary px-4 py-2 text-white disabled:opacity-60"
-              >
-                {submittingExisting ? "Assigning…" : "Add Admin"}
+                {submitting || isSubmitting ? "Creating…" : "Add Company"}
               </button>
             </div>
           </form>
         </section>
       </div>
 
-      <section className="rounded-lg border border-border bg-surface shadow-sm">
+      {/* <section className="rounded-lg border border-border bg-surface shadow-sm">
         <div className="border-b border-border px-6 py-4">
           <h3 className="text-lg font-semibold">All Companies</h3>
         </div>
@@ -706,34 +615,7 @@ export default function AddCompany() {
             ))
           )}
         </div>
-      </section>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  placeholder,
-  type = "text",
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="text-sm font-medium">{label}</label>
-      <input
-        className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-        placeholder={placeholder}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      </section> */}
     </div>
   );
 }

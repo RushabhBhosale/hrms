@@ -6,7 +6,7 @@ export default function LandingPage() {
       <header className="sticky top-0 z-30 bg-surface/70 backdrop-blur border-b border-border">
         <div className="mx-auto max-w-6xl px-4 h-16 flex items-center justify-between">
           <Link to="/" className="text-xl font-extrabold tracking-wide">
-            HRMS
+            <img src="/peracto_logo.png" className="w-[170px]" />
           </Link>
           <nav className="hidden md:flex items-center gap-6 text-sm">
             <a href="#features" className="hover:text-text">
@@ -158,7 +158,7 @@ export default function LandingPage() {
           </ol>
         </section>
 
-        <section id="pricing" className="bg-surface/50 border-y border-border">
+        {/* <section id="pricing" className="bg-surface/50 border-y border-border">
           <div className="mx-auto max-w-6xl px-4 py-12 md:py-16">
             <SectionTitle
               title="Simple pricing"
@@ -207,7 +207,7 @@ export default function LandingPage() {
               />
             </div>
           </div>
-        </section>
+        </section> */}
 
         <section id="faq" className="mx-auto max-w-4xl px-4 py-12 md:py-16">
           <SectionTitle

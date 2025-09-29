@@ -65,7 +65,14 @@ export default function Documents() {
       )}
 
       <form onSubmit={uploadDocs} className="space-y-3">
+        <label
+          className="text-sm font-medium required-label"
+          htmlFor="employee-documents"
+        >
+          Select documents
+        </label>
         <input
+          id="employee-documents"
           type="file"
           multiple
           onChange={(e) => setFiles(e.target.files)}

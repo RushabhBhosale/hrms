@@ -178,7 +178,8 @@ router.post(
       // Fire-and-forget email notification to team lead and members
       (async () => {
         try {
-          if (!isEmailEnabled()) return;
+          const companyId = req.employee.company;
+          if (!(await isEmailEnabled(companyId))) return;
           const ids = [projectData.teamLead, ...(Array.isArray(projectData.members) ? projectData.members : [])]
             .map((x) => String(x))
             .filter((x) => x && x.length >= 12);
@@ -208,6 +209,7 @@ router.post(
           </div>
         `;
           await sendMail({
+            companyId,
             to,
             subject: sub,
             html,
@@ -529,7 +531,8 @@ router.post("/:id/tasks", auth, async (req, res) => {
   // Fire-and-forget email notification to the assignee
   (async () => {
     try {
-      if (!isEmailEnabled()) return;
+      const companyId = project.company;
+      if (!(await isEmailEnabled(companyId))) return;
       const assignee = await Employee.findById(assignedTo)
         .select("name email")
         .lean();
@@ -551,6 +554,7 @@ router.post("/:id/tasks", auth, async (req, res) => {
         </div>
       `;
       await sendMail({
+        companyId,
         to: assignee.email,
         subject: sub,
         html,
@@ -683,7 +687,8 @@ router.put("/:id/tasks/:taskId", auth, async (req, res) => {
   if (assignedTo !== undefined && String(assignedTo) !== prevAssignee) {
     (async () => {
       try {
-        if (!isEmailEnabled()) return;
+        const companyId = project.company;
+        if (!(await isEmailEnabled(companyId))) return;
         const assignee = await Employee.findById(assignedTo)
           .select("name email")
           .lean();
@@ -707,6 +712,7 @@ router.put("/:id/tasks/:taskId", auth, async (req, res) => {
           </div>
         `;
         await sendMail({
+          companyId,
           to: assignee.email,
           subject: sub,
           html,

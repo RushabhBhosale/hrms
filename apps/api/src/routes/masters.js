@@ -3,7 +3,6 @@ const path = require("path");
 const fs = require("fs");
 const mongoose = require("mongoose");
 const ExcelJS = require("exceljs");
-const multer = require("multer");
 
 const { auth } = require("../middleware/auth");
 const { requirePrimary } = require("../middleware/roles");
@@ -12,7 +11,7 @@ const MasterState = require("../models/MasterState");
 const MasterCity = require("../models/MasterCity");
 const CompanyTypeMaster = require("../models/CompanyTypeMaster");
 
-const upload = multer({ dest: path.join(__dirname, "../../uploads") });
+const { upload } = require("../utils/uploads");
 
 function slug(value) {
   if (!value) return "";
@@ -24,7 +23,10 @@ function cellText(value) {
   if (typeof value === "object") {
     if (value.text) return String(value.text).trim();
     if (Array.isArray(value.richText))
-      return value.richText.map((part) => part.text).join("").trim();
+      return value.richText
+        .map((part) => part.text)
+        .join("")
+        .trim();
     if (Object.prototype.hasOwnProperty.call(value, "result"))
       return cellText(value.result);
     if (Object.prototype.hasOwnProperty.call(value, "hyperlink")) {
@@ -60,7 +62,9 @@ function parseSheet(sheet, fieldMap, requiredFields = []) {
     fieldsSeen.add(canonical);
   });
 
-  const missingFields = requiredFields.filter((field) => !fieldsSeen.has(field));
+  const missingFields = requiredFields.filter(
+    (field) => !fieldsSeen.has(field)
+  );
   const rows = [];
 
   sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
@@ -84,17 +88,25 @@ function parseSheet(sheet, fieldMap, requiredFields = []) {
 }
 
 async function buildSummary() {
-  const [countries, states, cities, companyTypes, lastCountry, lastState, lastCity, lastCompanyType] =
-    await Promise.all([
-      MasterCountry.countDocuments(),
-      MasterState.countDocuments(),
-      MasterCity.countDocuments(),
-      CompanyTypeMaster.countDocuments(),
-      MasterCountry.findOne().sort({ updatedAt: -1 }).lean(),
-      MasterState.findOne().sort({ updatedAt: -1 }).lean(),
-      MasterCity.findOne().sort({ updatedAt: -1 }).lean(),
-      CompanyTypeMaster.findOne().sort({ updatedAt: -1 }).lean(),
-    ]);
+  const [
+    countries,
+    states,
+    cities,
+    companyTypes,
+    lastCountry,
+    lastState,
+    lastCity,
+    lastCompanyType,
+  ] = await Promise.all([
+    MasterCountry.countDocuments(),
+    MasterState.countDocuments(),
+    MasterCity.countDocuments(),
+    CompanyTypeMaster.countDocuments(),
+    MasterCountry.findOne().sort({ updatedAt: -1 }).lean(),
+    MasterState.findOne().sort({ updatedAt: -1 }).lean(),
+    MasterCity.findOne().sort({ updatedAt: -1 }).lean(),
+    CompanyTypeMaster.findOne().sort({ updatedAt: -1 }).lean(),
+  ]);
 
   const toMeta = (count, doc) => ({
     count,
@@ -124,7 +136,7 @@ router.get(
   }
 );
 
-router.get("/countries", auth, async (req, res) => {
+router.get("/countries", async (req, res) => {
   try {
     const { q } = req.query || {};
     const filter = {};
@@ -151,7 +163,7 @@ router.get("/countries", auth, async (req, res) => {
   }
 });
 
-router.get("/states", auth, async (req, res) => {
+router.get("/states", async (req, res) => {
   try {
     const { countryId, countryKey, q } = req.query || {};
     const filter = {};
@@ -186,9 +198,7 @@ router.get("/states", auth, async (req, res) => {
 
     const states = await MasterState.find(filter)
       .sort({ name: 1 })
-      .select(
-        "name nameKey stateKey country countryName countryKey isoCode"
-      );
+      .select("name nameKey stateKey country countryName countryKey isoCode");
 
     res.json({
       states: states.map((doc) => ({
@@ -208,7 +218,7 @@ router.get("/states", auth, async (req, res) => {
   }
 });
 
-router.get("/cities", auth, async (req, res) => {
+router.get("/cities", async (req, res) => {
   try {
     const { stateId, stateKey, countryId, countryKey, q } = req.query || {};
     const filter = {};
@@ -284,7 +294,7 @@ router.get("/cities", auth, async (req, res) => {
   }
 });
 
-router.get("/company-types", auth, async (req, res) => {
+router.get("/company-types", async (req, res) => {
   try {
     const { q } = req.query || {};
     const filter = {};
@@ -398,8 +408,7 @@ router.post(
 
     const ext = path.extname(req.file.originalname || "").toLowerCase();
     if (ext !== ".xlsx") {
-      if (filePath)
-        fs.promises.unlink(filePath).catch(() => {});
+      if (filePath) fs.promises.unlink(filePath).catch(() => {});
       return res.status(400).json({
         error: "Unsupported file. Please upload a .xlsx workbook.",
       });
@@ -427,7 +436,10 @@ router.post(
       await workbook.xlsx.readFile(filePath);
 
       const normalizeSheetName = (value) =>
-        value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        value
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "");
 
       const getSheet = (name) => {
         const target = normalizeSheetName(name);
@@ -487,21 +499,18 @@ router.post(
       const citiesSheet = getSheet("cities");
       const companyTypesSheet = getSheet("companytypes");
 
-      const parsedCountries = parseSheet(
-        countriesSheet,
-        fieldMaps.countries,
-        ["name"]
-      );
-      const parsedStates = parseSheet(
-        statesSheet,
-        fieldMaps.states,
-        ["name", "country"]
-      );
-      const parsedCities = parseSheet(
-        citiesSheet,
-        fieldMaps.cities,
-        ["name", "state", "country"]
-      );
+      const parsedCountries = parseSheet(countriesSheet, fieldMaps.countries, [
+        "name",
+      ]);
+      const parsedStates = parseSheet(statesSheet, fieldMaps.states, [
+        "name",
+        "country",
+      ]);
+      const parsedCities = parseSheet(citiesSheet, fieldMaps.cities, [
+        "name",
+        "state",
+        "country",
+      ]);
       const parsedCompanyTypes = parseSheet(
         companyTypesSheet,
         fieldMaps.companyTypes,
@@ -511,17 +520,23 @@ router.post(
       const formatIssues = [];
       if (parsedCountries.present && parsedCountries.missingFields.length) {
         formatIssues.push(
-          `Countries sheet is missing columns: ${parsedCountries.missingFields.join(", ")}`
+          `Countries sheet is missing columns: ${parsedCountries.missingFields.join(
+            ", "
+          )}`
         );
       }
       if (parsedStates.present && parsedStates.missingFields.length) {
         formatIssues.push(
-          `States sheet is missing columns: ${parsedStates.missingFields.join(", ")}`
+          `States sheet is missing columns: ${parsedStates.missingFields.join(
+            ", "
+          )}`
         );
       }
       if (parsedCities.present && parsedCities.missingFields.length) {
         formatIssues.push(
-          `Cities sheet is missing columns: ${parsedCities.missingFields.join(", ")}`
+          `Cities sheet is missing columns: ${parsedCities.missingFields.join(
+            ", "
+          )}`
         );
       }
       if (
@@ -529,7 +544,9 @@ router.post(
         parsedCompanyTypes.missingFields.length
       ) {
         formatIssues.push(
-          `CompanyTypes sheet is missing columns: ${parsedCompanyTypes.missingFields.join(", ")}`
+          `CompanyTypes sheet is missing columns: ${parsedCompanyTypes.missingFields.join(
+            ", "
+          )}`
         );
       }
 
@@ -564,7 +581,9 @@ router.post(
             return;
           }
           seen.add(nameKey);
-          const isoCode = values.isoCode ? values.isoCode.trim().toUpperCase() : "";
+          const isoCode = values.isoCode
+            ? values.isoCode.trim().toUpperCase()
+            : "";
           const phoneCode = values.phoneCode ? values.phoneCode.trim() : "";
           operations.push({
             name,
@@ -609,33 +628,24 @@ router.post(
         });
 
         const countries = countryKeys.size
-          ? await MasterCountry.find({ nameKey: { $in: Array.from(countryKeys) } })
-              .lean()
+          ? await MasterCountry.find({
+              nameKey: { $in: Array.from(countryKeys) },
+            }).lean()
           : [];
-        const countryMap = new Map(
-          countries.map((doc) => [doc.nameKey, doc])
-        );
+        const countryMap = new Map(countries.map((doc) => [doc.nameKey, doc]));
 
         const operations = [];
         parsedStates.rows.forEach(({ rowNumber, values }) => {
           const name = values.name?.trim();
           const countryName = values.country?.trim();
           if (!name || !countryName) {
-            markSkipped(
-              "states",
-              rowNumber,
-              "State and country are required."
-            );
+            markSkipped("states", rowNumber, "State and country are required.");
             return;
           }
           const stateNameKey = slug(name);
           const countryKey = slug(countryName);
           if (!stateNameKey || !countryKey) {
-            markSkipped(
-              "states",
-              rowNumber,
-              "State and country are required."
-            );
+            markSkipped("states", rowNumber, "State and country are required.");
             return;
           }
           const compositeKey = `${stateNameKey}::${countryKey}`;
@@ -657,7 +667,9 @@ router.post(
             return;
           }
           seen.add(compositeKey);
-          const isoCode = values.isoCode ? values.isoCode.trim().toUpperCase() : "";
+          const isoCode = values.isoCode
+            ? values.isoCode.trim().toUpperCase()
+            : "";
           operations.push({
             name,
             nameKey: stateNameKey,
@@ -689,7 +701,9 @@ router.post(
               upsert: true,
             },
           }));
-          const writeRes = await MasterState.bulkWrite(bulk, { ordered: false });
+          const writeRes = await MasterState.bulkWrite(bulk, {
+            ordered: false,
+          });
           result.states.inserted += writeRes.upsertedCount || 0;
           result.states.updated += writeRes.matchedCount || 0;
         }
@@ -708,8 +722,9 @@ router.post(
         });
 
         const states = stateKeys.size
-          ? await MasterState.find({ stateKey: { $in: Array.from(stateKeys) } })
-              .lean()
+          ? await MasterState.find({
+              stateKey: { $in: Array.from(stateKeys) },
+            }).lean()
           : [];
         const stateMap = new Map(states.map((doc) => [doc.stateKey, doc]));
 
@@ -830,7 +845,9 @@ router.post(
             return;
           }
           seen.add(nameKey);
-          const description = values.description ? values.description.trim() : "";
+          const description = values.description
+            ? values.description.trim()
+            : "";
           operations.push({ name, nameKey, description });
         });
 

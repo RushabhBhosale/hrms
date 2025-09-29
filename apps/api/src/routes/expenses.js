@@ -1,5 +1,4 @@
 const router = require("express").Router();
-const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const PDFDocument = require("pdfkit");
@@ -12,8 +11,7 @@ const Company = require("../models/Company");
 const { parseWithSchema } = require("../utils/zod");
 const { expenseSchema } = require("../../../libs/schemas/expense");
 
-const uploadDir = path.join(__dirname, "../../uploads");
-const upload = multer({ dest: uploadDir });
+const { upload, uploadsDir } = require("../utils/uploads");
 
 const DEFAULT_CATEGORIES = [
   "Housekeeping",
@@ -128,14 +126,14 @@ function parseNumber(value) {
 function removeFiles(filenames = []) {
   filenames.forEach((file) => {
     if (!file) return;
-    const filePath = path.join(uploadDir, file);
+    const filePath = path.join(uploadsDir, file);
     fs.promises.unlink(filePath).catch(() => {});
   });
 }
 
 async function removeFileSafe(filename) {
   if (!filename) return;
-  const filePath = path.join(uploadDir, filename);
+  const filePath = path.join(uploadsDir, filename);
   try {
     await fs.promises.unlink(filePath);
   } catch (err) {
@@ -170,8 +168,8 @@ function formatCurrencyINR(amount) {
 
 async function generateVoucherPdf(expense, company) {
   const fileName = `voucher-${expense._id}-${Date.now()}.pdf`;
-  const filePath = path.join(uploadDir, fileName);
-  await fs.promises.mkdir(uploadDir, { recursive: true }).catch(() => {});
+  const filePath = path.join(uploadsDir, fileName);
+  await fs.promises.mkdir(uploadsDir, { recursive: true }).catch(() => {});
 
   const doc = new PDFDocument({ margin: 50 });
   const stream = fs.createWriteStream(filePath);

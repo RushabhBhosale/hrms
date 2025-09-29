@@ -57,7 +57,7 @@ export const employeeSchema = z.object({
   documents: z.array(z.string()).optional(),
   reportingPerson: objectId.optional(),
   leaveBalances: employeeLeaveBalanceSchema,
-  totalLeaveAvailable: nonNegativeNumber.optional(),
+  totalLeaveAvailable: z.number().optional(),
   leaveUsage: employeeLeaveUsageSchema,
   leaveAccrual: employeeLeaveAccrualSchema,
   resetOtpHash: z.string().optional(),

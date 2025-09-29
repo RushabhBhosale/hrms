@@ -4,8 +4,21 @@ import { Field } from "../../components/ui/Field";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 
 type EmpLite = { id: string; name: string };
+
+const BLOOD_GROUP_OPTIONS = [
+  "A+",
+  "A-",
+  "B+",
+  "B-",
+  "AB+",
+  "AB-",
+  "O+",
+  "O-",
+] as const;
 
 const schema = z.object({
   name: z.string().min(2, "Enter full name").max(120, "Too long"),
@@ -14,11 +27,23 @@ const schema = z.object({
   role: z.string().min(1, "Select a role"),
   address: z.string().min(3, "Too short").max(200, "Too long"),
   phone: z.string().regex(/^\d{10}$/, "Must be 10 digits"),
+  personalEmail: z
+    .union([z.literal(""), z.string().trim().email("Invalid personal email")])
+    .default(""),
   dob: z
     .string()
     .min(1, "DOB is required")
     .refine((v) => !Number.isNaN(Date.parse(v)), "Invalid date")
     .refine((v) => new Date(v) < new Date(), "DOB must be in the past"),
+  joiningDate: z
+    .string()
+    .optional()
+    .refine(
+      (v) => !v || v.trim() === "" || !Number.isNaN(Date.parse(v)),
+      "Invalid joining date"
+    )
+    .default(""),
+  bloodGroup: z.union([z.literal(""), z.enum(BLOOD_GROUP_OPTIONS)]).default(""),
   reportingPerson: z
     .string()
     .optional()
@@ -36,6 +61,7 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export default function AddEmployee() {
+  const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -51,7 +77,10 @@ export default function AddEmployee() {
       role: "",
       address: "",
       phone: "",
+      personalEmail: "",
       dob: "",
+      joiningDate: "",
+      bloodGroup: "",
       reportingPerson: "",
       employeeId: "",
       ctc: "",
@@ -126,7 +155,10 @@ export default function AddEmployee() {
         role: roles[0] || "",
         address: "",
         phone: "",
+        personalEmail: "",
         dob: "",
+        joiningDate: "",
+        bloodGroup: "",
         reportingPerson: "",
         employeeId: "",
         ctc: "",
@@ -134,8 +166,11 @@ export default function AddEmployee() {
       });
       setDocs(null);
       setOk("Employee added");
+      navigate("/admin/employees");
+      toast.success("Employee saved successfully");
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to add employee");
+      toast.error(e?.response?.data?.error || "Failed to add employee");
     } finally {
       setSubmitting(false);
     }
@@ -143,11 +178,18 @@ export default function AddEmployee() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-3xl font-bold">Add Employee</h2>
-        <p className="text-sm text-muted">
-          Create an employee and upload documents.
-        </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-3xl font-bold">Add Employee</h2>
+          <p className="text-sm text-muted">
+            Create an employee and upload documents.
+          </p>
+        </div>
+        <div>
+          <button className="h-10 rounded-md bg-primary px-4 text-white">
+            back to list
+          </button>
+        </div>
       </div>
 
       <section className="rounded-lg border border-border bg-surface shadow-sm">
@@ -161,7 +203,7 @@ export default function AddEmployee() {
           encType="multipart/form-data"
         >
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Name">
+            <Field label="Name" required>
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="Jane Doe"
@@ -171,7 +213,7 @@ export default function AddEmployee() {
                 <p className="text-xs text-error mt-1">{errors.name.message}</p>
               )}
             </Field>
-            <Field label="Email">
+            <Field label="Email" required>
               <input
                 type="email"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -184,10 +226,23 @@ export default function AddEmployee() {
                 </p>
               )}
             </Field>
+            <Field label="Personal Email">
+              <input
+                type="email"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="jane.doe@gmail.com"
+                {...register("personalEmail")}
+              />
+              {errors.personalEmail && (
+                <p className="text-xs text-error mt-1">
+                  {errors.personalEmail.message}
+                </p>
+              )}
+            </Field>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Password">
+            <Field label="Password" required>
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -201,7 +256,7 @@ export default function AddEmployee() {
               )}
             </Field>
 
-            <Field label="Role">
+            <Field label="Role" required>
               <select
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 {...register("role")}
@@ -232,7 +287,7 @@ export default function AddEmployee() {
                 ))}
               </select>
             </Field>
-            <Field label="Employee ID">
+            <Field label="Employee ID" required>
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="EMP001"
@@ -244,7 +299,7 @@ export default function AddEmployee() {
                 </p>
               )}
             </Field>
-            <Field label="CTC">
+            <Field label="CTC" required>
               <div className="grid grid-cols-[1fr_auto] gap-2">
                 <input
                   type="number"
@@ -278,7 +333,7 @@ export default function AddEmployee() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Address">
+            <Field label="Address" required>
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="Street, City, ZIP"
@@ -290,7 +345,7 @@ export default function AddEmployee() {
                 </p>
               )}
             </Field>
-            <Field label="Phone">
+            <Field label="Phone" required>
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 placeholder="9876543210"
@@ -303,10 +358,28 @@ export default function AddEmployee() {
                 </p>
               )}
             </Field>
+            <Field label="Blood Group">
+              <select
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                {...register("bloodGroup")}
+              >
+                <option value="">Select</option>
+                {BLOOD_GROUP_OPTIONS.map((bg) => (
+                  <option key={bg} value={bg}>
+                    {bg}
+                  </option>
+                ))}
+              </select>
+              {errors.bloodGroup && (
+                <p className="text-xs text-error mt-1">
+                  {errors.bloodGroup.message}
+                </p>
+              )}
+            </Field>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Date of Birth">
+            <Field label="Date of Birth" required>
               <input
                 type="date"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -314,6 +387,18 @@ export default function AddEmployee() {
               />
               {errors.dob && (
                 <p className="text-xs text-error mt-1">{errors.dob.message}</p>
+              )}
+            </Field>
+            <Field label="Joining Date">
+              <input
+                type="date"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                {...register("joiningDate")}
+              />
+              {errors.joiningDate && (
+                <p className="text-xs text-error mt-1">
+                  {errors.joiningDate.message}
+                </p>
               )}
             </Field>
           </div>

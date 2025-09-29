@@ -12,6 +12,27 @@ function monthsDiff(startYm, endYm) {
   return (ey - sy) * 12 + (em - sm);
 }
 
+function prevMonthYm(startYm) {
+  const [y, m] = startYm.split('-').map((x) => parseInt(x, 10));
+  const date = new Date(y, m - 1, 1);
+  date.setMonth(date.getMonth() - 1);
+  return ym(date);
+}
+
+function parseDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function startOfMonth(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(1);
+  return d;
+}
+
 // Accrue monthly total leaves for the employee
 async function accrueTotalIfNeeded(employee, company, asOfDate = new Date()) {
   if (!employee || !company) return;
@@ -20,19 +41,42 @@ async function accrueTotalIfNeeded(employee, company, asOfDate = new Date()) {
   const annual = Number(policy.totalAnnual) || 0;
   if (rate <= 0 || annual <= 0) return;
 
-  const asOfYm = ym(asOfDate);
-  const lastYm = employee.leaveAccrual?.lastAccruedYearMonth || ym(employee.createdAt || new Date());
-  const delta = monthsDiff(lastYm, asOfYm);
-  if (delta <= 0) return;
+  const joinDate = parseDate(employee.joiningDate);
+  const policyStart = parseDate(policy.applicableFrom);
+  const createdAt = parseDate(employee.createdAt);
+  let accrualStart;
+  if (policyStart && (!joinDate || policyStart > joinDate)) {
+    accrualStart = policyStart;
+  } else {
+    accrualStart = joinDate || policyStart || createdAt || asOfDate;
+  }
+  accrualStart = startOfMonth(accrualStart);
+  const asOfFloor = startOfMonth(asOfDate);
 
-  if (!employee.leaveUsage) employee.leaveUsage = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
-  const used = (employee.leaveUsage.paid || 0) + (employee.leaveUsage.casual || 0) + (employee.leaveUsage.sick || 0);
-  const current = Number(employee.totalLeaveAvailable) || 0;
-  const capLeft = Math.max(0, annual - used - current);
-  const add = Math.max(0, Math.min(rate * delta, capLeft));
-  employee.totalLeaveAvailable = current + add;
+  let base = 0;
+  if (accrualStart <= asOfFloor) {
+    const firstYm = ym(accrualStart);
+    const baselineYm = prevMonthYm(firstYm);
+    let months = monthsDiff(baselineYm, ym(asOfFloor));
+    if (months < 0) months = 0;
+
+    if (!employee.leaveUsage) employee.leaveUsage = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+    const used = (employee.leaveUsage.paid || 0) + (employee.leaveUsage.casual || 0) + (employee.leaveUsage.sick || 0);
+    const potential = rate * months;
+    const maxBase = Math.max(0, annual - used);
+    base = Math.min(Math.max(0, potential), maxBase);
+  }
+
   employee.leaveAccrual = employee.leaveAccrual || {};
-  employee.leaveAccrual.lastAccruedYearMonth = asOfYm;
+  let manualAdjustment = Number(employee.leaveAccrual.manualAdjustment);
+  if (!Number.isFinite(manualAdjustment)) {
+    manualAdjustment = 0;
+  }
+
+  const total = base + manualAdjustment;
+  employee.totalLeaveAvailable = total;
+  employee.leaveAccrual.manualAdjustment = manualAdjustment;
+  employee.leaveAccrual.lastAccruedYearMonth = ym(asOfFloor);
   await employee.save();
 }
 
