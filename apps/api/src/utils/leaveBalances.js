@@ -53,14 +53,27 @@ async function accrueTotalIfNeeded(employee, company, asOfDate = new Date()) {
   accrualStart = startOfMonth(accrualStart);
   const asOfFloor = startOfMonth(asOfDate);
 
-  let base = 0;
+  let accrued = 0;
+  const usage = employee.leaveUsage || {
+    paid: 0,
+    casual: 0,
+    sick: 0,
+    unpaid: 0,
+  };
+  if (!employee.leaveUsage) {
+    employee.leaveUsage = usage;
+  }
+  const used =
+    (Number(usage.paid) || 0) +
+    (Number(usage.casual) || 0) +
+    (Number(usage.sick) || 0);
   if (accrualStart <= asOfFloor) {
     const firstYm = ym(accrualStart);
     const baselineYm = prevMonthYm(firstYm);
     let months = monthsDiff(baselineYm, ym(asOfFloor));
     if (months < 0) months = 0;
 
-    if (!employee.leaveUsage) employee.leaveUsage = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+ if (!employee.leaveUsage) employee.leaveUsage = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
     const used =
       (employee.leaveUsage.paid || 0) +
       (employee.leaveUsage.casual || 0) +
@@ -68,7 +81,6 @@ async function accrueTotalIfNeeded(employee, company, asOfDate = new Date()) {
     const potential = rate * months;
     const accrued = Math.max(0, Math.min(potential, annual));
     base = Math.max(0, accrued - used);
-  }
 
   employee.leaveAccrual = employee.leaveAccrual || {};
   let manualAdjustment = Number(employee.leaveAccrual.manualAdjustment);
@@ -76,7 +88,8 @@ async function accrueTotalIfNeeded(employee, company, asOfDate = new Date()) {
     manualAdjustment = 0;
   }
 
-  const total = base + manualAdjustment;
+  const totalPool = accrued + manualAdjustment;
+  const total = Math.max(0, totalPool - used);
   employee.totalLeaveAvailable = total;
   employee.leaveAccrual.manualAdjustment = manualAdjustment;
   employee.leaveAccrual.lastAccruedYearMonth = ym(asOfFloor);
