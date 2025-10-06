@@ -6,6 +6,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
+import type { RoleDefinition } from "../../types/roles";
 
 type EmpLite = { id: string; name: string };
 
@@ -37,7 +38,7 @@ const schema = z.object({
     .refine((v) => new Date(v) < new Date(), "DOB must be in the past"),
   joiningDate: z
     .string()
-    .optional()
+    .min(1, "Joining date is required")
     .refine(
       (v) => !v || v.trim() === "" || !Number.isNaN(Date.parse(v)),
       "Invalid joining date"
@@ -57,6 +58,13 @@ const schema = z.object({
       "Enter a valid number"
     ),
   ctcMode: z.enum(["monthly", "annual"]),
+  aadharNumber: z
+    .string()
+    .regex(/^\d{12}$/, "Aadhaar must be exactly 12 digits"),
+  panNumber: z.string().refine((v) => {
+    if (!v) return true;
+    return /^[A-Za-z0-9]{8,20}$/.test(v.trim());
+  }, "PAN should be 8–20 alphanumerics"),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -66,7 +74,8 @@ export default function AddEmployee() {
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [employees, setEmployees] = useState<EmpLite[]>([]);
-  const [roles, setRoles] = useState<string[]>([]);
+  const [roles, setRoles] = useState<RoleDefinition[]>([]);
+  const [defaultRole, setDefaultRole] = useState("");
   const [docs, setDocs] = useState<FileList | null>(null);
   const form = useForm({
     resolver: zodResolver(schema),
@@ -85,6 +94,8 @@ export default function AddEmployee() {
       employeeId: "",
       ctc: "",
       ctcMode: "annual",
+      aadharNumber: "",
+      panNumber: "",
     },
     mode: "onSubmit",
     reValidateMode: "onChange",
@@ -110,9 +121,13 @@ export default function AddEmployee() {
       } catch {}
       try {
         const r = await api.get("/companies/roles");
-        const rs: string[] = r.data.roles || [];
-        setRoles(rs);
-        if (rs.length) setValue("role", rs[0], { shouldValidate: true });
+        const defs: RoleDefinition[] = r.data.roles || [];
+        setRoles(defs);
+        const fallback =
+          defs.find((item) => !item.system)?.name || defs[0]?.name || "";
+        setDefaultRole(fallback);
+        if (fallback)
+          setValue("role", fallback, { shouldValidate: true });
       } catch {}
     })();
   }, [setValue]);
@@ -136,8 +151,12 @@ export default function AddEmployee() {
       }
 
       const fd = new FormData();
+      const normalizedAadhaar = (data.aadharNumber || "").replace(/\D/g, "");
+      const normalizedPan = (data.panNumber || "").trim().toUpperCase();
       const payload = {
         ...data,
+        aadharNumber: normalizedAadhaar,
+        panNumber: normalizedPan,
         ctc: String(monthlyCtc),
       };
       const { ctcMode: _omit, ...rest } = payload as any;
@@ -152,7 +171,7 @@ export default function AddEmployee() {
         name: "",
         email: "",
         password: "",
-        role: roles[0] || "",
+        role: defaultRole || "",
         address: "",
         phone: "",
         personalEmail: "",
@@ -163,6 +182,8 @@ export default function AddEmployee() {
         employeeId: "",
         ctc: "",
         ctcMode: "annual",
+        aadharNumber: "",
+        panNumber: "",
       });
       setDocs(null);
       setOk("Employee added");
@@ -261,9 +282,10 @@ export default function AddEmployee() {
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 {...register("role")}
               >
+                <option value="">Select role</option>
                 {roles.map((r) => (
-                  <option key={r} value={r}>
-                    {r.charAt(0).toUpperCase() + r.slice(1)}
+                  <option key={r.name} value={r.name}>
+                    {r.label}
                   </option>
                 ))}
               </select>
@@ -379,6 +401,36 @@ export default function AddEmployee() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Aadhaar Number" required>
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="123456789012"
+                inputMode="numeric"
+                maxLength={12}
+                {...register("aadharNumber")}
+              />
+              {errors.aadharNumber && (
+                <p className="text-xs text-error mt-1">
+                  {errors.aadharNumber.message as string}
+                </p>
+              )}
+            </Field>
+            <Field label="PAN Number" required>
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 uppercase outline-none focus:ring-2 focus:ring-primary"
+                placeholder="ABCDE1234F"
+                maxLength={20}
+                {...register("panNumber")}
+              />
+              {errors.panNumber && (
+                <p className="text-xs text-error mt-1">
+                  {errors.panNumber.message as string}
+                </p>
+              )}
+            </Field>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
             <Field label="Date of Birth" required>
               <input
                 type="date"
@@ -389,7 +441,7 @@ export default function AddEmployee() {
                 <p className="text-xs text-error mt-1">{errors.dob.message}</p>
               )}
             </Field>
-            <Field label="Joining Date">
+            <Field label="Joining Date" required>
               <input
                 type="date"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"

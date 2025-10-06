@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { clearAuth, getEmployee } from "../lib/auth";
+import { clearAuth, getEmployee, hasPermission } from "../lib/auth";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import {
@@ -23,6 +23,10 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   UserCircle2Icon,
+  BarChart3,
+  CalendarRange,
+  Receipt,
+  MailQuestion,
 } from "lucide-react";
 import AnnouncementsPopup from "../components/AnnouncementsPopup";
 
@@ -67,7 +71,8 @@ export default function AdminLayout() {
   type Item = {
     to: string;
     label: string;
-    icon: React.ComponentType<{ size?: number }>;
+    icon: React.ComponentType<{ size?: number | string }>;
+    permission?: { module: string; action?: string };
   };
   type Section = { key: string; label: string; items: Item[] };
 
@@ -83,8 +88,18 @@ export default function AdminLayout() {
         label: "People",
         items: [
           // { to: "/admin/employees/add", label: "Add Employee", icon: UserPlus },
-          { to: "/admin/employees", label: "Employee List", icon: Users },
-          { to: "/admin/roles", label: "Roles", icon: UserCog },
+          {
+            to: "/admin/employees",
+            label: "Employee List",
+            icon: Users,
+            permission: { module: "employees", action: "read" },
+          },
+          {
+            to: "/admin/roles",
+            label: "Roles",
+            icon: UserCog,
+            permission: { module: "roles", action: "read" },
+          },
           { to: "/admin/profile", label: "Profile", icon: User },
         ],
       },
@@ -92,7 +107,12 @@ export default function AdminLayout() {
         key: "projects",
         label: "Projects",
         items: [
-          { to: "/admin/projects", label: "Projects", icon: ClipboardList },
+          {
+            to: "/admin/projects",
+            label: "Projects",
+            icon: ClipboardList,
+            permission: { module: "projects", action: "read" },
+          },
         ],
       },
       {
@@ -103,31 +123,85 @@ export default function AdminLayout() {
             to: "/admin/attendances",
             label: "Attendances",
             icon: CalendarCheck2,
+            permission: { module: "attendance", action: "read" },
           },
-          { to: "/admin/leaves", label: "Leave Requests", icon: ClipboardList },
+          {
+            to: "/admin/attendance/manual-requests",
+            label: "Manual Attendance",
+            icon: MailQuestion,
+            permission: { module: "attendance", action: "write" },
+          },
+          {
+            to: "/admin/leaves",
+            label: "Leave Requests",
+            icon: ClipboardList,
+            permission: { module: "leaves", action: "read" },
+          },
           {
             to: "/admin/leave-settings",
             label: "Leave Settings",
             icon: Settings,
+            permission: { module: "leave_settings", action: "write" },
           },
-          { to: "/admin/report", label: "Report", icon: FileText },
+        ],
+      },
+      {
+        key: "reports",
+        label: "Reports",
+        items: [
+          {
+            to: "/admin/reports/attendance",
+            label: "Attendance",
+            icon: CalendarCheck2,
+            permission: { module: "reports", action: "read" },
+          },
+          {
+            to: "/admin/reports/projects",
+            label: "Project Reports",
+            icon: BarChart3,
+            permission: { module: "reports", action: "read" },
+          },
+          {
+            to: "/admin/reports/leaves",
+            label: "Leave Reports",
+            icon: CalendarRange,
+            permission: { module: "reports", action: "read" },
+          },
+          {
+            to: "/admin/reports/salary-slips",
+            label: "Salary Slips",
+            icon: Receipt,
+            permission: { module: "salary", action: "read" },
+          },
         ],
       },
       {
         key: "finance",
         label: "Finance",
         items: [
-          { to: "/admin/invoices", label: "Invoices", icon: FileText },
-          { to: "/admin/expenses", label: "Expenses", icon: Wallet },
+          {
+            to: "/admin/invoices",
+            label: "Invoices",
+            icon: FileText,
+            permission: { module: "finance", action: "read" },
+          },
+          {
+            to: "/admin/expenses",
+            label: "Expenses",
+            icon: Wallet,
+            permission: { module: "finance", action: "write" },
+          },
           {
             to: "/admin/salary/template",
             label: "Salary Template",
             icon: FileText,
+            permission: { module: "salary", action: "write" },
           },
           {
             to: "/admin/salary/slips",
             label: "Salary Slips",
             icon: ClipboardList,
+            permission: { module: "salary", action: "read" },
           },
         ],
       },
@@ -135,12 +209,23 @@ export default function AdminLayout() {
         key: "company",
         label: "Company",
         items: [
-          { to: "/admin/company", label: "Company", icon: Settings },
-          { to: "/admin/company-timing", label: "Company Timing", icon: Clock },
+          {
+            to: "/admin/company",
+            label: "Company",
+            icon: Settings,
+            permission: { module: "company", action: "write" },
+          },
+          {
+            to: "/admin/company-timing",
+            label: "Company Timing",
+            icon: Clock,
+            permission: { module: "company", action: "write" },
+          },
           {
             to: "/admin/announcements",
             label: "Announcements",
             icon: Megaphone,
+            permission: { module: "announcements", action: "write" },
           },
         ],
       },
@@ -267,8 +352,14 @@ export default function AdminLayout() {
             aria-label="Primary"
           >
             {sections.map((section) => {
+              const items = section.items.filter((item) =>
+                item.permission
+                  ? hasPermission(u, item.permission.module, item.permission.action)
+                  : true
+              );
+              if (items.length === 0) return null;
               const isOpen = compact ? false : openSections.has(section.key);
-              const maxH = isOpen ? section.items.length * 44 + 8 : 0;
+              const maxH = isOpen ? items.length * 44 + 8 : 0;
 
               return (
                 <div key={section.key} className="rounded-md">
@@ -305,7 +396,7 @@ export default function AdminLayout() {
                     aria-label={section.label}
                   >
                     <div className="mt-1 space-y-1">
-                      {section.items.map(({ to, label, icon: Icon }) => {
+                      {items.map(({ to, label, icon: Icon }) => {
                         const active = itemIsActive(to);
                         return (
                           <NavLink

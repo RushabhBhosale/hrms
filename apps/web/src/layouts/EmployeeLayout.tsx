@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { clearAuth, getEmployee } from "../lib/auth";
+import { clearAuth, getEmployee, hasPermission } from "../lib/auth";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import {
@@ -20,6 +20,7 @@ import {
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
+  MailQuestion,
 } from "lucide-react";
 import AnnouncementsPopup from "../components/AnnouncementsPopup";
 
@@ -61,32 +62,70 @@ export default function EmployeeLayout() {
     })();
   }, []);
 
-  const isHR = !!u?.subRoles?.includes("hr");
-  const isManager = !!u?.subRoles?.includes("manager");
+  const canViewTeamAttendance = hasPermission(u, "attendance", "read");
+  const canManageAttendance = hasPermission(u, "attendance", "write");
+  const canViewReports = hasPermission(u, "reports", "read");
+  const canManageLeaves = hasPermission(u, "leaves", "write");
+  const canViewLeaveQueue = hasPermission(u, "leaves", "read") || canManageLeaves;
+  const canViewFinance = hasPermission(u, "finance", "read") || hasPermission(u, "finance", "write");
+  const canManageFinance = hasPermission(u, "finance", "write");
+  const canManageSalaries = hasPermission(u, "salary", "write");
 
   type Item = {
     to: string;
     label: string;
-    icon: React.ComponentType<{ size?: number }>;
+    icon: React.ComponentType<{ size?: number | string }>;
   };
   type Section = { key: string; label: string; items: Item[] };
 
   const sections = useMemo(() => {
-    const itemsAttendance =
-      isHR || isManager
-        ? [
-            { to: "/app/attendances", label: "Attendances", icon: Users },
-            { to: "/app/report", label: "Report", icon: FileText },
-          ]
-        : [{ to: "/app/attendance", label: "Attendance", icon: Clock8 }];
+    const itemsAttendance: Item[] = [
+      { to: "/app/attendance", label: "My Attendance", icon: Clock8 },
+    ];
+    if (canViewTeamAttendance) {
+      itemsAttendance.push({
+        to: "/app/attendances",
+        label: "Team Attendance",
+        icon: Users,
+      });
+    }
+    if (canViewReports || canManageAttendance) {
+      itemsAttendance.push({
+        to: "/app/report",
+        label: "Reports",
+        icon: FileText,
+      });
+    }
+    if (canManageAttendance) {
+      itemsAttendance.push({
+        to: "/app/attendance/manual-requests",
+        label: "Manual Attendance",
+        icon: MailQuestion,
+      });
+    }
 
-    const itemsFinance = isHR
-      ? [
-          { to: "/app/expenses", label: "Expenses", icon: Wallet },
-          { to: "/app/invoices", label: "Invoices", icon: FileText },
-          { to: "/app/salaries", label: "Salaries", icon: Users },
-        ]
-      : [];
+    const itemsFinance: Item[] = [];
+    if (canManageFinance) {
+      itemsFinance.push({
+        to: "/app/expenses",
+        label: "Expenses",
+        icon: Wallet,
+      });
+    }
+    if (canViewFinance) {
+      itemsFinance.push({
+        to: "/app/invoices",
+        label: "Invoices",
+        icon: FileText,
+      });
+    }
+    if (canManageSalaries) {
+      itemsFinance.push({
+        to: "/app/salaries",
+        label: "Salaries",
+        icon: Users,
+      });
+    }
 
     return [
       {
@@ -111,8 +150,12 @@ export default function EmployeeLayout() {
         key: "leave",
         label: "Leave",
         items: [
-          { to: "/app/leave", label: "Leave", icon: CalendarCheck2 },
-          { to: "/app/approvals", label: "Approvals", icon: ClipboardList },
+          { to: "/app/leave", label: "My Requests", icon: CalendarCheck2 },
+          ...(canManageLeaves
+            ? [{ to: "/app/approvals", label: "Approvals", icon: ClipboardList }]
+            : canViewLeaveQueue
+            ? [{ to: "/app/approvals", label: "Team Requests", icon: ClipboardList }]
+            : []),
         ],
       },
       ...(itemsFinance.length
@@ -141,7 +184,16 @@ export default function EmployeeLayout() {
         ],
       },
     ];
-  }, [isHR, isManager]);
+  }, [
+    canManageAttendance,
+    canViewTeamAttendance,
+    canViewReports,
+    canManageLeaves,
+    canViewLeaveQueue,
+    canViewFinance,
+    canManageFinance,
+    canManageSalaries,
+  ]);
 
   const title = useMemo(() => {
     for (const s of sections) {

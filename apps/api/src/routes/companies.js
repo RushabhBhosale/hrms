@@ -15,7 +15,25 @@ const CompanyTypeMaster = require("../models/CompanyTypeMaster");
 const { upload } = require("../utils/uploads");
 const { syncLeaveBalances, accrueTotalIfNeeded } = require("../utils/leaveBalances");
 const { sendMail, isEmailEnabled, invalidateCompanyTransporter } = require("../utils/mailer");
-const { isValidEmail, isValidPassword, isValidPhone, normalizePhone } = require("../utils/validate");
+const {
+  isValidEmail,
+  isValidPassword,
+  isValidPhone,
+  normalizePhone,
+  normalizeAadhaar,
+  isValidAadhaar,
+  normalizePan,
+  isValidPan,
+} = require("../utils/validate");
+const {
+  permissionModules,
+  ensureCompanyRoleDefaults,
+  mapRolesForResponse,
+  sanitizeIncomingPermissions,
+  slugifyRoleName,
+  formatRoleLabel,
+  DEFAULT_ROLE_CONFIGS,
+} = require("../utils/permissions");
 
 // Utility: simple hex validation
 function isHexColor(v) {
@@ -202,6 +220,7 @@ async function approvePendingCompany(company) {
     primaryRole: "ADMIN",
     subRoles: [],
     company: company._id,
+    employmentStatus: "PERMANENT",
   });
 
   company.admin = admin._id;
@@ -637,6 +656,9 @@ router.post("/register", async (req, res) => {
         : undefined,
     });
 
+    const seededDefaults = ensureCompanyRoleDefaults(company);
+    if (seededDefaults) await company.save();
+
     // Async notifications (non-blocking)
     ;(async () => {
       try {
@@ -734,6 +756,7 @@ router.post("/", auth, async (req, res) => {
     primaryRole: "ADMIN",
     subRoles: [],
     company: companyId,
+    employmentStatus: "PERMANENT",
   });
 
   // Create the company using the same id and point it to the admin
@@ -753,6 +776,9 @@ router.post("/", auth, async (req, res) => {
     companyType: companyType._id,
     companyTypeName: companyType.name,
   });
+
+  const seededDefaults = ensureCompanyRoleDefaults(company);
+  if (seededDefaults) await company.save();
 
   res.json({ company });
 });
@@ -802,6 +828,7 @@ router.post("/:companyId/admin", auth, async (req, res) => {
     primaryRole: "ADMIN",
     subRoles: [],
     company: company._id,
+    employmentStatus: "PERMANENT",
   });
   company.admin = admin._id;
   await company.save();
@@ -865,50 +892,120 @@ router.patch("/:companyId/status", auth, async (req, res) => {
 router.get("/roles", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const company = await Company.findOne({ admin: req.employee.id }).select("roles");
+  const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
-  res.json({ roles: company.roles || [] });
+
+  const changed = ensureCompanyRoleDefaults(company);
+  if (changed) await company.save();
+
+  res.json({
+    roles: mapRolesForResponse(company),
+    modules: permissionModules,
+  });
 });
 
 // Admin: add a role to their company
 router.post("/roles", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { role } = req.body;
-  if (!role) return res.status(400).json({ error: "Missing role" });
+
+  const { label, role, permissions, description } = req.body || {};
+  const rawName = slugifyRoleName(role || label);
+  if (!rawName) return res.status(400).json({ error: "Provide a role name" });
+
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
-  if (!company.roles.includes(role)) company.roles.push(role);
+
+  ensureCompanyRoleDefaults(company);
+  if (company.roles.includes(rawName))
+    return res.status(400).json({ error: "Role already exists" });
+
+  const fallback = DEFAULT_ROLE_CONFIGS[rawName]?.modules;
+  const sanitizedPermissions = sanitizeIncomingPermissions(
+    permissions,
+    fallback
+  );
+
+  company.roles.push(rawName);
+  company.roleSettings[rawName] = {
+    label: typeof label === "string" && label.trim() ? label.trim() : formatRoleLabel(rawName),
+    description:
+      typeof description === "string" ? description.trim() : "",
+    modules: sanitizedPermissions,
+    system: false,
+    canDelete: true,
+    allowRename: true,
+  };
+
+  company.markModified("roles");
+  company.markModified("roleSettings");
   await company.save();
-  res.json({ roles: company.roles });
+
+  res.json({ roles: mapRolesForResponse(company) });
 });
 
-// Admin: update a role in their company
+// Admin: update role metadata or rename
 router.put("/roles/:role", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
 
   const { role } = req.params;
-  const { newRole } = req.body;
-  if (!newRole) return res.status(400).json({ error: "Missing role" });
+  const { newRole, label, description, permissions } = req.body || {};
 
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
 
-  const idx = company.roles.indexOf(role);
-  if (idx === -1) return res.status(404).json({ error: "Role not found" });
-  if (company.roles.includes(newRole))
-    return res.status(400).json({ error: "Role already exists" });
+  ensureCompanyRoleDefaults(company);
 
-  company.roles[idx] = newRole;
+  if (!company.roleSettings[role])
+    return res.status(404).json({ error: "Role not found" });
+
+  let targetKey = role;
+  let targetMeta = company.roleSettings[role];
+
+  if (newRole) {
+    const slug = slugifyRoleName(newRole);
+    if (!slug) return res.status(400).json({ error: "Invalid role name" });
+    if (slug !== role && company.roles.includes(slug))
+      return res.status(400).json({ error: "Role already exists" });
+    if (targetMeta.system && !targetMeta.allowRename)
+      return res.status(400).json({ error: "Cannot rename protected role" });
+
+    const idx = company.roles.indexOf(role);
+    if (idx === -1) return res.status(404).json({ error: "Role not found" });
+
+    company.roles[idx] = slug;
+    company.roleSettings[slug] = { ...targetMeta };
+    delete company.roleSettings[role];
+    targetKey = slug;
+    targetMeta = company.roleSettings[slug];
+
+    await Employee.updateMany(
+      { company: company._id, subRoles: role },
+      { $set: { "subRoles.$": slug } }
+    );
+  }
+
+  if (typeof label === "string") {
+    targetMeta.label = label.trim() || formatRoleLabel(targetKey);
+  }
+
+  if (typeof description === "string") {
+    targetMeta.description = description.trim();
+  }
+
+  if (permissions && typeof permissions === "object") {
+    const fallback = DEFAULT_ROLE_CONFIGS[targetKey]?.modules;
+    targetMeta.modules = sanitizeIncomingPermissions(permissions, fallback);
+  }
+
+  company.roleSettings[targetKey] = targetMeta;
+  ensureCompanyRoleDefaults(company);
+  company.markModified("roles");
+  company.markModified("roleSettings");
   await company.save();
 
-  await Employee.updateMany(
-    { company: company._id, subRoles: role },
-    { $set: { "subRoles.$": newRole } }
-  );
-
-  res.json({ roles: company.roles });
+  res.json({ roles: mapRolesForResponse(company) });
 });
 
 // Admin: create employee in their company
@@ -929,6 +1026,8 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     employeeId,
     ctc,
     joiningDate,
+    aadharNumber,
+    panNumber,
   } = req.body;
   if (!name || !email || !password || !role || !employeeId)
     return res.status(400).json({ error: "Missing fields" });
@@ -962,8 +1061,36 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     }
     parsedJoiningDate = jd;
   }
+  let normalizedAadhaar;
+  if (aadharNumber !== undefined && aadharNumber !== null) {
+    const rawAadhaar = String(aadharNumber).trim();
+    const digits = normalizeAadhaar(rawAadhaar);
+    if (rawAadhaar && !digits) {
+      return res.status(400).json({ error: "Invalid Aadhar number" });
+    }
+    if (digits && !isValidAadhaar(digits)) {
+      return res.status(400).json({ error: "Invalid Aadhar number" });
+    }
+    normalizedAadhaar = digits || undefined;
+  }
+  let normalizedPan;
+  if (panNumber !== undefined && panNumber !== null) {
+    const rawPan = String(panNumber).trim();
+    if (rawPan) {
+      const pan = normalizePan(rawPan);
+      if (!isValidPan(pan)) {
+        return res.status(400).json({ error: "Invalid PAN number" });
+      }
+      normalizedPan = pan;
+    } else {
+      normalizedPan = undefined;
+    }
+  }
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const ensured = ensureCompanyRoleDefaults(company);
+  if (ensured) await company.save();
   if (!company.roles.includes(role))
     return res.status(400).json({ error: "Invalid role" });
   let existing = await Employee.findOne({ $or: [{ email }, { employeeId }] });
@@ -1001,6 +1128,10 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     documents,
     reportingPerson: reporting ? reporting._id : undefined,
     leaveBalances,
+    aadharNumber: normalizedAadhaar,
+    panNumber: normalizedPan,
+    employmentStatus: "PROBATION",
+    probationSince: parsedJoiningDate || new Date(),
   });
   try { employee.decryptFieldsSync(); } catch (_) {}
   res.json({
@@ -1012,6 +1143,10 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
       bloodGroup: employee.bloodGroup || '',
       joiningDate: employee.joiningDate,
       subRoles: employee.subRoles,
+      aadharNumber: employee.aadharNumber || '',
+      panNumber: employee.panNumber || '',
+      employmentStatus: employee.employmentStatus || 'PROBATION',
+      probationSince: employee.probationSince || null,
     },
   });
 });
@@ -1029,6 +1164,8 @@ router.get("/leave-policy", auth, async (req, res) => {
     leavePolicy: {
       totalAnnual: lp.totalAnnual || 0,
       ratePerMonth: lp.ratePerMonth || 0,
+      probationRatePerMonth: lp.probationRatePerMonth || 0,
+      accrualStrategy: lp.accrualStrategy || 'ACCRUAL',
       applicableFrom: formatApplicableMonth(lp.applicableFrom),
       typeCaps: {
         paid: lp.typeCaps?.paid || 0,
@@ -1081,17 +1218,31 @@ router.put("/work-hours", auth, async (req, res) => {
 router.put("/leave-policy", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { totalAnnual, ratePerMonth, typeCaps, applicableFrom } = req.body || {};
+  const {
+    totalAnnual,
+    ratePerMonth,
+    probationRatePerMonth,
+    accrualStrategy,
+    typeCaps,
+    applicableFrom,
+  } = req.body || {};
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   const total = Number(totalAnnual) || 0;
   const rpm = Number(ratePerMonth) || 0;
+  const probationRpm = Number(probationRatePerMonth) || 0;
+  const strategy = typeof accrualStrategy === 'string'
+    ? accrualStrategy.toUpperCase()
+    : 'ACCRUAL';
   const caps = {
     paid: Number(typeCaps?.paid) || 0,
     casual: Number(typeCaps?.casual) || 0,
     sick: Number(typeCaps?.sick) || 0,
   };
-  if (total < 0 || rpm < 0) return res.status(400).json({ error: "Invalid totals" });
+  if (!['ACCRUAL', 'LUMP_SUM'].includes(strategy))
+    return res.status(400).json({ error: 'Invalid accrual strategy' });
+  if (total < 0 || rpm < 0 || probationRpm < 0)
+    return res.status(400).json({ error: "Invalid totals" });
   const sumCaps = caps.paid + caps.casual + caps.sick;
   if (sumCaps > total) return res.status(400).json({ error: "Type caps cannot exceed total annual leaves" });
   const previousApplicable = company.leavePolicy?.applicableFrom || undefined;
@@ -1108,6 +1259,8 @@ router.put("/leave-policy", auth, async (req, res) => {
   company.leavePolicy = {
     totalAnnual: total,
     ratePerMonth: rpm,
+    probationRatePerMonth: probationRpm,
+    accrualStrategy: strategy,
     applicableFrom: applicableFromDate,
     typeCaps: caps,
   };
@@ -1117,7 +1270,7 @@ router.put("/leave-policy", auth, async (req, res) => {
   ;(async () => {
     try {
       const employees = await Employee.find({ company: company._id }).select(
-        "company totalLeaveAvailable leaveUsage leaveAccrual joiningDate createdAt"
+        "company totalLeaveAvailable leaveUsage leaveAccrual joiningDate createdAt employmentStatus probationSince"
       );
       for (const emp of employees) {
         try {
@@ -1136,6 +1289,8 @@ router.put("/leave-policy", auth, async (req, res) => {
     leavePolicy: {
       totalAnnual: updated.totalAnnual || 0,
       ratePerMonth: updated.ratePerMonth || 0,
+      probationRatePerMonth: updated.probationRatePerMonth || 0,
+      accrualStrategy: updated.accrualStrategy || 'ACCRUAL',
       applicableFrom: formatApplicableMonth(updated.applicableFrom),
       typeCaps: {
         paid: updated.typeCaps?.paid || 0,
@@ -1307,6 +1462,8 @@ router.put("/employees/:id/role", auth, async (req, res) => {
   if (!role) return res.status(400).json({ error: "Invalid role" });
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
+  const ensured = ensureCompanyRoleDefaults(company);
+  if (ensured) await company.save();
   if (!company.roles.includes(role))
     return res.status(400).json({ error: "Invalid role" });
   const employee = await Employee.findById(req.params.id);
@@ -1336,6 +1493,7 @@ router.put("/employees/:id", auth, async (req, res) => {
     aadharNumber,
     panNumber,
     bankDetails,
+    email,
   } = req.body || {};
 
   // Only admins of the company can update within that company
@@ -1345,6 +1503,16 @@ router.put("/employees/:id", auth, async (req, res) => {
   const employee = await Employee.findById(req.params.id);
   if (!employee || !employee.company.equals(company._id))
     return res.status(404).json({ error: "Employee not found" });
+
+  if (email !== undefined) {
+    const trimmed = String(email).trim();
+    if (!trimmed) return res.status(400).json({ error: 'Email cannot be empty' });
+    if (!isValidEmail(trimmed)) return res.status(400).json({ error: 'Invalid email' });
+    const existingEmail = await Employee.findOne({ email: trimmed });
+    if (existingEmail && !existingEmail._id.equals(employee._id))
+      return res.status(400).json({ error: 'Email already taken' });
+    employee.email = trimmed;
+  }
 
   // Validate and assign fields
   if (typeof address === 'string') employee.address = address.trim();
@@ -1393,8 +1561,29 @@ router.put("/employees/:id", auth, async (req, res) => {
     if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'Invalid CTC' });
     employee.ctc = n;
   }
-  if (typeof aadharNumber === 'string') employee.aadharNumber = aadharNumber.trim();
-  if (typeof panNumber === 'string') employee.panNumber = panNumber.trim();
+  if (aadharNumber !== undefined) {
+    const rawAadhaar = String(aadharNumber).trim();
+    const digits = normalizeAadhaar(rawAadhaar);
+    if (rawAadhaar && !digits) {
+      return res.status(400).json({ error: 'Invalid Aadhar number' });
+    }
+    if (digits && !isValidAadhaar(digits)) {
+      return res.status(400).json({ error: 'Invalid Aadhar number' });
+    }
+    employee.aadharNumber = digits || undefined;
+  }
+  if (panNumber !== undefined) {
+    const rawPan = String(panNumber).trim();
+    if (rawPan) {
+      const pan = normalizePan(rawPan);
+      if (!isValidPan(pan)) {
+        return res.status(400).json({ error: 'Invalid PAN number' });
+      }
+      employee.panNumber = pan;
+    } else {
+      employee.panNumber = undefined;
+    }
+  }
   if (bankDetails && typeof bankDetails === 'object') {
     employee.bankDetails = employee.bankDetails || {};
     if (typeof bankDetails.accountNumber === 'string') employee.bankDetails.accountNumber = bankDetails.accountNumber.trim();
@@ -1421,10 +1610,79 @@ router.put("/employees/:id", auth, async (req, res) => {
       ctc: employee.ctc || 0,
       aadharNumber: employee.aadharNumber || '',
       panNumber: employee.panNumber || '',
+      email: employee.email,
       bankDetails: {
         accountNumber: employee.bankDetails?.accountNumber || '',
         bankName: employee.bankDetails?.bankName || '',
         ifsc: employee.bankDetails?.ifsc || '',
+      },
+    },
+  });
+});
+
+// Admin: toggle probation/permanent employment status
+router.put("/employees/:id/probation", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const { status, since } = req.body || {};
+  const normalizedStatus =
+    typeof status === 'string' ? status.trim().toUpperCase() : '';
+  if (!['PROBATION', 'PERMANENT'].includes(normalizedStatus)) {
+    return res.status(400).json({ error: 'Invalid employment status' });
+  }
+
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const employee = await Employee.findById(req.params.id);
+  if (!employee || !employee.company.equals(company._id))
+    return res.status(404).json({ error: "Employee not found" });
+
+  await accrueTotalIfNeeded(employee, company, new Date());
+  const currentTotal = Number(employee.totalLeaveAvailable) || 0;
+
+  if (normalizedStatus === 'PROBATION') {
+    let probationSince = since ? new Date(since) : new Date();
+    if (since && Number.isNaN(probationSince.getTime())) {
+      return res.status(400).json({ error: 'Invalid probation start date' });
+    }
+    if (Number.isNaN(probationSince.getTime())) {
+      probationSince = new Date();
+    }
+    employee.employmentStatus = 'PROBATION';
+    employee.probationSince = probationSince;
+  } else {
+    employee.employmentStatus = 'PERMANENT';
+    employee.probationSince = undefined;
+  }
+
+  await employee.save();
+
+  await accrueTotalIfNeeded(employee, company, new Date());
+  const recalculatedTotal = Number(employee.totalLeaveAvailable) || 0;
+  const existingAdjustment = Number(employee.leaveAccrual?.manualAdjustment) || 0;
+  const delta = currentTotal - recalculatedTotal;
+  if (Math.abs(delta) > 1e-6) {
+    employee.leaveAccrual = employee.leaveAccrual || {};
+    employee.leaveAccrual.manualAdjustment = existingAdjustment + delta;
+    employee.totalLeaveAvailable = currentTotal;
+  }
+
+  await employee.save();
+  await syncLeaveBalances(employee);
+
+  res.json({
+    employee: {
+      id: employee._id,
+      employmentStatus: employee.employmentStatus,
+      probationSince: employee.probationSince || null,
+      totalLeaveAvailable: Number(employee.totalLeaveAvailable) || 0,
+      leaveBalances: employee.leaveBalances || {
+        paid: 0,
+        casual: 0,
+        sick: 0,
+        unpaid: 0,
       },
     },
   });
@@ -1533,7 +1791,7 @@ router.get("/employees", auth, async (req, res) => {
   }
 
   const employees = await Employee.find({ company: companyId })
-    .select("name email subRoles primaryRole")
+    .select("name email subRoles primaryRole employmentStatus probationSince createdAt")
     .lean();
   res.json({
     employees: employees.map((u) => ({
@@ -1542,6 +1800,9 @@ router.get("/employees", auth, async (req, res) => {
       email: u.email,
       subRoles: u.subRoles,
       primaryRole: u.primaryRole,
+      employmentStatus: u.employmentStatus || 'PROBATION',
+      probationSince: u.probationSince || null,
+      createdAt: u.createdAt || null,
     })),
   });
 });

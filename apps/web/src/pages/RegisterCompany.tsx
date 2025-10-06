@@ -1,174 +1,160 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api } from "../lib/api";
-import { isValidEmail, isValidPassword } from "../lib/validate";
-import { toast } from "react-hot-toast";
+"use client";
+
+import { useEffect, useMemo, useState, Fragment } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "react-hot-toast";
+import { api } from "../lib/api";
+import { useForm, FormProvider, Controller } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Eye, EyeOff } from "lucide-react";
 
-type CountryOption = {
-  id: string;
-  name: string;
-  isoCode?: string | null;
-};
+type CountryOption = { id: string; name: string; isoCode?: string | null };
+type StateOption = { id: string; name: string };
+type CityOption = { id: string; name: string };
+type CompanyTypeOption = { id: string; name: string };
 
-type StateOption = {
-  id: string;
-  name: string;
-};
+const schema = z.object({
+  companyName: z.string().trim().min(1, "Company name is required"),
+  adminName: z.string().trim().min(1, "Admin name is required"),
+  adminEmail: z.string().trim().email("Enter a valid email"),
+  adminPassword: z.string().min(6, "Password must be more than 5 characters"),
+  countryId: z.string().min(1, "Select a country"),
+  stateId: z.string().min(1, "Select a state"),
+  cityId: z.string().min(1, "Select a city"),
+  companyTypeId: z.string().min(1, "Select a company type"),
+  leaveApplicableFrom: z
+    .string()
+    .optional()
+    .transform((v) => (v === "" ? undefined : v))
+    .refine(
+      (v) => v === undefined || /^\d{4}-\d{2}$/.test(v),
+      "Invalid month format"
+    ),
+});
 
-type CityOption = {
-  id: string;
-  name: string;
-};
-
-type CompanyTypeOption = {
-  id: string;
-  name: string;
-};
+type FormValues = z.infer<typeof schema>;
 
 export default function RegisterCompany() {
-  const [companyName, setCompanyName] = useState("");
-  const [adminName, setAdminName] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const methods = useForm({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      companyName: "",
+      adminName: "",
+      adminEmail: "",
+      adminPassword: "",
+      countryId: "",
+      stateId: "",
+      cityId: "",
+      companyTypeId: "",
+      leaveApplicableFrom: "",
+    },
+    mode: "onTouched",
+  });
+  const {
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    setValue,
+    watch,
+    reset,
+  } = methods;
+
   const [countries, setCountries] = useState<CountryOption[]>([]);
   const [states, setStates] = useState<StateOption[]>([]);
   const [cities, setCities] = useState<CityOption[]>([]);
   const [companyTypes, setCompanyTypes] = useState<CompanyTypeOption[]>([]);
-  const [selectedCountry, setSelectedCountry] = useState("");
-  const [selectedState, setSelectedState] = useState("");
-  const [selectedCity, setSelectedCity] = useState("");
-  const [selectedCompanyType, setSelectedCompanyType] = useState("");
-  const [countryQuery, setCountryQuery] = useState("");
-  const [stateQuery, setStateQuery] = useState("");
-  const [cityQuery, setCityQuery] = useState("");
-  const [companyTypeQuery, setCompanyTypeQuery] = useState("");
   const [countriesLoading, setCountriesLoading] = useState(false);
   const [statesLoading, setStatesLoading] = useState(false);
   const [citiesLoading, setCitiesLoading] = useState(false);
   const [companyTypesLoading, setCompanyTypesLoading] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
-  const [leaveApplicableFrom, setLeaveApplicableFrom] = useState("");
+  const [success, setSuccess] = useState<string | null>(null);
 
-  // Clear error feedback when user edits any input so stale errors don't linger
-  function clearError() {
-    if (error) setError(null);
-  }
+  const countryId = watch("countryId");
+  const stateId = watch("stateId");
 
   async function loadCountries() {
     try {
       setOptionsError(null);
       setCountriesLoading(true);
       const res = await api.get("/masters/countries");
-      const list = Array.isArray(res.data?.countries)
-        ? (res.data.countries as CountryOption[])
-        : [];
-      setCountries(list);
-      setSelectedCountry((prev) =>
-        prev && list.some((item) => item.id === prev) ? prev : ""
+      setCountries(
+        Array.isArray(res.data?.countries) ? res.data.countries : []
       );
     } catch (err: any) {
-      console.error(err);
       setOptionsError(
-        err?.response?.data?.error ||
-          "Failed to load countries. Please try again."
+        err?.response?.data?.error || "Failed to load countries."
       );
       setCountries([]);
-      setSelectedCountry("");
+      setValue("countryId", "");
       setStates([]);
-      setSelectedState("");
+      setValue("stateId", "");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
     } finally {
       setCountriesLoading(false);
     }
   }
-
-  async function loadStates(countryId: string) {
-    if (!countryId) {
+  async function loadStates(cid: string) {
+    if (!cid) {
       setStates([]);
-      setSelectedState("");
+      setValue("stateId", "");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
       return;
     }
     try {
       setOptionsError(null);
       setStatesLoading(true);
-      const res = await api.get("/masters/states", { params: { countryId } });
-      const list = Array.isArray(res.data?.states)
-        ? (res.data.states as StateOption[])
-        : [];
-      setStates(list);
-      setSelectedState((prev) =>
-        prev && list.some((item) => item.id === prev) ? prev : ""
-      );
+      const res = await api.get("/masters/states", {
+        params: { countryId: cid },
+      });
+      setStates(Array.isArray(res.data?.states) ? res.data.states : []);
     } catch (err: any) {
-      console.error(err);
-      setOptionsError(
-        err?.response?.data?.error ||
-          "Failed to load states for the selected country."
-      );
+      setOptionsError(err?.response?.data?.error || "Failed to load states.");
       setStates([]);
-      setSelectedState("");
+      setValue("stateId", "");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
     } finally {
       setStatesLoading(false);
     }
   }
-
-  async function loadCities(stateId: string) {
-    if (!stateId) {
+  async function loadCities(sid: string) {
+    if (!sid) {
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
       return;
     }
     try {
       setOptionsError(null);
       setCitiesLoading(true);
-      const res = await api.get("/masters/cities", { params: { stateId } });
-      const list = Array.isArray(res.data?.cities)
-        ? (res.data.cities as CityOption[])
-        : [];
-      setCities(list);
-      setSelectedCity((prev) =>
-        prev && list.some((item) => item.id === prev) ? prev : ""
-      );
+      const res = await api.get("/masters/cities", {
+        params: { stateId: sid },
+      });
+      setCities(Array.isArray(res.data?.cities) ? res.data.cities : []);
     } catch (err: any) {
-      console.error(err);
-      setOptionsError(
-        err?.response?.data?.error ||
-          "Failed to load cities for the selected state."
-      );
+      setOptionsError(err?.response?.data?.error || "Failed to load cities.");
       setCities([]);
-      setSelectedCity("");
+      setValue("cityId", "");
     } finally {
       setCitiesLoading(false);
     }
   }
-
   async function loadCompanyTypes() {
     try {
       setOptionsError(null);
       setCompanyTypesLoading(true);
       const res = await api.get("/masters/company-types");
-      const list = Array.isArray(res.data?.companyTypes)
-        ? (res.data.companyTypes as CompanyTypeOption[])
-        : [];
-      setCompanyTypes(list);
-      setSelectedCompanyType((prev) =>
-        prev && list.some((item) => item.id === prev) ? prev : ""
+      setCompanyTypes(
+        Array.isArray(res.data?.companyTypes) ? res.data.companyTypes : []
       );
     } catch (err: any) {
-      console.error(err);
       setOptionsError(
         err?.response?.data?.error || "Failed to load company types."
       );
       setCompanyTypes([]);
-      setSelectedCompanyType("");
+      setValue("companyTypeId", "");
     } finally {
       setCompanyTypesLoading(false);
     }
@@ -177,157 +163,34 @@ export default function RegisterCompany() {
   useEffect(() => {
     loadCountries();
     loadCompanyTypes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   useEffect(() => {
-    if (!selectedCountry) {
-      setStates([]);
-      setSelectedState("");
-      setCities([]);
-      setSelectedCity("");
-      return;
-    }
-    loadStates(selectedCountry);
+    loadStates(countryId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCountry]);
-
+  }, [countryId]);
   useEffect(() => {
-    if (!selectedState) {
-      setCities([]);
-      setSelectedCity("");
-      return;
-    }
-    loadCities(selectedState);
+    loadCities(stateId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedState]);
+  }, [stateId]);
 
-  const filteredCountries = useMemo(() => {
-    const query = countryQuery.trim().toLowerCase();
-    if (!query) return countries;
-    const matches = countries.filter((country) =>
-      country.name.toLowerCase().includes(query)
-    );
-    if (
-      selectedCountry &&
-      !matches.some((item) => item.id === selectedCountry)
-    ) {
-      const selected = countries.find((item) => item.id === selectedCountry);
-      if (selected) matches.unshift(selected);
-    }
-    return matches;
-  }, [countries, countryQuery, selectedCountry]);
-
-  const filteredStates = useMemo(() => {
-    const query = stateQuery.trim().toLowerCase();
-    if (!query) return states;
-    const matches = states.filter((state) =>
-      state.name.toLowerCase().includes(query)
-    );
-    if (selectedState && !matches.some((item) => item.id === selectedState)) {
-      const selected = states.find((item) => item.id === selectedState);
-      if (selected) matches.unshift(selected);
-    }
-    return matches;
-  }, [states, stateQuery, selectedState]);
-
-  const filteredCities = useMemo(() => {
-    const query = cityQuery.trim().toLowerCase();
-    if (!query) return cities;
-    const matches = cities.filter((city) =>
-      city.name.toLowerCase().includes(query)
-    );
-    if (selectedCity && !matches.some((item) => item.id === selectedCity)) {
-      const selected = cities.find((item) => item.id === selectedCity);
-      if (selected) matches.unshift(selected);
-    }
-    return matches;
-  }, [cities, cityQuery, selectedCity]);
-
-  const filteredCompanyTypes = useMemo(() => {
-    const query = companyTypeQuery.trim().toLowerCase();
-    if (!query) return companyTypes;
-    const matches = companyTypes.filter((type) =>
-      type.name.toLowerCase().includes(query)
-    );
-    if (
-      selectedCompanyType &&
-      !matches.some((item) => item.id === selectedCompanyType)
-    ) {
-      const selected = companyTypes.find(
-        (item) => item.id === selectedCompanyType
-      );
-      if (selected) matches.unshift(selected);
-    }
-    return matches;
-  }, [companyTypes, companyTypeQuery, selectedCompanyType]);
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
+  async function onSubmit(values: FormValues) {
     setSuccess(null);
     setOptionsError(null);
-    setLoading(true);
     try {
-      if (!companyName.trim() || !adminName.trim()) {
-        setError("Please fill in company and admin names");
-        return;
-      }
-      if (!isValidEmail(adminEmail)) {
-        setError("Please enter a valid admin email");
-        return;
-      }
-      if (!isValidPassword(adminPassword)) {
-        setError("Password must be more than 5 characters");
-        return;
-      }
-      if (!selectedCountry || !selectedState || !selectedCity) {
-        setError("Please select the company location (country, state, city)");
-        return;
-      }
-      if (!selectedCompanyType) {
-        setError("Please choose the company type");
-        return;
-      }
-      await api.post("/companies/register", {
-        companyName: companyName.trim(),
-        adminName: adminName.trim(),
-        adminEmail: adminEmail.trim(),
-        adminPassword,
-        countryId: selectedCountry,
-        stateId: selectedState,
-        cityId: selectedCity,
-        companyTypeId: selectedCompanyType,
-        leaveApplicableFrom,
-      });
+      await api.post("/companies/register", values);
       setSuccess(
         "Thanks! Your registration was submitted. A superadmin will review it shortly."
       );
-      setCompanyName("");
-      setAdminName("");
-      setAdminEmail("");
-      setAdminPassword("");
-      setOptionsError(null);
-      setSelectedCountry("");
-      setSelectedState("");
-      setSelectedCity("");
-      setSelectedCompanyType("");
-      setCountryQuery("");
-      setStateQuery("");
-      setCityQuery("");
-      setCompanyTypeQuery("");
-      setLeaveApplicableFrom("");
+      reset();
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to submit registration";
-      setError(msg);
       toast.error(msg);
-    } finally {
-      setLoading(false);
     }
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-bg text-text">
-      {/* Hero */}
       <header className="sticky top-0 z-30 bg-surface/70 backdrop-blur border-b border-border">
         <div className="mx-auto max-w-6xl px-4 h-16 flex items-center justify-between">
           <Link to="/" className="text-xl font-extrabold tracking-wide">
@@ -346,278 +209,132 @@ export default function RegisterCompany() {
 
       <main className="mx-auto max-w-6xl px-4 py-10 md:py-16">
         <div className="flex items-center justify-center">
-          <section className="bg-white rounded-lg border border-border shadow-sm p-6">
+          <section className="bg-white rounded-lg border border-border shadow-sm p-6 w-full max-w-2xl">
             <h2 className="text-xl font-semibold">Register your company</h2>
             <p className="text-sm text-muted mt-1">
               Submit your details and we’ll notify your admin after approval.
             </p>
 
-            {error && (
-              <div className="mt-4 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
-                {error}
-              </div>
-            )}
             {success && (
               <div className="mt-4 rounded-md border border-success/20 bg-success/10 px-3 py-2 text-sm text-success">
                 {success}
               </div>
             )}
-
-            <form onSubmit={submit} className="mt-6 space-y-4">
-              <Field
-                label="Company Name"
-                placeholder="Peracto Corporation"
-                value={companyName}
-                onChange={(v) => {
-                  clearError();
-                  setCompanyName(v);
-                }}
-              />
-              <div className="grid sm:grid-cols-2 gap-4">
-                <Field
-                  label="Admin Name"
-                  placeholder="Jane Doe"
-                  value={adminName}
-                  onChange={(v) => {
-                    clearError();
-                    setAdminName(v);
-                  }}
-                />
-                <Field
-                  label="Admin Email"
-                  placeholder="jane@Peracto.com"
-                  type="email"
-                  value={adminEmail}
-                  onChange={(v) => {
-                    clearError();
-                    setAdminEmail(v);
-                  }}
-                />
+            {optionsError && (
+              <div className="mt-4 rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
+                {optionsError}
               </div>
-              <Field
-                label="Admin Password"
-                placeholder="••••••••"
-                type="password"
-                value={adminPassword}
-                onChange={(v) => {
-                  clearError();
-                  setAdminPassword(v);
-                }}
-              />
+            )}
 
-              {/* <div className="grid gap-4 md:grid-cols-2">
-                <Field
-                  label="Company Type Search"
-                  value={companyTypeQuery}
-                  onChange={(v) => {
-                    setOptionsError(null);
-                    setCompanyTypeQuery(v);
-                  }}
-                  placeholder="Search company type"
+            <FormProvider {...methods}>
+              <form
+                onSubmit={handleSubmit(onSubmit)}
+                className="mt-6 space-y-4"
+              >
+                <RHFField
+                  name="companyName"
+                  label="Company Name"
+                  placeholder="Peracto Corporation"
                 />
-                <Field
-                  label="Country Search"
-                  value={countryQuery}
-                  onChange={(v) => {
-                    setOptionsError(null);
-                    setCountryQuery(v);
-                  }}
-                  placeholder="Search country"
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <RHFField
+                    name="adminName"
+                    label="Admin Name"
+                    placeholder="Jane Doe"
+                  />
+                  <RHFField
+                    name="adminEmail"
+                    label="Admin Email"
+                    type="email"
+                    placeholder="jane@peracto.com"
+                  />
+                </div>
+                <PasswordField
+                  name="adminPassword"
+                  label="Admin Password"
+                  placeholder="••••••••"
                 />
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field
-                  label="State Search"
-                  value={stateQuery}
-                  onChange={(v) => {
-                    setOptionsError(null);
-                    setStateQuery(v);
-                  }}
-                  placeholder="Search state"
-                />
-                <Field
-                  label="City Search"
-                  value={cityQuery}
-                  onChange={(v) => {
-                    setOptionsError(null);
-                    setCityQuery(v);
-                  }}
-                  placeholder="Search city"
-                />
-              </div> */}
 
-              <div className="space-y-3 rounded-md border border-border/60 bg-muted/10 p-4">
-                <div className="text-sm font-semibold">Company location</div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="flex flex-col">
-                    <label className="space-y-1.5 text-sm font-medium required-label">
-                      <span>Country</span>
-                    </label>
-
-                    <select
-                      className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      value={selectedCountry}
-                      onChange={(event) => {
-                        clearError();
-                        setOptionsError(null);
-                        setSelectedCountry(event.target.value);
-                        setStateQuery("");
-                        setCityQuery("");
-                      }}
-                      disabled={countriesLoading || loading}
-                    >
-                      <option value="">
-                        {countriesLoading
-                          ? "Loading countries..."
-                          : filteredCountries.length === 0
-                          ? "No matches"
-                          : "Select country"}
-                      </option>
-                      {filteredCountries.map((country) => (
-                        <option key={country.id} value={country.id}>
-                          {country.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex flex-col">
-                    <label className="space-y-1.5 text-sm font-medium required-label">
-                      <span>State</span>
-                    </label>
-
-                    <select
-                      className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      value={selectedState}
-                      onChange={(event) => {
-                        clearError();
-                        setOptionsError(null);
-                        setSelectedState(event.target.value);
-                        setCityQuery("");
-                      }}
-                      disabled={!selectedCountry || statesLoading || loading}
-                    >
-                      <option value="">
-                        {!selectedCountry
+                <div className="space-y-3 rounded-md border border-border/60 bg-muted/10 p-4">
+                  <div className="text-sm font-semibold">Company location</div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <RHFSelect
+                      name="countryId"
+                      label="Country"
+                      disabled={countriesLoading || isSubmitting}
+                      options={countries.map((c) => ({
+                        value: c.id,
+                        label: c.name,
+                      }))}
+                      loadingText="Loading countries..."
+                      placeholder="Select country"
+                    />
+                    <RHFSelect
+                      name="stateId"
+                      label="State"
+                      disabled={!countryId || statesLoading || isSubmitting}
+                      options={states.map((s) => ({
+                        value: s.id,
+                        label: s.name,
+                      }))}
+                      loadingText={
+                        !countryId
                           ? "Select a country first"
-                          : statesLoading
-                          ? "Loading states..."
-                          : filteredStates.length === 0
-                          ? "No matches"
-                          : "Select state"}
-                      </option>
-                      {filteredStates.map((state) => (
-                        <option key={state.id} value={state.id}>
-                          {state.name}
-                        </option>
-                      ))}
-                    </select>
+                          : "Loading states..."
+                      }
+                      placeholder="Select state"
+                    />
+                    <RHFSelect
+                      name="cityId"
+                      label="City"
+                      disabled={!stateId || citiesLoading || isSubmitting}
+                      options={cities.map((c) => ({
+                        value: c.id,
+                        label: c.name,
+                      }))}
+                      loadingText={
+                        !stateId ? "Select a state first" : "Loading cities..."
+                      }
+                      placeholder="Select city"
+                    />
                   </div>
-                  <div className="flex flex-col">
-                    <label className="space-y-1.5 text-sm font-medium required-label">
-                      <span>City</span>
-                    </label>
-
-                    <select
-                      className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      value={selectedCity}
-                      onChange={(event) => {
-                        clearError();
-                        setOptionsError(null);
-                        setSelectedCity(event.target.value);
-                      }}
-                      disabled={!selectedState || citiesLoading || loading}
-                    >
-                      <option value="">
-                        {!selectedState
-                          ? "Select a state first"
-                          : citiesLoading
-                          ? "Loading cities..."
-                          : filteredCities.length === 0
-                          ? "No matches"
-                          : "Select city"}
-                      </option>
-                      {filteredCities.map((city) => (
-                        <option key={city.id} value={city.id}>
-                          {city.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <RHFSelect
+                    name="companyTypeId"
+                    label="Company type"
+                    disabled={companyTypesLoading || isSubmitting}
+                    options={companyTypes.map((t) => ({
+                      value: t.id,
+                      label: t.name,
+                    }))}
+                    loadingText="Loading company types..."
+                    placeholder="Select company type"
+                  />
                 </div>
-                <div className="flex flex-col">
-                  <label className="block space-y-1.5 text-sm font-medium required-label">
-                    <span>Company type</span>
-                  </label>
-                  <select
-                    className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    value={selectedCompanyType}
-                    onChange={(event) => {
-                      clearError();
-                      setOptionsError(null);
-                      setSelectedCompanyType(event.target.value);
-                    }}
-                    disabled={companyTypesLoading || loading}
-                  >
-                    <option value="">
-                      {companyTypesLoading
-                        ? "Loading company types..."
-                        : filteredCompanyTypes.length === 0
-                        ? "No matches"
-                        : "Select company type"}
-                    </option>
-                    {filteredCompanyTypes.map((type) => (
-                      <option key={type.id} value={type.id}>
-                        {type.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {optionsError && (
-                  <div className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
-                    {optionsError}
-                  </div>
-                )}
-              </div>
 
-              <div className="space-y-2">
-                <Field
+                <RHFField
+                  name="leaveApplicableFrom"
                   label="Leave Applicable From"
                   type="month"
-                  value={leaveApplicableFrom}
-                  onChange={(v) => {
-                    clearError();
-                    setLeaveApplicableFrom(v);
-                  }}
                 />
-                <p className="text-xs text-muted">
+                <p className="text-xs text-muted -mt-2">
                   Optional: choose the starting month for monthly leave accrual.
                 </p>
-              </div>
 
-              <button
-                type="submit"
-                disabled={
-                  loading ||
-                  !companyName.trim() ||
-                  !adminName.trim() ||
-                  !isValidEmail(adminEmail) ||
-                  !isValidPassword(adminPassword) ||
-                  !selectedCountry ||
-                  !selectedState ||
-                  !selectedCity ||
-                  !selectedCompanyType
-                }
-                className="w-full inline-flex items-center justify-center rounded-md bg-primary text-white h-10 disabled:opacity-60"
-              >
-                {loading ? "Submitting…" : "Submit Registration"}
-              </button>
-              <p className="text-xs text-muted text-center">
-                Already approved?{" "}
-                <Link to="/login" className="underline">
-                  Login
-                </Link>
-              </p>
-            </form>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full inline-flex items-center justify-center rounded-md bg-primary text-white h-10 disabled:opacity-60"
+                >
+                  {isSubmitting ? "Submitting…" : "Submit Registration"}
+                </button>
+                <p className="text-xs text-muted text-center">
+                  Already approved?{" "}
+                  <Link to="/login" className="underline">
+                    Login
+                  </Link>
+                </p>
+              </form>
+            </FormProvider>
           </section>
         </div>
       </main>
@@ -629,35 +346,150 @@ export default function RegisterCompany() {
   );
 }
 
-function Field({
+/* ---------- Reusable RHF inputs ---------- */
+
+function RHFField({
+  name,
   label,
-  value,
-  onChange,
-  placeholder,
   type = "text",
-  required = false,
+  placeholder,
 }: {
+  name: keyof FormValues;
   label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
   type?: string;
-  required?: boolean;
+  placeholder?: string;
 }) {
+  const {
+    register,
+    formState: { errors },
+  } = useFormContextStrict<FormValues>();
+  const err = errors[name]?.message as string | undefined;
   return (
     <div className="space-y-1.5">
-      <label
-        className={`text-sm font-medium ${required ? "required-label" : ""}`}
-      >
+      <label className={`text-sm font-medium ${err ? "text-error" : ""}`}>
         {label}
       </label>
       <input
-        className="w-full rounded-md border border-border bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-        placeholder={placeholder}
+        {...register(name)}
         type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`w-full rounded-md border bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-primary ${
+          err ? "border-error" : "border-border"
+        }`}
       />
+      {err && <p className="text-xs text-error">{err}</p>}
     </div>
   );
+}
+
+function PasswordField({
+  name,
+  label,
+  placeholder,
+}: {
+  name: keyof FormValues;
+  label: string;
+  placeholder?: string;
+}) {
+  const {
+    register,
+    formState: { errors },
+  } = useFormContextStrict<FormValues>();
+  const [show, setShow] = useState(false);
+  const err = errors[name]?.message as string | undefined;
+
+  return (
+    <div className="space-y-1.5">
+      <label className={`text-sm font-medium ${err ? "text-error" : ""}`}>
+        {label}
+      </label>
+      <div className="relative">
+        <input
+          {...register(name)}
+          type={show ? "text" : "password"}
+          placeholder={placeholder}
+          className={`w-full rounded-md border bg-white px-3 py-2 pr-10 outline-none focus:ring-2 focus:ring-primary ${
+            err ? "border-error" : "border-border"
+          }`}
+        />
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
+          aria-label={show ? "Hide password" : "Show password"}
+        >
+          {show ? <EyeOff size={18} /> : <Eye size={18} />}
+        </button>
+      </div>
+      {err && <p className="text-xs text-error">{err}</p>}
+    </div>
+  );
+}
+
+function RHFSelect({
+  name,
+  label,
+  options,
+  placeholder,
+  loadingText,
+  disabled,
+}: {
+  name: keyof FormValues;
+  label: string;
+  options: { value: string; label: string }[];
+  placeholder?: string;
+  loadingText?: string;
+  disabled?: boolean;
+}) {
+  const {
+    control,
+    formState: { errors },
+  } = useFormContextStrict<FormValues>();
+  const err = errors[name]?.message as string | undefined;
+
+  return (
+    <div className="flex flex-col">
+      <label
+        className={`space-y-1.5 text-sm font-medium ${err ? "text-error" : ""}`}
+      >
+        <span>{label}</span>
+      </label>
+      <Controller
+        control={control}
+        name={name}
+        render={({ field }) => (
+          <select
+            {...field}
+            disabled={disabled}
+            className={`w-full rounded-md border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 ${
+              err ? "border-error" : "border-border"
+            }`}
+          >
+            <option value="">
+              {disabled
+                ? loadingText || "Loading…"
+                : options.length === 0
+                ? "No options"
+                : placeholder || "Select option"}
+            </option>
+            {options.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
+      />
+      {err && <p className="text-xs text-error mt-1">{err}</p>}
+    </div>
+  );
+}
+
+/* ---------- tiny helper to avoid optional chaining mistakes with RHF ---------- */
+import { useFormContext } from "react-hook-form";
+function useFormContextStrict<T>() {
+  const ctx = useFormContext();
+  if (!ctx)
+    throw new Error("RHF components must be used inside <FormProvider>");
+  return ctx;
 }

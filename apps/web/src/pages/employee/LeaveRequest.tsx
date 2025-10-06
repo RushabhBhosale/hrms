@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, FormEvent } from "react";
+import { toast } from "react-hot-toast";
 import { api } from "../../lib/api";
 import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
 import { getEmployee, setAuth, LeaveBalances } from "../../lib/auth";
@@ -24,6 +25,8 @@ type FormState = {
 
 type EmployeeLite = { id: string; name: string; email: string };
 
+const ADVANCE_NOTICE_DAYS = 30;
+
 function daysBetween(start?: string, end?: string) {
   if (!start || !end) return 0;
 
@@ -46,7 +49,7 @@ export default function LeaveRequest() {
     startDate: "",
     endDate: "",
     reason: "",
-    type: "CASUAL",
+    type: "PAID",
   });
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,6 +97,7 @@ export default function LeaveRequest() {
     async function refreshBalances() {
       try {
         const res = await api.get("/auth/me");
+        console.log("hsd", res.data);
         setBalances(res.data.employee.leaveBalances);
         setTotalAvail(res.data.employee.totalLeaveAvailable || 0);
         const token = localStorage.getItem("token");
@@ -180,26 +184,21 @@ export default function LeaveRequest() {
     [leavesSorted, page, limit]
   );
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!canSubmit) return;
-    setErr(null);
-    setOk(null);
-    try {
-      setSending(true);
-      await api.post("/leaves", { ...form, notify: notifyIds });
-      setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" });
-      setNotifyIds([]);
-      setOk("Leave request submitted");
-      await load();
-    } catch (e: any) {
-      setErr(e?.response?.data?.error || "Failed to submit leave");
-    } finally {
-      setSending(false);
-    }
-  }
-
   const days = daysBetween(form.startDate, form.endDate);
+  const advanceNoticeDays = useMemo(() => {
+    if (!form.startDate) return null;
+    const start = new Date(form.startDate);
+    if (Number.isNaN(start.getTime())) return null;
+    const today = new Date();
+    start.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
+    return Math.floor((start.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  }, [form.startDate]);
+  const requiresAdvanceNotice = days >= 3;
+  const advanceNoticeSatisfied =
+    !requiresAdvanceNotice ||
+    (advanceNoticeDays !== null && advanceNoticeDays >= ADVANCE_NOTICE_DAYS);
+  const advanceNoticeViolation = requiresAdvanceNotice && !advanceNoticeSatisfied;
   const selectedAvail = useMemo(() => {
     if (!balances) return 0;
     const capRemain: Record<FormState["type"], number> = {
@@ -216,6 +215,31 @@ export default function LeaveRequest() {
     days > 0 &&
     selectedAvail < days &&
     (form.fallbackType = "UNPAID");
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setErr(null);
+    setOk(null);
+    if (advanceNoticeViolation) {
+      const msg = `Leaves of 3 or more days must be applied at least ${ADVANCE_NOTICE_DAYS} days in advance.`;
+      toast.error(msg);
+      setErr(msg);
+      return;
+    }
+    try {
+      setSending(true);
+      await api.post("/leaves", { ...form, notify: notifyIds });
+      setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" });
+      setNotifyIds([]);
+      setOk("Leave request submitted");
+      await load();
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || "Failed to submit leave");
+    } finally {
+      setSending(false);
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -241,10 +265,11 @@ export default function LeaveRequest() {
         <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
           <h3 className="text-lg font-semibold mb-4">Leave Balances</h3>
           <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>Casual: {balances.casual}</div>
-            <div>Paid: {balances.paid}</div>
-            <div>Sick: {balances.sick}</div>
-            <div>Unpaid: {balances.unpaid}</div>
+            {balances?.casual !== 0 && <div>Casual: {balances.casual}</div>}
+            {balances?.paid !== 0 && <div>Paid: {balances.paid}</div>}
+            {balances?.sick !== 0 && <div>Sick: {balances.sick}</div>}
+            {balances?.unpaid !== 0 && <div>Unpaid: {balances.unpaid}</div>}
+
             <div className="col-span-2 text-muted">
               Total Available leaves this month: {totalAvail}
             </div>
@@ -271,10 +296,12 @@ export default function LeaveRequest() {
                   })
                 }
               >
-                <option value="CASUAL">Casual</option>
-                <option value="PAID">Paid</option>
+                {balances?.casual !== 0 && (
+                  <option value="CASUAL">Casual</option>
+                )}
+                {balances?.paid !== 0 && <option value="PAID">Paid</option>}
+                {balances?.sick !== 0 && <option value="SICK">Sick</option>}
                 <option value="UNPAID">Unpaid</option>
-                <option value="SICK">Sick</option>
               </select>
             </div>
             <div className="space-y-2">
@@ -283,7 +310,6 @@ export default function LeaveRequest() {
               </label>
               <input
                 type="date"
-                min={todayISO}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={form.startDate}
                 onChange={(e) =>
@@ -297,7 +323,6 @@ export default function LeaveRequest() {
               </label>
               <input
                 type="date"
-                min={form.startDate || todayISO}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={form.endDate}
                 onChange={(e) => setForm({ ...form, endDate: e.target.value })}
@@ -319,6 +344,11 @@ export default function LeaveRequest() {
                 ? `Duration: ${days} day${days > 1 ? "s" : ""}`
                 : "Select start and end dates"}
             </div>
+            {advanceNoticeViolation && (
+              <div className="text-xs text-error">
+                Leaves of 3 or more days must be applied at least {ADVANCE_NOTICE_DAYS} days in advance.
+              </div>
+            )}
           </div>
 
           {needsFallback && (

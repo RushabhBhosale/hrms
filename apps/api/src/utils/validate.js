@@ -21,10 +21,31 @@ function isValidPhone(phone) {
   return digits.length === 10;
 }
 
+function normalizeAadhaar(value) {
+  return String(value ?? '').replace(/[^\d]/g, '');
+}
+
+function isValidAadhaar(value) {
+  const digits = normalizeAadhaar(value);
+  return digits.length >= 8 && digits.length <= 16;
+}
+
+function normalizePan(value) {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function isValidPan(value) {
+  const normalized = normalizePan(value);
+  return /^[A-Z0-9]{8,20}$/.test(normalized);
+}
+
 module.exports = {
   isValidEmail,
   isValidPassword,
   isValidPhone,
   normalizePhone,
+  normalizeAadhaar,
+  isValidAadhaar,
+  normalizePan,
+  isValidPan,
 };
-

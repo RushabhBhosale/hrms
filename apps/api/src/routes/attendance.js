@@ -26,12 +26,292 @@ function dateKeyLocal(d) {
   return `${y}-${m}-${day}`;
 }
 
+// Treat manual time inputs as belonging to a company-configured timezone.
+// If ATTENDANCE_TZ_OFFSET_MINUTES is provided (minutes ahead of UTC), use that.
+// Otherwise fall back to the host machine's timezone offset for the target date.
+const CONFIGURED_ATTENDANCE_OFFSET_MINUTES = (() => {
+  const raw = process.env.ATTENDANCE_TZ_OFFSET_MINUTES;
+  if (raw === undefined) return null;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+})();
+
+function resolveAttendanceOffsetMinutes(year, month, day) {
+  if (CONFIGURED_ATTENDANCE_OFFSET_MINUTES !== null)
+    return CONFIGURED_ATTENDANCE_OFFSET_MINUTES;
+  // Use midday to avoid DST midnight transitions impacting offset lookup.
+  const probe = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  return -probe.getTimezoneOffset();
+}
+
+function buildUtcDateFromLocal(dateKey, timeValue) {
+  if (dateKey === null || dateKey === undefined)
+    throw new Error("Invalid date");
+
+  const normalizedDate = String(dateKey).trim();
+  const [yearStr, monthStr, dayStr] = normalizedDate.split("-");
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const day = parseInt(dayStr, 10);
+  if (![year, month, day].every((n) => Number.isFinite(n)))
+    throw new Error("Invalid date");
+
+  if (timeValue === null || timeValue === undefined)
+    throw new Error("Invalid time");
+
+  const normalizedTime = String(timeValue).trim();
+  const [hhRaw, mmRaw] = normalizedTime.split(":");
+  const hours = parseInt(hhRaw, 10);
+  const minutes = parseInt(mmRaw, 10);
+  if (!Number.isFinite(hours) || hours < 0 || hours > 23)
+    throw new Error("Invalid hours");
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 59)
+    throw new Error("Invalid minutes");
+
+  const offsetMs = resolveAttendanceOffsetMinutes(year, month, day) * 60000;
+  const utcMillis = Date.UTC(year, month - 1, day, hours, minutes);
+  return new Date(utcMillis - offsetMs);
+}
+
+function isAdminUser(emp) {
+  return ["ADMIN", "SUPERADMIN"].includes(emp?.primaryRole);
+}
+
+function canManageManualAttendance(emp) {
+  if (isAdminUser(emp)) return true;
+  return (emp?.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+}
+
+const ATTENDANCE_ISSUE_TYPES = {
+  AUTO_PUNCH: "autoPunch",
+  MISSING_PUNCH_OUT: "missingPunchOut",
+  NO_ATTENDANCE: "noAttendance",
+};
+
+async function collectAttendanceIssues({
+  employeeId,
+  start,
+  endExclusive,
+  employeeDoc,
+}) {
+  const todayStart = startOfDay(new Date());
+  const end = endExclusive ? startOfDay(endExclusive) : todayStart;
+
+  const employee =
+    employeeDoc ||
+    (await Employee.findById(employeeId)
+      .select("company createdAt joiningDate")
+      .lean());
+
+  const employmentStartRaw = employee?.joiningDate || employee?.createdAt;
+  const employmentStart = employmentStartRaw
+    ? startOfDay(employmentStartRaw)
+    : null;
+
+  let rangeStart = start ? startOfDay(start) : employmentStart || todayStart;
+  if (employmentStart && rangeStart < employmentStart) {
+    rangeStart = employmentStart;
+  }
+
+  if (!(end > rangeStart)) return [];
+
+  const [records, company, companyOverrides, overrides, leaves] = await Promise.all([
+    Attendance.find({
+      employee: employeeId,
+      date: { $gte: rangeStart, $lt: end },
+    })
+      .select(
+        "date firstPunchIn lastPunchOut autoPunchOut autoPunchOutAt autoPunchLastIn manualFillRequest"
+      )
+      .lean(),
+    employee?.company
+      ? Company.findById(employee.company).select("bankHolidays").lean()
+      : null,
+    employee?.company
+      ? CompanyDayOverride.find({
+          company: employee.company,
+          date: { $gte: rangeStart, $lt: end },
+        })
+          .select("date type")
+          .lean()
+      : [],
+    AttendanceOverride.find({
+      employee: employeeId,
+      date: { $gte: rangeStart, $lt: end },
+    })
+      .select("date ignoreHoliday")
+      .lean(),
+    Leave.find({
+      employee: employeeId,
+      status: { $in: ["PENDING", "APPROVED"] },
+      startDate: { $lte: end },
+      endDate: { $gte: rangeStart },
+    })
+      .select("startDate endDate status")
+      .lean(),
+  ]);
+
+  const attendanceByKey = new Map(records.map((r) => [dateKeyLocal(r.date), r]));
+  const overrideByKey = new Map(overrides.map((o) => [dateKeyLocal(o.date), o]));
+  const companyOverrideByKey = new Map(
+    (companyOverrides || []).map((o) => [dateKeyLocal(o.date), o])
+  );
+
+  const holidaySet = new Set(
+    (company?.bankHolidays || [])
+      .filter((h) => h.date >= rangeStart && h.date < end)
+      .map((h) => dateKeyLocal(h.date))
+  );
+
+  const leaveKeys = new Set();
+  for (const leave of leaves) {
+    const startDay = leave.startDate < rangeStart ? new Date(rangeStart) : startOfDay(leave.startDate);
+    const endBound = leave.endDate >= end ? new Date(end.getTime() - 1) : leave.endDate;
+    const endDay = startOfDay(endBound);
+    for (let cursor = new Date(startDay); cursor <= endDay; cursor.setDate(cursor.getDate() + 1)) {
+      leaveKeys.add(dateKeyLocal(cursor));
+    }
+  }
+
+  const issues = [];
+  for (let cursor = new Date(rangeStart); cursor < end; cursor.setDate(cursor.getDate() + 1)) {
+    const day = startOfDay(cursor);
+    if (day >= todayStart) break;
+    if (employmentStart && day < employmentStart) continue;
+
+    const key = dateKeyLocal(day);
+    const rec = attendanceByKey.get(key);
+
+    const manualReqStatus = rec?.manualFillRequest?.status;
+    if (manualReqStatus === "COMPLETED") continue;
+
+    let isWeekend = day.getDay() === 0 || day.getDay() === 6;
+    const compOverride = companyOverrideByKey.get(key);
+    if (compOverride?.type === "WORKING") isWeekend = false;
+
+    let isHoliday = holidaySet.has(key);
+    if (compOverride?.type === "HOLIDAY") {
+      isHoliday = true;
+      isWeekend = false;
+    }
+
+    const override = overrideByKey.get(key);
+    if (override?.ignoreHoliday) isHoliday = false;
+
+    if (isWeekend || isHoliday) continue;
+    if (leaveKeys.has(key)) continue;
+
+    if (!rec || !rec.firstPunchIn) {
+      issues.push({ date: key, type: ATTENDANCE_ISSUE_TYPES.NO_ATTENDANCE });
+      continue;
+    }
+
+    if (!rec.lastPunchOut) {
+      issues.push({ date: key, type: ATTENDANCE_ISSUE_TYPES.MISSING_PUNCH_OUT });
+      continue;
+    }
+
+    if (rec.autoPunchOut) {
+      issues.push({
+        date: key,
+        type: ATTENDANCE_ISSUE_TYPES.AUTO_PUNCH,
+        autoPunchOutAt: rec.autoPunchOutAt
+          ? new Date(rec.autoPunchOutAt).toISOString()
+          : rec.lastPunchOut
+          ? new Date(rec.lastPunchOut).toISOString()
+          : undefined,
+      });
+    }
+  }
+
+  return issues;
+}
+
+function serializeManualRequest(record) {
+  if (!record) return null;
+  const reqInfo = record.manualFillRequest || {};
+  const employee = record.employee || {};
+  const requestedBy = reqInfo.requestedBy || {};
+  const resolvedBy = reqInfo.resolvedBy || {};
+  const id = record._id || record.id;
+  return {
+    id: id ? String(id) : null,
+    employee: employee
+      ? {
+          id: employee._id ? String(employee._id) : null,
+          name: employee.name || "",
+          email: employee.email || "",
+        }
+      : null,
+    date: record.date ? dateKeyLocal(record.date) : null,
+    note: reqInfo.note || "",
+    adminNote: reqInfo.adminNote || "",
+    status: reqInfo.status || "PENDING",
+    requestedAt: reqInfo.requestedAt || null,
+    acknowledgedAt: reqInfo.acknowledgedAt || null,
+    resolvedAt: reqInfo.resolvedAt || null,
+    requestedBy: requestedBy._id
+      ? {
+          id: String(requestedBy._id),
+          name: requestedBy.name || "",
+          email: requestedBy.email || "",
+        }
+      : null,
+    resolvedBy: resolvedBy._id
+      ? {
+          id: String(resolvedBy._id),
+          name: resolvedBy.name || "",
+          email: resolvedBy.email || "",
+        }
+      : null,
+    autoPunchOut: !!record.autoPunchOut,
+    autoPunchOutAt: record.autoPunchOutAt || null,
+    firstPunchIn: record.firstPunchIn || null,
+    lastPunchOut: record.lastPunchOut || null,
+    workedMs: record.workedMs || 0,
+  };
+}
+
 router.post("/punch", auth, async (req, res) => {
   const { action } = req.body;
   if (!["in", "out"].includes(action))
     return res.status(400).json({ error: "Invalid action" });
 
+  const rawLocation =
+    typeof req.body.location === "string" ? req.body.location.trim() : "";
+  const locationLabel = rawLocation ? rawLocation.slice(0, 140) : "";
+
   const today = startOfDay(new Date());
+
+  if (action === "in") {
+    const employeeDoc = await Employee.findById(req.employee.id)
+      .select("company createdAt joiningDate")
+      .lean();
+    const fallbackStart = new Date(today);
+    fallbackStart.setDate(fallbackStart.getDate() - 365);
+    const lookbackStart = employeeDoc?.joiningDate
+      ? new Date(employeeDoc.joiningDate)
+      : employeeDoc?.createdAt
+      ? new Date(employeeDoc.createdAt)
+      : fallbackStart;
+    const issues = await collectAttendanceIssues({
+      employeeId: req.employee.id,
+      start: lookbackStart,
+      endExclusive: today,
+      employeeDoc,
+    });
+    if (issues.length) {
+      const issueCount = issues.length;
+      return res.status(409).json({
+        error: `You still have ${issueCount} pending attendance ${
+          issueCount === 1 ? "issue" : "issues"
+        }. Open Resolve Attendance Issues to continue.`,
+        issues,
+        issueCount,
+      });
+    }
+  }
+
   let record = await Attendance.findOne({
     employee: req.employee.id,
     date: today,
@@ -45,6 +325,8 @@ router.post("/punch", auth, async (req, res) => {
       date: today,
       firstPunchIn: now,
       lastPunchIn: now,
+      firstPunchInLocation: locationLabel || undefined,
+      lastPunchInLocation: locationLabel || undefined,
     });
     return res.json({ attendance: record });
   }
@@ -55,6 +337,12 @@ router.post("/punch", auth, async (req, res) => {
       if (!record.firstPunchIn) record.firstPunchIn = now;
       record.lastPunchIn = now;
       record.lastPunchOut = undefined;
+    }
+    if (locationLabel) {
+      if (!record.firstPunchInLocation) {
+        record.firstPunchInLocation = locationLabel;
+      }
+      record.lastPunchInLocation = locationLabel;
     }
   } else {
     if (record.lastPunchIn) {
@@ -559,6 +847,8 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
         date: key,
         firstPunchIn: firstPunchIn ? firstPunchIn.toISOString() : null,
         lastPunchOut: lastPunchOut ? lastPunchOut.toISOString() : null,
+        firstPunchInLocation: rec?.firstPunchInLocation || null,
+        lastPunchInLocation: rec?.lastPunchInLocation || null,
         timeSpentMs,
         dayType,
         status,
@@ -779,6 +1069,10 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
         Date: key,
         "Punch In": rec?.firstPunchIn ? new Date(rec.firstPunchIn) : null,
         "Punch Out": rec?.lastPunchOut ? new Date(rec.lastPunchOut) : null,
+        "Punch Location":
+          rec?.lastPunchInLocation ||
+          rec?.firstPunchInLocation ||
+          "",
         "Time Spent (hrs)": Math.round((timeSpentMs / 3600000) * 100) / 100,
         Status:
           status === "WORKED"
@@ -801,6 +1095,7 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       { header: "Date", key: "Date", width: 12 },
       { header: "Punch In", key: "Punch In", width: 18 },
       { header: "Punch Out", key: "Punch Out", width: 18 },
+      { header: "Punch Location", key: "Punch Location", width: 24 },
       { header: "Time Spent (hrs)", key: "Time Spent (hrs)", width: 18 },
       { header: "Status", key: "Status", width: 16 },
       { header: "Leave Unit", key: "Leave Unit", width: 12 },
@@ -889,6 +1184,8 @@ router.get("/company/today", auth, async (req, res) => {
       employee: { id: u._id, name: u.name },
       firstPunchIn: record?.firstPunchIn,
       lastPunchOut: record?.lastPunchOut,
+      firstPunchInLocation: record?.firstPunchInLocation,
+      lastPunchInLocation: record?.lastPunchInLocation,
     };
   });
 
@@ -930,6 +1227,8 @@ router.get("/company/history", auth, async (req, res) => {
       firstPunchIn: r.firstPunchIn,
       lastPunchOut: r.lastPunchOut,
       workedMs: r.workedMs,
+      firstPunchInLocation: r.firstPunchInLocation,
+      lastPunchInLocation: r.lastPunchInLocation,
     };
   });
 
@@ -1018,6 +1317,428 @@ router.get("/company/report", auth, async (req, res) => {
   res.json({ report });
 });
 
+router.get("/manual-requests", auth, async (req, res) => {
+  try {
+    if (!canManageManualAttendance(req.employee))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const rawStatuses = String(req.query.status || "PENDING,ACKED")
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    const allowedStatuses = [
+      "PENDING",
+      "ACKED",
+      "COMPLETED",
+      "CANCELLED",
+    ];
+    const statuses = rawStatuses.length
+      ? rawStatuses.filter((s) => allowedStatuses.includes(s))
+      : ["PENDING", "ACKED"];
+
+    const records = await Attendance.find({
+      "manualFillRequest.status": { $in: statuses },
+    })
+      .populate("employee", "name email company")
+      .populate("manualFillRequest.requestedBy", "name email")
+      .populate("manualFillRequest.resolvedBy", "name email")
+      .lean();
+
+    const companyId = String(req.employee.company);
+    const requests = records
+      .filter(
+        (rec) =>
+          rec?.employee?.company &&
+          String(rec.employee.company) === companyId
+      )
+      .map((rec) => serializeManualRequest(rec))
+      .sort((a, b) => {
+        const aTime = a.requestedAt ? new Date(a.requestedAt).getTime() : 0;
+        const bTime = b.requestedAt ? new Date(b.requestedAt).getTime() : 0;
+        return aTime - bTime;
+      });
+
+    res.json({ requests });
+  } catch (e) {
+    console.error("manual-requests list error", e);
+    res.status(500).json({ error: "Failed to load manual attendance requests" });
+  }
+});
+
+router.post("/manual-request/:employeeId?", auth, async (req, res) => {
+  try {
+    const targetId = req.params.employeeId || req.employee.id;
+    const isSelf = String(targetId) === String(req.employee.id);
+    const canManage =
+      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+      (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+    if (!isSelf && !canManage)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const { date, note } = req.body || {};
+    if (!date) return res.status(400).json({ error: "Missing date" });
+    const day = startOfDay(new Date(date));
+    if (isNaN(day.getTime()))
+      return res.status(400).json({ error: "Invalid date" });
+
+    const today = startOfDay(new Date());
+    if (!(day < today))
+      return res
+        .status(400)
+        .json({ error: "Manual attendance requests are only allowed for past dates" });
+
+    let record = await Attendance.findOne({ employee: targetId, date: day });
+    if (record) {
+      if (record.firstPunchIn && record.lastPunchOut)
+        return res.status(400).json({ error: "Attendance already exists for this day" });
+      const status = record.manualFillRequest?.status;
+      if (status === "PENDING" || status === "ACKED")
+        return res
+          .status(400)
+          .json({ error: "Manual attendance request already submitted for this day" });
+    }
+
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+    const issues = await collectAttendanceIssues({
+      employeeId: targetId,
+      start: day,
+      endExclusive: nextDay,
+    });
+    const missing = issues.some(
+      (iss) =>
+        iss.date === dateKeyLocal(day) && iss.type === ATTENDANCE_ISSUE_TYPES.NO_ATTENDANCE
+    );
+    if (!missing)
+      return res
+        .status(400)
+        .json({ error: "No missing attendance detected for the selected day" });
+
+    if (!record) {
+      record = new Attendance({ employee: targetId, date: day });
+    }
+
+    record.manualFillRequest = {
+      requestedBy: req.employee.id,
+      requestedAt: new Date(),
+      status: "PENDING",
+      note: typeof note === "string" ? note : undefined,
+      resolvedAt: undefined,
+      resolvedBy: undefined,
+    };
+    if (!record.isNew) record.markModified("manualFillRequest");
+    await record.save();
+
+    const saved = await Attendance.findById(record._id).lean();
+
+    try {
+      const employee = await Employee.findById(targetId)
+        .select("name email company reportingPerson")
+        .lean();
+      const companyId = employee?.company;
+      if (companyId && (await isEmailEnabled(companyId))) {
+        const admins = await Employee.find({
+          company: companyId,
+          $or: [
+            { primaryRole: { $in: ["ADMIN", "SUPERADMIN"] } },
+            { subRoles: { $in: ["hr"] } },
+          ],
+        })
+          .select("name email")
+          .lean();
+
+        const recipients = new Set();
+        for (const adm of admins) if (adm?.email) recipients.add(adm.email);
+
+        if (employee?.reportingPerson) {
+          const rp = await Employee.findById(employee.reportingPerson)
+            .select("email")
+            .lean();
+          if (rp?.email) recipients.add(rp.email);
+        }
+
+        const requester = await Employee.findById(req.employee.id)
+          .select("name email")
+          .lean();
+
+        if (recipients.size) {
+          const to = Array.from(recipients);
+          const dateLabel = dateKeyLocal(day);
+          const employeeName = employee?.name || "An employee";
+          const requesterName = requester?.name || req.employee.name || employeeName;
+          const requesterEmail = requester?.email || req.employee.email || employee?.email || "";
+          const cleanNote = typeof note === "string" && note.trim() ? note.trim() : null;
+
+          const subject = `Manual attendance request: ${employeeName} — ${dateLabel}`;
+          const textParts = [
+            `${employeeName} requested manual attendance entry for ${dateLabel}.`,
+            `Requested by: ${requesterName}${requesterEmail ? ` <${requesterEmail}>` : ""}`,
+          ];
+          if (cleanNote) textParts.push(`Note: ${cleanNote}`);
+
+          const htmlLines = [
+            `<p><strong>${employeeName}</strong> requested manual attendance entry for <strong>${dateLabel}</strong>.</p>`,
+            `<p>Requested by: <strong>${requesterName}</strong>${
+              requesterEmail ? ` &lt;${requesterEmail}&gt;` : ""
+            }</p>`,
+          ];
+          if (cleanNote)
+            htmlLines.push(
+              `<p><strong>Note:</strong> ${cleanNote.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`
+            );
+
+          await sendMail({
+            companyId,
+            to,
+            subject,
+            text: textParts.join("\n"),
+            html: htmlLines.join(""),
+          });
+        }
+      }
+    } catch (mailErr) {
+      console.warn("[attendance] Failed to send manual request email:", mailErr?.message || mailErr);
+    }
+
+    res.json({ attendance: saved });
+  } catch (e) {
+    console.error("manual-request error", e);
+    res.status(500).json({ error: "Failed to request manual attendance entry" });
+  }
+});
+
+router.patch("/manual-request/:attendanceId/status", auth, async (req, res) => {
+  try {
+    if (!canManageManualAttendance(req.employee))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const { attendanceId } = req.params;
+    const { status, adminNote } = req.body || {};
+    const allowed = ["PENDING", "ACKED", "CANCELLED"];
+    if (!allowed.includes(status))
+      return res.status(400).json({ error: "Invalid status" });
+
+    const record = await Attendance.findById(attendanceId)
+      .populate("employee", "company")
+      .populate("manualFillRequest.requestedBy", "name email")
+      .populate("manualFillRequest.resolvedBy", "name email");
+    if (!record) return res.status(404).json({ error: "Manual request not found" });
+    if (
+      !record.employee ||
+      String(record.employee.company) !== String(req.employee.company)
+    )
+      return res.status(403).json({ error: "Forbidden" });
+
+    record.manualFillRequest = record.manualFillRequest || {
+      requestedBy: req.employee.id,
+      requestedAt: new Date(),
+    };
+    record.manualFillRequest.status = status;
+    if (typeof adminNote === "string")
+      record.manualFillRequest.adminNote = adminNote;
+
+    if (status === "ACKED") {
+      record.manualFillRequest.acknowledgedAt = new Date();
+    } else if (status === "PENDING") {
+      record.manualFillRequest.acknowledgedAt = undefined;
+    }
+
+    if (status === "CANCELLED") {
+      record.manualFillRequest.resolvedAt = new Date();
+      record.manualFillRequest.resolvedBy = req.employee.id;
+    } else if (status === "PENDING") {
+      record.manualFillRequest.resolvedAt = undefined;
+      record.manualFillRequest.resolvedBy = undefined;
+    }
+
+    await record.save();
+    const refreshed = await Attendance.findById(attendanceId)
+      .populate("employee", "name email company")
+      .populate("manualFillRequest.requestedBy", "name email")
+      .populate("manualFillRequest.resolvedBy", "name email")
+      .lean();
+    res.json({ request: serializeManualRequest(refreshed) });
+  } catch (e) {
+    console.error("manual-request status error", e);
+    res
+      .status(500)
+      .json({ error: "Failed to update manual attendance request status" });
+  }
+});
+
+router.post("/manual-request/:attendanceId/resolve", auth, async (req, res) => {
+  try {
+    if (!canManageManualAttendance(req.employee))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const { attendanceId } = req.params;
+    const record = await Attendance.findById(attendanceId)
+      .populate("employee", "company")
+      .populate("manualFillRequest.requestedBy", "name email")
+      .populate("manualFillRequest.resolvedBy", "name email");
+    if (!record) return res.status(404).json({ error: "Manual request not found" });
+    if (
+      !record.employee ||
+      String(record.employee.company) !== String(req.employee.company)
+    )
+      return res.status(403).json({ error: "Forbidden" });
+
+    const { firstPunchIn, lastPunchOut, breakMinutes, totalMinutes, adminNote } =
+      req.body || {};
+
+    if (!firstPunchIn && !record.firstPunchIn)
+      return res
+        .status(400)
+        .json({ error: "Missing first punch-in time" });
+    if (!lastPunchOut && !record.lastPunchOut)
+      return res.status(400).json({ error: "Missing last punch-out time" });
+
+    const dateKey = dateKeyLocal(record.date);
+    const parseTime = (value) => {
+      if (!value && value !== 0) return null;
+      return buildUtcDateFromLocal(dateKey, value);
+    };
+
+    let firstIn = record.firstPunchIn || null;
+    let lastOut = record.lastPunchOut || null;
+
+    try {
+      if (firstPunchIn) firstIn = parseTime(firstPunchIn);
+      if (lastPunchOut) lastOut = parseTime(lastPunchOut);
+    } catch (parseErr) {
+      return res.status(400).json({ error: parseErr.message || "Invalid time" });
+    }
+
+    if (!firstIn || !lastOut)
+      return res
+        .status(400)
+        .json({ error: "Punch-in and punch-out times are required" });
+    if (!(lastOut > firstIn))
+      return res
+        .status(400)
+        .json({ error: "Punch-out must be after punch-in" });
+
+    let workedMinutes = Math.max(
+      0,
+      Math.round((lastOut.getTime() - firstIn.getTime()) / 60000)
+    );
+    if (breakMinutes !== undefined) {
+      const breakM = parseInt(breakMinutes, 10);
+      if (!isFinite(breakM) || breakM < 0)
+        return res.status(400).json({ error: "Invalid breakMinutes" });
+      workedMinutes = Math.max(0, workedMinutes - breakM);
+    }
+    if (totalMinutes !== undefined) {
+      const total = parseInt(totalMinutes, 10);
+      if (!isFinite(total) || total < 0)
+        return res.status(400).json({ error: "Invalid totalMinutes" });
+      workedMinutes = total;
+    }
+
+    record.firstPunchIn = firstIn;
+    record.lastPunchIn = undefined;
+    record.lastPunchOut = lastOut;
+    record.workedMs = workedMinutes * 60000;
+    record.autoPunchOut = false;
+    record.autoPunchOutAt = undefined;
+    record.autoPunchLastIn = undefined;
+    record.autoPunchResolvedAt = new Date();
+
+    record.manualFillRequest = record.manualFillRequest || {
+      requestedBy: req.employee.id,
+      requestedAt: new Date(),
+    };
+    record.manualFillRequest.status = "COMPLETED";
+    record.manualFillRequest.resolvedAt = new Date();
+    record.manualFillRequest.resolvedBy = req.employee.id;
+    record.manualFillRequest.acknowledgedAt =
+      record.manualFillRequest.acknowledgedAt || new Date();
+    if (typeof adminNote === "string")
+      record.manualFillRequest.adminNote = adminNote;
+
+    await record.save();
+    const refreshed = await Attendance.findById(attendanceId)
+      .populate("employee", "name email company")
+      .populate("manualFillRequest.requestedBy", "name email")
+      .populate("manualFillRequest.resolvedBy", "name email")
+      .lean();
+    res.json({ request: serializeManualRequest(refreshed) });
+  } catch (e) {
+    console.error("manual-request resolve error", e);
+    res
+      .status(500)
+      .json({ error: "Failed to resolve manual attendance request" });
+  }
+});
+
+router.post("/resolve/leave", auth, async (req, res) => {
+  try {
+    const { date, endDate, type, reason, employeeId } = req.body || {};
+    if (!date) return res.status(400).json({ error: "Missing start date" });
+
+    const targetId = employeeId || req.employee.id;
+    const isSelf = String(targetId) === String(req.employee.id);
+    if (!isSelf && !canManageManualAttendance(req.employee))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const start = startOfDay(new Date(date));
+    if (isNaN(start.getTime()))
+      return res.status(400).json({ error: "Invalid start date" });
+
+    let end = endDate ? startOfDay(new Date(endDate)) : start;
+    if (isNaN(end.getTime()))
+      return res.status(400).json({ error: "Invalid end date" });
+    if (!(end >= start))
+      return res
+        .status(400)
+        .json({ error: "End date must be on or after start date" });
+
+    const employee = await Employee.findById(targetId).select("company");
+    if (!employee) return res.status(404).json({ error: "Employee not found" });
+
+    const overlap = await Leave.findOne({
+      employee: targetId,
+      status: { $in: ["PENDING", "APPROVED"] },
+      startDate: { $lte: end },
+      endDate: { $gte: start },
+    });
+    if (overlap)
+      return res
+        .status(400)
+        .json({ error: "Leave already exists overlapping the selected dates" });
+
+    const leave = await Leave.create({
+      employee: targetId,
+      company: employee.company,
+      approver: req.employee.id,
+      type: type || "PAID",
+      startDate: start,
+      endDate: end,
+      reason: typeof reason === "string" ? reason : undefined,
+      status: "APPROVED",
+    });
+
+    // If a manual attendance request exists for any day in range, mark it completed
+    const attendanceRecords = await Attendance.find({
+      employee: targetId,
+      date: { $gte: start, $lte: end },
+    });
+    for (const record of attendanceRecords) {
+      if (record.manualFillRequest) {
+        record.manualFillRequest.status = "COMPLETED";
+        record.manualFillRequest.resolvedAt = new Date();
+        record.manualFillRequest.resolvedBy = req.employee.id;
+        await record.save();
+      }
+    }
+
+    res.json({ leave });
+  } catch (e) {
+    console.error("resolve-leave error", e);
+    res.status(500).json({ error: "Failed to apply leave" });
+  }
+});
+
 // List days in a month where an employee punched in but did not punch out
 // GET /attendance/missing-out/:employeeId?  (self or hr/manager/admin)
 // Optional query: ?month=yyyy-mm (defaults to current month)
@@ -1031,36 +1752,46 @@ router.get("/missing-out/:employeeId?", auth, async (req, res) => {
     if (!isSelf && !canViewOthers)
       return res.status(403).json({ error: "Forbidden" });
 
-    const { month } = req.query; // yyyy-mm
+    const { month, scope } = req.query; // scope=all to fetch from employment start
     let start;
-    if (month) {
+    let end;
+    let employeeDoc = null;
+
+    if (scope === "all") {
+      employeeDoc = await Employee.findById(targetId)
+        .select("company createdAt joiningDate")
+        .lean();
+      const employmentStartRaw =
+        employeeDoc?.joiningDate || employeeDoc?.createdAt;
+      const employmentStart = employmentStartRaw
+        ? startOfDay(employmentStartRaw)
+        : startOfDay(new Date());
+      start = employmentStart;
+      end = startOfDay(new Date());
+    } else if (month) {
       start = startOfDay(new Date(month + "-01"));
+      end = new Date(start);
+      end.setMonth(end.getMonth() + 1);
     } else {
       const now = new Date();
       start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+      end = new Date(start);
+      end.setMonth(end.getMonth() + 1);
     }
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
 
-    const records = await Attendance.find({
-      employee: targetId,
-      date: { $gte: start, $lt: end },
-      firstPunchIn: { $exists: true },
-      $or: [{ lastPunchOut: { $exists: false } }, { lastPunchOut: null }],
-    })
-      .select("date firstPunchIn lastPunchIn workedMs autoPunchOut")
-      .sort({ date: -1 })
-      .lean();
-
-    // Build date-only keys based on server-local date (avoid UTC shift)
-    const days = records.map((r) => {
-      const d = new Date(r.date);
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
+    const issues = await collectAttendanceIssues({
+      employeeId: targetId,
+      start,
+      endExclusive: end,
+      employeeDoc,
     });
-    res.json({ employeeId: String(targetId), month: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}`, days });
+    const monthKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}`;
+    res.json({
+      employeeId: String(targetId),
+      month: monthKey,
+      days: issues.map((i) => i.date),
+      issues,
+    });
   } catch (e) {
     console.error("missing-out error", e);
     res.status(500).json({ error: "Failed to list missing punch-outs" });
@@ -1086,11 +1817,12 @@ router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
     if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
 
     // Compose punch-out timestamp in server-local time on that day
-    const [hh, mm] = String(time).split(":").map((x) => parseInt(x, 10));
-    if (!isFinite(hh) || !isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59)
-      return res.status(400).json({ error: "Invalid time" });
-    const out = new Date(day);
-    out.setHours(hh, mm, 0, 0);
+    let out;
+    try {
+      out = buildUtcDateFromLocal(date, time);
+    } catch (parseErr) {
+      return res.status(400).json({ error: parseErr?.message || "Invalid time" });
+    }
 
     const nextDay = new Date(day);
     nextDay.setDate(nextDay.getDate() + 1);
@@ -1099,12 +1831,14 @@ router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
 
     const record = await Attendance.findOne({ employee: targetId, date: day });
     if (!record) return res.status(404).json({ error: "Attendance record not found" });
-    if (record.lastPunchOut)
+
+    const isAuto = !!record.autoPunchOut;
+    if (record.lastPunchOut && !isAuto)
       return res.status(400).json({ error: "Already punched out for this day" });
 
-    // Determine the start of the open interval to close. Prefer lastPunchIn;
-    // if it's missing but the day has a firstPunchIn, fall back to that.
-    const openStart = record.lastPunchIn || record.firstPunchIn;
+    // Determine the start of the open interval to close. Prefer stored auto punch start,
+    // otherwise use the latest punch-in; fall back to the first punch-in if needed.
+    const openStart = record.autoPunchLastIn || record.lastPunchIn || record.firstPunchIn;
     if (!openStart)
       return res.status(400).json({ error: "No punch-in found for this day" });
 
@@ -1114,9 +1848,32 @@ router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
         .status(400)
         .json({ error: "Punch-out must be after last punch-in" });
 
-    record.workedMs = (record.workedMs || 0) + (out.getTime() - lastIn.getTime());
+    let baseWorked = record.workedMs || 0;
+    if (isAuto) {
+      const priorOut = record.autoPunchOutAt || record.lastPunchOut;
+      if (priorOut && priorOut > lastIn) {
+        const prevInterval = priorOut.getTime() - lastIn.getTime();
+        baseWorked = Math.max(0, baseWorked - prevInterval);
+      }
+    }
+
+    record.workedMs = baseWorked + (out.getTime() - lastIn.getTime());
     record.lastPunchOut = out;
     record.lastPunchIn = undefined;
+
+    if (isAuto) {
+      record.autoPunchOut = false;
+      record.autoPunchResolvedAt = new Date();
+      record.autoPunchOutAt = out;
+      record.autoPunchLastIn = undefined;
+    }
+
+    if (record.manualFillRequest) {
+      record.manualFillRequest.status = "COMPLETED";
+      record.manualFillRequest.resolvedAt = new Date();
+      record.manualFillRequest.resolvedBy = req.employee.id;
+    }
+
     await record.save();
 
     res.json({ attendance: record });

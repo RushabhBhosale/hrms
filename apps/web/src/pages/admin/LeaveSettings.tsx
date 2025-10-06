@@ -6,10 +6,12 @@ import { Field } from "../../components/ui/Field";
 type FormState = {
   totalAnnual: string;
   ratePerMonth: string;
+  probationRatePerMonth: string;
   capsPaid: string;
   capsCasual: string;
   capsSick: string;
   applicableFrom: string;
+  accrualStrategy: "ACCRUAL" | "LUMP_SUM";
 };
 
 type Holiday = {
@@ -24,22 +26,32 @@ type DayOverride = {
 };
 
 // Define EmployeeLite type globally or in a shared types file
-type EmployeeLite = { id: string; name: string; email: string };
+type EmployeeLite = {
+  id: string;
+  name: string;
+  email: string;
+  primaryRole?: string;
+  employmentStatus?: "PERMANENT" | "PROBATION";
+  probationSince?: string | null;
+};
 
 // Props for BackfillLeaves component
 interface BackfillLeavesProps {
   bfEmployees: EmployeeLite[];
   bfEmpLoading: boolean;
+  allowedTypes: BackfillRow["type"][];
 }
 
 export default function LeaveSettings() {
   const [form, setForm] = useState<FormState>({
     totalAnnual: "0",
     ratePerMonth: "0",
+    probationRatePerMonth: "0",
     capsPaid: "0",
     capsCasual: "0",
     capsSick: "0",
     applicableFrom: "",
+    accrualStrategy: "ACCRUAL",
   });
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
@@ -67,6 +79,33 @@ export default function LeaveSettings() {
   // Employees for dropdown in backfill rows
   const [bfEmployees, setBfEmployees] = useState<EmployeeLite[]>([]);
   const [bfEmpLoading, setBfEmpLoading] = useState(false);
+  const [probationBusy, setProbationBusy] = useState<Record<string, boolean>>({});
+
+  const isAccrualStrategy = form.accrualStrategy === "ACCRUAL";
+
+  const allowedTypes = useMemo<BackfillRow["type"][]>(() => {
+    const arr: BackfillRow["type"][] = [];
+    if ((parseInt(form.capsPaid, 10) || 0) > 0) arr.push("PAID");
+    if ((parseInt(form.capsCasual, 10) || 0) > 0) arr.push("CASUAL");
+    if ((parseInt(form.capsSick, 10) || 0) > 0) arr.push("SICK");
+    arr.push("UNPAID");
+    return arr;
+  }, [form.capsPaid, form.capsCasual, form.capsSick]);
+
+  const sortedEmployees = useMemo(
+    () =>
+      [...bfEmployees].sort((a, b) => a.name.localeCompare(b.name, "en", {
+        sensitivity: "base",
+      })),
+    [bfEmployees]
+  );
+
+  function formatProbationSince(value?: string | null) {
+    if (!value) return "—";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "—";
+    return parsed.toLocaleDateString();
+  }
 
   useEffect(() => {
     (async () => {
@@ -76,10 +115,14 @@ export default function LeaveSettings() {
         setForm({
           totalAnnual: String(p.totalAnnual ?? 0),
           ratePerMonth: String(p.ratePerMonth ?? 0),
+          probationRatePerMonth: String(p.probationRatePerMonth ?? 0),
           capsPaid: String(p.typeCaps?.paid ?? 0),
           capsCasual: String(p.typeCaps?.casual ?? 0),
           capsSick: String(p.typeCaps?.sick ?? 0),
           applicableFrom: p.applicableFrom || "",
+          accrualStrategy: (p.accrualStrategy || "ACCRUAL") as
+            | "ACCRUAL"
+            | "LUMP_SUM",
         });
       } catch {
         // ignore
@@ -126,6 +169,8 @@ export default function LeaveSettings() {
       await api.put("/companies/leave-policy", {
         totalAnnual: parseInt(form.totalAnnual, 10) || 0,
         ratePerMonth: parseFloat(form.ratePerMonth) || 0,
+        probationRatePerMonth: parseFloat(form.probationRatePerMonth) || 0,
+        accrualStrategy: form.accrualStrategy,
         applicableFrom: form.applicableFrom,
         typeCaps: {
           paid: parseInt(form.capsPaid, 10) || 0,
@@ -200,6 +245,47 @@ export default function LeaveSettings() {
     }
   }
 
+  async function updateEmploymentStatus(
+    empId: string,
+    next: "PROBATION" | "PERMANENT"
+  ) {
+    setProbationBusy((prev) => ({ ...prev, [empId]: true }));
+    try {
+      const res = await api.put(`/companies/employees/${empId}/probation`, {
+        status: next,
+      });
+      const payload = res.data?.employee;
+      setBfEmployees((prev) =>
+        prev.map((emp) =>
+          emp.id === empId
+            ? {
+                ...emp,
+                employmentStatus:
+                  (payload?.employmentStatus as EmployeeLite["employmentStatus"]) ??
+                  next,
+                probationSince: payload?.probationSince ?? null,
+              }
+            : emp
+        )
+      );
+      toast.success(
+        next === "PROBATION"
+          ? "Employee moved to probation"
+          : "Employee marked permanent"
+      );
+    } catch (e: any) {
+      toast.error(
+        e?.response?.data?.error || "Failed to update employment status"
+      );
+    } finally {
+      setProbationBusy((prev) => {
+        const copy = { ...prev };
+        delete copy[empId];
+        return copy;
+      });
+    }
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -224,7 +310,28 @@ export default function LeaveSettings() {
         </div>
 
         <form onSubmit={submit} className="px-6 py-5 space-y-5">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
+            <Field label="Accrual Strategy">
+              <>
+                <select
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                  value={form.accrualStrategy}
+                  onChange={(e) =>
+                    onChange(
+                      "accrualStrategy",
+                      (e.target
+                        .value as FormState["accrualStrategy"]) || "ACCRUAL"
+                    )
+                  }
+                >
+                  <option value="ACCRUAL">Accrue every month</option>
+                  <option value="LUMP_SUM">Grant full balance at once</option>
+                </select>
+                <p className="text-xs text-muted">
+                  Choose whether leaves accrue monthly or are allocated upfront.
+                </p>
+              </>
+            </Field>
             <Field label="Total Annual Leaves" required>
               <input
                 type="number"
@@ -233,26 +340,50 @@ export default function LeaveSettings() {
                 onChange={(e) => onChange("totalAnnual", e.target.value)}
               />
             </Field>
-            <Field label="Accrual Per Month" required>
+            <Field label="Accrual Per Month" required={isAccrualStrategy}>
               <input
                 type="number"
                 step="0.5"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                disabled={!isAccrualStrategy}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
                 value={form.ratePerMonth}
                 onChange={(e) => onChange("ratePerMonth", e.target.value)}
               />
             </Field>
-            <Field label="Leave Applicable From">
+            <Field label="Probation Accrual Per Month">
               <>
                 <input
-                  type="month"
-                  className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                  value={form.applicableFrom}
-                  onChange={(e) => onChange("applicableFrom", e.target.value)}
+                  type="number"
+                  step="0.5"
+                  disabled={!isAccrualStrategy}
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
+                  value={form.probationRatePerMonth}
+                  onChange={(e) =>
+                    onChange("probationRatePerMonth", e.target.value)
+                  }
                 />
-                <p className="text-xs text-muted">Month when accrual should begin.</p>
+                <p className="text-xs text-muted">
+                  Used when an employee is marked as on probation.
+                </p>
               </>
             </Field>
+            <div className="md:col-span-2">
+              <Field label="Leave Applicable From">
+                <>
+                  <input
+                    type="month"
+                    disabled={!isAccrualStrategy}
+                    className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
+                    value={form.applicableFrom}
+                    onChange={(e) => onChange("applicableFrom", e.target.value)}
+                  />
+                  <p className="text-xs text-muted">
+                    Month when accrual should begin. Ignored when granting the
+                    full balance upfront.
+                  </p>
+                </>
+              </Field>
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-3 border-t border-border pt-5 mt-2">
@@ -326,6 +457,85 @@ export default function LeaveSettings() {
             )}
           </div>
         </form>
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface shadow-sm">
+        <div className="border-b border-border px-6 py-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Employment Status</h3>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-sm text-muted">
+            Toggle employees between permanent and probation. Probation staff use
+            the probation accrual rate you set above.
+          </p>
+          {bfEmpLoading ? (
+            <p className="text-sm text-muted">Loading employees…</p>
+          ) : sortedEmployees.length === 0 ? (
+            <p className="text-sm text-muted">No employees found.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="text-left text-muted">
+                  <tr className="border-b border-border">
+                    <th className="py-2 pr-4 font-medium">Employee</th>
+                    <th className="py-2 pr-4 font-medium">Status</th>
+                    <th className="py-2 pr-4 font-medium">Probation Since</th>
+                    <th className="py-2 pr-0 text-right font-medium">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedEmployees.map((emp) => {
+                    const status =
+                      (emp.employmentStatus || "PROBATION") === "PROBATION"
+                        ? "Probation"
+                        : "Permanent";
+                    const disableToggle =
+                      ["ADMIN", "SUPERADMIN"].includes(emp.primaryRole || "");
+                    const nextStatus =
+                      (emp.employmentStatus || "PROBATION") === "PROBATION"
+                        ? "PERMANENT"
+                        : "PROBATION";
+                    const busy = Boolean(probationBusy[emp.id]);
+                    return (
+                      <tr key={emp.id} className="border-b border-border/60">
+                        <td className="py-2 pr-4">
+                          <div className="font-medium">{emp.name}</div>
+                          <div className="text-xs text-muted">{emp.email}</div>
+                        </td>
+                        <td className="py-2 pr-4">{status}</td>
+                        <td className="py-2 pr-4">
+                          {status === "Probation"
+                            ? formatProbationSince(emp.probationSince)
+                            : "—"}
+                        </td>
+                        <td className="py-2 pr-0 text-right">
+                          {disableToggle ? (
+                            <span className="text-xs text-muted">
+                              Admin accounts stay permanent
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => updateEmploymentStatus(emp.id, nextStatus)}
+                              className="inline-flex items-center justify-center rounded-md border border-border bg-bg px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-60"
+                            >
+                              {busy
+                                ? "Updating…"
+                                : nextStatus === "PROBATION"
+                                ? "Set Probation"
+                                : "Mark Permanent"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </section>
 
       {hErr && (
@@ -494,7 +704,11 @@ export default function LeaveSettings() {
       </section>
 
       {/* Pass bfEmployees and bfEmpLoading as props */}
-      <BackfillLeaves bfEmployees={bfEmployees} bfEmpLoading={bfEmpLoading} />
+      <BackfillLeaves
+        bfEmployees={bfEmployees}
+        bfEmpLoading={bfEmpLoading}
+        allowedTypes={allowedTypes}
+      />
     </div>
   );
 }
@@ -508,8 +722,6 @@ type BackfillRow = {
   reason?: string;
   _err?: string;
 };
-
-const LEAVE_TYPES: BackfillRow["type"][] = ["PAID", "CASUAL", "SICK", "UNPAID"];
 
 function toCsv(rows: BackfillRow[]) {
   const header = "email,type,startDate,endDate,fallbackType,reason";
@@ -555,25 +767,33 @@ function parseCsv(text: string): BackfillRow[] {
   return out;
 }
 
-function validateRow(r: BackfillRow): string | null {
+// make validateRow depend on allowedTypes
+function validateRow(
+  r: BackfillRow,
+  allowed: BackfillRow["type"][]
+): string | null {
   if (!/.+@.+\..+/.test(r.email)) return "Invalid email";
-  if (!LEAVE_TYPES.includes(r.type)) return "Invalid type";
+  if (!allowed.includes(r.type)) return "Invalid type";
   if (!r.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(r.startDate))
     return "Invalid start date";
   if (!r.endDate || !/^\d{4}-\d{2}-\d{2}$/.test(r.endDate))
     return "Invalid end date";
   if (new Date(r.startDate) > new Date(r.endDate))
     return "Start date must be before end date";
-  if (r.fallbackType && !LEAVE_TYPES.includes(r.fallbackType as any))
+  if (r.fallbackType && !allowed.includes(r.fallbackType as any))
     return "Invalid fallback type";
   return null;
 }
 
-function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
+function BackfillLeaves({
+  bfEmployees,
+  bfEmpLoading,
+  allowedTypes,
+}: BackfillLeavesProps) {
   const [rows, setRows] = useState<BackfillRow[]>([
     {
       email: "",
-      type: "PAID",
+      type: allowedTypes[0] ?? "UNPAID",
       startDate: "",
       endDate: "",
       fallbackType: "",
@@ -585,20 +805,51 @@ function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  useEffect(() => {
+    setRows((prev) =>
+      prev.map((r) => {
+        const type = allowedTypes.includes(r.type)
+          ? r.type
+          : allowedTypes[0] ?? "UNPAID";
+        const fallbackType =
+          r.fallbackType && allowedTypes.includes(r.fallbackType as any)
+            ? r.fallbackType
+            : "";
+        return {
+          ...r,
+          type,
+          fallbackType,
+          _err:
+            validateRow({ ...r, type, fallbackType }, allowedTypes) ||
+            undefined,
+        };
+      })
+    );
+  }, [allowedTypes]);
+
   const validCount = useMemo(
-    () => rows.filter((r) => !validateRow(r)).length,
-    [rows]
+    () => rows.filter((r) => !validateRow(r, allowedTypes)).length,
+    [rows, allowedTypes] // add allowedTypes here
   );
 
   function update(i: number, patch: Partial<BackfillRow>) {
     setRows((prev) =>
       prev.map((r, idx) =>
         idx === i
-          ? {
-              ...r,
-              ...patch,
-              _err: validateRow({ ...r, ...patch }) || undefined,
-            }
+          ? (() => {
+              const next = { ...r, ...patch };
+              if (!allowedTypes.includes(next.type))
+                next.type = allowedTypes[0] ?? "UNPAID";
+              if (
+                next.fallbackType &&
+                !allowedTypes.includes(next.fallbackType as any)
+              )
+                next.fallbackType = "";
+              return {
+                ...next,
+                _err: validateRow(next, allowedTypes) || undefined,
+              };
+            })()
           : r
       )
     );
@@ -608,7 +859,7 @@ function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
       ...prev,
       {
         email: "",
-        type: "PAID",
+        type: allowedTypes[0] ?? "UNPAID",
         startDate: "",
         endDate: "",
         fallbackType: "",
@@ -616,6 +867,7 @@ function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
       },
     ]);
   }
+
   function removeRow(i: number) {
     setRows((prev) => prev.filter((_, idx) => idx !== i));
   }
@@ -627,9 +879,20 @@ function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
       setErr("No valid rows found in CSV");
       return;
     }
+    const normalized = parsed.map((r) => {
+      const type = allowedTypes.includes(r.type)
+        ? r.type
+        : allowedTypes[0] ?? "UNPAID";
+      const fallbackType =
+        r.fallbackType && allowedTypes.includes(r.fallbackType as any)
+          ? r.fallbackType
+          : "";
+      const row = { ...r, type, fallbackType } as BackfillRow;
+      return { ...row, _err: validateRow(row, allowedTypes) || undefined };
+    });
     setErr(null);
-    setMsg(`Imported ${parsed.length} rows from CSV`);
-    setRows(parsed.map((r) => ({ ...r, _err: validateRow(r) || undefined })));
+    setMsg(`Imported ${normalized.length} rows from CSV`);
+    setRows(normalized);
   }
 
   function downloadTemplate() {
@@ -655,7 +918,10 @@ function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
     setErr(null);
     setMsg(null);
     // Validate all rows once more
-    const next = rows.map((r) => ({ ...r, _err: validateRow(r) || undefined }));
+    const next = rows.map((r) => ({
+      ...r,
+      _err: validateRow(r, allowedTypes) || undefined,
+    }));
     setRows(next);
     const invalid = next.filter((r) => r._err);
     if (invalid.length) {
@@ -777,15 +1043,14 @@ function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
                   <td className="px-2 py-2">
                     <select
                       value={r.type}
-                      onChange={(e) => {
-                        e.preventDefault();
+                      onChange={(e) =>
                         update(i, {
                           type: e.target.value as BackfillRow["type"],
-                        });
-                      }}
+                        })
+                      }
                       className="w-full rounded-md border border-border bg-surface px-2 py-1"
                     >
-                      {LEAVE_TYPES.map((t) => (
+                      {allowedTypes.map((t) => (
                         <option key={t} value={t}>
                           {t}
                         </option>
@@ -829,7 +1094,7 @@ function BackfillLeaves({ bfEmployees, bfEmpLoading }: BackfillLeavesProps) {
                       className="w-full rounded-md border border-border bg-surface px-2 py-1"
                     >
                       <option value="">(none)</option>
-                      {LEAVE_TYPES.map((t) => (
+                      {allowedTypes.map((t) => (
                         <option key={t} value={t}>
                           {t}
                         </option>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { z } from "zod";
 import { api } from "../../lib/api";
 
 type FieldType = "text" | "number" | "date";
@@ -15,7 +16,7 @@ type Field = {
   category?: FieldCategory;
   autoKey?: boolean;
   amountType?: "fixed" | "percent";
-  locked?: boolean; // UI-only lock
+  locked?: boolean;
 };
 
 type Settings = {
@@ -34,7 +35,6 @@ function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-// FIRST 4 ARE SYSTEM:
 const PROTECTED_KEYS = new Set([
   "basic_earned",
   "hra",
@@ -42,13 +42,64 @@ const PROTECTED_KEYS = new Set([
   "other_allowances",
 ]);
 
+const FieldTypeEnum = z.enum(["text", "number", "date"]);
+const FieldCategoryEnum = z.enum(["earning", "deduction", "info"]);
+
+const BasicFieldSchema = z.object({
+  id: z.string().min(1),
+  key: z
+    .string()
+    .min(1, "Key required")
+    .regex(/^[a-z0-9_]+$/, "Use a-z, 0-9, _"),
+  label: z.string().min(1, "Label required"),
+  type: FieldTypeEnum,
+  defaultValue: z.any().optional(),
+  order: z.number().int().nonnegative().optional(),
+  category: FieldCategoryEnum.optional(),
+  autoKey: z.boolean().optional(),
+  amountType: z.union([z.literal("fixed"), z.literal("percent")]).optional(),
+  locked: z.boolean().optional(),
+});
+
+const BasicSettingsSchema = z.object({
+  basicPercent: z.number().finite().min(0),
+  hraPercent: z.number().finite().min(0),
+  medicalAmount: z.number().finite().min(0),
+});
+
+const BasicTemplateSchema = z
+  .object({
+    fields: z.array(BasicFieldSchema),
+    settings: BasicSettingsSchema,
+  })
+  .superRefine((tpl, ctx) => {
+    const seen = new Map<string, number[]>();
+    tpl.fields.forEach((f, i) => {
+      const k = (f.key || "").trim();
+      if (!k) return;
+      const arr = seen.get(k) || [];
+      arr.push(i);
+      seen.set(k, arr);
+    });
+    for (const [k, idxs] of seen.entries()) {
+      if (idxs.length > 1) {
+        idxs.forEach((i) =>
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Duplicate key: ${k}`,
+            path: ["fields", i, "key"],
+          })
+        );
+      }
+    }
+  });
+
 export default function SalaryTemplate() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
   const [fields, setFields] = useState<Field[]>([]);
-  // Kept for payload compatibility; no separate UI for these
   const [settings, setSettings] = useState<Settings>({
     basicPercent: 35,
     hraPercent: 45,
@@ -59,7 +110,8 @@ export default function SalaryTemplate() {
   const [cat, setCat] = useState<"all" | FieldCategory>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | FieldType>("all");
 
-  // Load template
+  const [zodErrors, setZodErrors] = useState<Record<string, string>>({});
+
   useEffect(() => {
     (async () => {
       try {
@@ -83,13 +135,14 @@ export default function SalaryTemplate() {
               category: (fld.category as FieldCategory) || "info",
               order: Number.isFinite(fld.order) ? fld.order : i,
               autoKey: !fld.key || fld.key === slugify(fld.label),
-              amountType: (fld.amountType as "fixed" | "percent") || "fixed",
+              amountType:
+                (fld.amountType as "fixed" | "percent") ||
+                (fld.type === "number" ? "fixed" : undefined),
               locked: isProtected,
             } as Field;
           })
           .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
-        // Hydrate system field values from settings (if API didn't send defaults)
         for (const f of normalized) {
           if (f.key === "basic_earned") {
             const v = Number.isFinite(Number(s.basicPercent))
@@ -97,25 +150,32 @@ export default function SalaryTemplate() {
               : undefined;
             if (v !== undefined) f.defaultValue = v;
             else if (f.defaultValue == null) f.defaultValue = 0;
+            f.type = "number";
+            f.amountType = "percent";
           } else if (f.key === "hra") {
             const v = Number.isFinite(Number(s.hraPercent))
               ? Number(s.hraPercent)
               : undefined;
             if (v !== undefined) f.defaultValue = v;
             else if (f.defaultValue == null) f.defaultValue = 0;
+            f.type = "number";
+            f.amountType = "percent";
           } else if (f.key === "medical") {
             const v = Number.isFinite(Number(s.medicalAmount))
               ? Number(s.medicalAmount)
               : undefined;
             if (v !== undefined) f.defaultValue = v;
             else if (f.defaultValue == null) f.defaultValue = 0;
+            f.type = "number";
+            f.amountType = "fixed";
           } else if (f.key === "other_allowances") {
             if (f.defaultValue == null) f.defaultValue = 0;
+            f.type = "number";
+            f.amountType = "fixed";
           }
         }
 
-        // Keep settings state in sync (for payload compatibility)
-        setSettings({
+        const nextSettings: Settings = {
           basicPercent: Number.isFinite(Number(s.basicPercent))
             ? Number(s.basicPercent)
             : Number(
@@ -130,8 +190,24 @@ export default function SalaryTemplate() {
             : Number(
                 normalized.find((x) => x.key === "medical")?.defaultValue
               ) || 0,
-        });
+        };
 
+        const parsed = BasicTemplateSchema.safeParse({
+          fields: normalized,
+          settings: nextSettings,
+        });
+        if (!parsed.success) {
+          const e: Record<string, string> = {};
+          parsed.error.issues.forEach((iss) => {
+            e[iss.path.join(".")] = iss.message;
+          });
+          setZodErrors(e);
+          setErr("Loaded with basic validation warnings");
+        } else {
+          setZodErrors({});
+        }
+
+        setSettings(nextSettings);
         setFields(normalized);
       } catch (e: any) {
         setErr(e?.response?.data?.error || "Failed to load template");
@@ -147,7 +223,6 @@ export default function SalaryTemplate() {
     return c;
   }, [fields]);
 
-  // Validation
   const { hasDuplicateKeys, invalids, duplicateSet } = useMemo(() => {
     const map = new Map<string, number>();
     const invalidIdx: number[] = [];
@@ -179,7 +254,20 @@ export default function SalaryTemplate() {
     });
   }, [fields, q, cat, typeFilter]);
 
-  // Save template — settings mirror system field values
+  function validateBasic(fs: Field[], s: Settings) {
+    const parsed = BasicTemplateSchema.safeParse({ fields: fs, settings: s });
+    if (!parsed.success) {
+      const e: Record<string, string> = {};
+      parsed.error.issues.forEach(
+        (iss) => (e[iss.path.join(".")] = iss.message)
+      );
+      setZodErrors(e);
+      return false;
+    }
+    setZodErrors({});
+    return true;
+  }
+
   const save = useCallback(async () => {
     try {
       setErr(null);
@@ -194,13 +282,18 @@ export default function SalaryTemplate() {
         hraPercent: Number(hra?.defaultValue ?? settings.hraPercent ?? 0),
         medicalAmount: Number(med?.defaultValue ?? settings.medicalAmount ?? 0),
       };
-      setSettings(nextSettings);
+
+      const fs = fields.map((f, i) => ({ ...f, order: i }));
+      if (!validateBasic(fs, nextSettings)) {
+        setErr("Fix basic validation errors");
+        return;
+      }
 
       await api.post("/salary/templates", {
-        fields: fields.map((f, i) => ({ ...f, order: i })),
+        fields: fs,
         settings: nextSettings,
       });
-
+      setSettings(nextSettings);
       setOk("Saved");
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to save template");
@@ -235,7 +328,6 @@ export default function SalaryTemplate() {
     ]);
   }
 
-  // System fields: only value editable
   function updateField(i: number, patch: Partial<Field>) {
     setFields((prev) =>
       prev.map((f, idx) => {
@@ -256,19 +348,48 @@ export default function SalaryTemplate() {
     );
   }
 
+  const pct = (v: any) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? `${n}%` : "—%";
+  };
+
   function removeField(i: number) {
     setFields((prev) => {
       const f = prev[i];
-      if (f.locked || PROTECTED_KEYS.has(f.key)) return prev; // can't remove system fields
+      if (f.locked || PROTECTED_KEYS.has(f.key)) return prev;
       return prev.filter((_, idx) => idx !== i);
     });
+  }
+
+  useEffect(() => {
+    const fs = fields.map((f, i) => ({ ...f, order: i }));
+    validateBasic(fs, settings);
+  }, [fields, settings]);
+
+  function unitForField(f: Field): {
+    unitLabel: string;
+    prefix?: string;
+    suffix?: string;
+  } {
+    if (
+      f.key === "basic_earned" ||
+      f.key === "hra" ||
+      f.amountType === "percent"
+    )
+      return { unitLabel: "%", suffix: "%" };
+    if (
+      f.key === "medical" ||
+      f.key === "other_allowances" ||
+      f.amountType === "fixed"
+    )
+      return { unitLabel: "₹", prefix: "₹" };
+    return { unitLabel: "" };
   }
 
   if (loading) return <div>Loading…</div>;
 
   return (
     <div className="mx-auto w-full max-w-screen-lg space-y-3 px-3">
-      {/* Header / filters */}
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold">Salary Template</h2>
         <span className="rounded-full border border-border px-2 py-0.5 text-xs">
@@ -305,7 +426,6 @@ export default function SalaryTemplate() {
         </div>
       </div>
 
-      {/* Fields list – compact & scrollable */}
       <div className="rounded-md border border-border bg-surface p-2">
         <div className="max-h-[70vh] overflow-auto pr-1">
           {filtered.length === 0 && (
@@ -318,9 +438,15 @@ export default function SalaryTemplate() {
             {filtered.map((f, iFiltered) => {
               const i = fields.indexOf(f);
               const isDup = f.key && duplicateSet.has(f.key);
-              const isInvalid = invalids.has(i);
+              const isInvalid = !f.label.trim() || !(f.key || "").trim();
               const isProtected = f.locked || PROTECTED_KEYS.has(f.key);
               const disableKeyLabel = !!isProtected;
+
+              const keyErr = zodErrors[`fields.${i}.key`];
+              const labelErr = zodErrors[`fields.${i}.label`];
+
+              const { unitLabel, prefix, suffix } = unitForField(f);
+              const valueLabel = `Value${unitLabel ? ` (${unitLabel})` : ""}`;
 
               return (
                 <div
@@ -329,7 +455,6 @@ export default function SalaryTemplate() {
                     isInvalid ? "border-amber-600" : "border-border"
                   } bg-white p-2`}
                 >
-                  {/* Row header chips */}
                   <div className="mb-1 flex items-center gap-2">
                     <span
                       className={`rounded px-2 py-0.5 text-[10px] ${
@@ -362,9 +487,7 @@ export default function SalaryTemplate() {
                     </div>
                   </div>
 
-                  {/* Inputs grid – dense */}
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-                    {/* Label */}
                     <div>
                       <div className="mb-0.5 text-[10px] text-muted">Label</div>
                       <input
@@ -378,12 +501,18 @@ export default function SalaryTemplate() {
                           })
                         }
                         disabled={disableKeyLabel}
-                        className="h-9 w-full rounded border border-border bg-bg px-2 text-sm disabled:opacity-60"
+                        className={`h-9 w-full rounded border px-2 text-sm ${
+                          labelErr ? "border-error" : "border-border"
+                        } bg-bg disabled:opacity-60`}
                         placeholder="Basic Earned"
                       />
+                      {labelErr && (
+                        <div className="mt-1 text-[10px] text-error">
+                          {labelErr}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Key */}
                     <div>
                       <div className="mb-0.5 flex items-center justify-between text-[10px] text-muted">
                         <span>Key</span>
@@ -406,13 +535,17 @@ export default function SalaryTemplate() {
                         }
                         disabled={disableKeyLabel || !!f.autoKey}
                         className={`h-9 w-full rounded border px-2 text-sm ${
-                          isDup ? "border-error" : "border-border"
+                          isDup || keyErr ? "border-error" : "border-border"
                         } bg-bg disabled:opacity-60`}
                         placeholder="basic_earned"
                       />
+                      {(isDup || keyErr) && (
+                        <div className="mt-1 text-[10px] text-error">
+                          {keyErr || "Duplicate key"}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Type / Category */}
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <div className="mb-0.5 text-[10px] text-muted">
@@ -455,30 +588,44 @@ export default function SalaryTemplate() {
                       </div>
                     </div>
 
-                    {/* Value (+ amountType for non-system numbers) */}
                     <div>
-                      <div className="mb-0.5 text-[10px] text-muted">Value</div>
-                      <input
-                        type={
-                          f.type === "number"
-                            ? "number"
-                            : f.type === "date"
-                            ? "date"
-                            : "text"
-                        }
-                        value={f.defaultValue ?? ""}
-                        onChange={(e) =>
-                          updateField(i, {
-                            defaultValue:
-                              f.type === "number"
-                                ? e.target.value === ""
-                                  ? ""
-                                  : Number(e.target.value)
-                                : e.target.value,
-                          })
-                        }
-                        className="h-9 w-full rounded border border-border bg-bg px-2 text-sm"
-                      />
+                      <div className="mb-0.5 text-[10px] text-muted">
+                        {valueLabel}
+                      </div>
+                      <div className="flex items-stretch gap-1">
+                        {prefix && (
+                          <span className="inline-flex h-9 select-none items-center rounded border border-border bg-slate-50 px-2 text-sm text-slate-700">
+                            {prefix}
+                          </span>
+                        )}
+                        <input
+                          type={
+                            f.type === "number"
+                              ? "number"
+                              : f.type === "date"
+                              ? "date"
+                              : "text"
+                          }
+                          value={f.defaultValue ?? ""}
+                          onChange={(e) =>
+                            updateField(i, {
+                              defaultValue:
+                                f.type === "number"
+                                  ? e.target.value === ""
+                                    ? ""
+                                    : Number(e.target.value)
+                                  : e.target.value,
+                            })
+                          }
+                          className="h-9 w-full rounded border border-border bg-bg px-2 text-sm"
+                        />
+                        {suffix && (
+                          <span className="inline-flex h-9 select-none items-center rounded border border-border bg-slate-50 px-2 text-sm text-slate-700">
+                            {suffix}
+                          </span>
+                        )}
+                      </div>
+
                       {f.type === "number" && !isProtected && (
                         <div className="mt-1 grid grid-cols-2 gap-2">
                           <select
@@ -502,17 +649,24 @@ export default function SalaryTemplate() {
                           </span>
                         </div>
                       )}
-                      {f.type === "number" && isProtected && (
-                        <div className="mt-1 text-[10px] text-amber-700">
-                          {f.key === "basic_earned"
-                            ? "Basic Earned (value only)"
-                            : f.key === "hra"
-                            ? "HRA (value only)"
-                            : f.key === "medical"
-                            ? "Medical (value only)"
-                            : "Other Allowances (value only)"}
-                        </div>
-                      )}
+
+                      {f.type === "number" &&
+                        isProtected &&
+                        (f.key === "basic_earned" || f.key === "hra") && (
+                          <div className="mt-1 text-[10px] text-slate-700">
+                            {f.key === "basic_earned" ? (
+                              <>
+                                Basic: <strong>{pct(f.defaultValue)}</strong> of
+                                total
+                              </>
+                            ) : (
+                              <>
+                                HRA: <strong>{pct(f.defaultValue)}</strong> of
+                                basic
+                              </>
+                            )}
+                          </div>
+                        )}
                     </div>
                   </div>
                 </div>
@@ -522,7 +676,6 @@ export default function SalaryTemplate() {
         </div>
       </div>
 
-      {/* Sticky bottom bar */}
       <div className="sticky bottom-0 left-0 right-0 z-10 border-t border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
         <div className="mx-auto flex max-w-screen-lg items-center gap-2 px-3 py-2">
           {err && <div className="text-xs text-error">{err}</div>}
@@ -536,13 +689,19 @@ export default function SalaryTemplate() {
             </button>
             <button
               onClick={save}
-              disabled={hasDuplicateKeys || invalids.size > 0}
+              disabled={
+                hasDuplicateKeys ||
+                invalids.size > 0 ||
+                Object.keys(zodErrors).length > 0
+              }
               className="h-9 rounded bg-primary px-4 text-sm text-white disabled:opacity-50"
               title={
                 hasDuplicateKeys
                   ? "Duplicate keys"
                   : invalids.size
                   ? "Fix empty label/key"
+                  : Object.keys(zodErrors).length
+                  ? "Fix validation errors"
                   : undefined
               }
             >
@@ -552,10 +711,13 @@ export default function SalaryTemplate() {
         </div>
       </div>
 
-      {(hasDuplicateKeys || invalids.size > 0) && (
+      {(hasDuplicateKeys ||
+        invalids.size > 0 ||
+        Object.keys(zodErrors).length > 0) && (
         <div className="text-sm text-amber-600">
           {hasDuplicateKeys ? "Duplicate keys. " : ""}
-          {invalids.size ? `${invalids.size} field(s) need label/key.` : ""}
+          {invalids.size ? `${invalids.size} field(s) need label/key. ` : ""}
+          {Object.keys(zodErrors).length ? "Validation errors present." : ""}
         </div>
       )}
     </div>

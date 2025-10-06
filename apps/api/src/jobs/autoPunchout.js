@@ -36,6 +36,9 @@ async function runAutoPunchOut() {
       rec.lastPunchOut = now;
       rec.lastPunchIn = undefined;
       rec.autoPunchOut = true;
+      rec.autoPunchOutAt = now;
+      rec.autoPunchLastIn = openStart;
+      rec.autoPunchResolvedAt = undefined;
       await rec.save();
       closed++;
 

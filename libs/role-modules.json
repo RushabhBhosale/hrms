@@ -1,0 +1,117 @@
+[
+  {
+    "key": "dashboard",
+    "label": "Dashboard",
+    "description": "Access the admin overview dashboard",
+    "actions": [
+      { "key": "read", "label": "View" }
+    ]
+  },
+  {
+    "key": "employees",
+    "label": "Employees",
+    "description": "Manage employee records, onboarding, and updates",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Create & edit" }
+    ]
+  },
+  {
+    "key": "roles",
+    "label": "Roles & Permissions",
+    "description": "Configure employee roles and access policies",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Manage" }
+    ]
+  },
+  {
+    "key": "projects",
+    "label": "Projects",
+    "description": "Create and manage projects, tasks, and assignments",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Create & edit" }
+    ]
+  },
+  {
+    "key": "attendance",
+    "label": "Attendance",
+    "description": "Review and manage attendance records",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Adjust" }
+    ]
+  },
+  {
+    "key": "leaves",
+    "label": "Leave Requests",
+    "description": "Review, approve, or reject employee leave requests",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Approve & edit" }
+    ]
+  },
+  {
+    "key": "leave_settings",
+    "label": "Leave Settings",
+    "description": "Configure leave policies and accrual rules",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Manage" }
+    ]
+  },
+  {
+    "key": "reports",
+    "label": "Reports",
+    "description": "Access analytics and exported reports",
+    "actions": [
+      { "key": "read", "label": "View" }
+    ]
+  },
+  {
+    "key": "salary",
+    "label": "Payroll",
+    "description": "Manage salary templates and slips",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Manage" }
+    ]
+  },
+  {
+    "key": "finance",
+    "label": "Finance",
+    "description": "Handle invoices and expense claims",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Manage" }
+    ]
+  },
+  {
+    "key": "announcements",
+    "label": "Announcements",
+    "description": "Broadcast and manage company announcements",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Publish" }
+    ]
+  },
+  {
+    "key": "company",
+    "label": "Company Settings",
+    "description": "Update company profile, timing, and configuration",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Manage" }
+    ]
+  },
+  {
+    "key": "documents",
+    "label": "Documents",
+    "description": "Review and upload employee documents",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Upload" }
+    ]
+  }
+]

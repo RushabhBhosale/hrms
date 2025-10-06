@@ -12,6 +12,12 @@ const EmployeeSchema = new mongoose.Schema(
       default: "EMPLOYEE",
     },
     subRoles: { type: [String], default: [] },
+    employmentStatus: {
+      type: String,
+      enum: ["PERMANENT", "PROBATION"],
+      default: "PROBATION",
+    },
+    probationSince: { type: Date },
     company: { type: mongoose.Schema.Types.ObjectId, ref: "Company" },
     address: { type: String },
     phone: { type: String },

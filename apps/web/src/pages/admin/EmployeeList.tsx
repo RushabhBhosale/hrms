@@ -4,6 +4,7 @@ import { api } from "../../lib/api";
 import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
 import { RoleBadge } from "../../components/ui/RoleBadge";
 import type { PrimaryRole } from "../../lib/auth";
+import type { RoleDefinition } from "../../types/roles";
 
 type CompanyEmployee = {
   id: string;
@@ -23,6 +24,7 @@ export default function EmployeeList() {
   const [limit, setLimit] = useState(20);
   const [sortKey, setSortKey] = useState<"name" | "email" | "role">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [roleLabels, setRoleLabels] = useState<Record<string, string>>({});
 
   async function load() {
     try {
@@ -44,15 +46,42 @@ export default function EmployeeList() {
     load();
   }, []);
 
-  function roleLabel(u: CompanyEmployee) {
-    return (
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get("/companies/roles");
+        const defs: RoleDefinition[] = res.data.roles || [];
+        const map: Record<string, string> = {};
+        defs.forEach((def) => {
+          map[def.name] = def.label;
+        });
+        setRoleLabels(map);
+      } catch {}
+    })();
+  }, []);
+
+  function resolveRole(u: CompanyEmployee) {
+    const slugRaw =
       u.subRoles?.[0] ||
       (u.primaryRole === "ADMIN"
         ? "admin"
         : u.primaryRole === "SUPERADMIN"
         ? "superadmin"
-        : "employee")
-    );
+        : "employee");
+    const slug = slugRaw.toLowerCase();
+    const label = roleLabels[slug] || prettifyRole(slug);
+    return { slug, label };
+  }
+
+  function prettifyRole(value: string) {
+    if (!value) return "Employee";
+    return value
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : ""))
+      .join(" ") || "Employee";
   }
 
   const filtered = useMemo(() => {
@@ -63,7 +92,7 @@ export default function EmployeeList() {
         e.name.toLowerCase().includes(term) ||
         e.email.toLowerCase().includes(term) ||
         e.subRoles.join(",").toLowerCase().includes(term) ||
-        roleLabel(e).toLowerCase().includes(term)
+        resolveRole(e).label.toLowerCase().includes(term)
     );
   }, [q, employees]);
 
@@ -75,7 +104,7 @@ export default function EmployeeList() {
         case "email":
           return dir * a.email.localeCompare(b.email);
         case "role":
-          return dir * roleLabel(a).localeCompare(roleLabel(b));
+          return dir * resolveRole(a).label.localeCompare(resolveRole(b).label);
         case "name":
         default:
           return dir * a.name.localeCompare(b.name);
@@ -211,7 +240,10 @@ export default function EmployeeList() {
                       </span>
                     </Td>
                     <Td>
-                      <RoleBadge role={roleLabel(u)} />
+                      {(() => {
+                        const info = resolveRole(u);
+                        return <RoleBadge role={info.slug} label={info.label} />;
+                      })()}
                     </Td>
                   </tr>
                 ))
@@ -252,7 +284,10 @@ export default function EmployeeList() {
                 </div>
                 <div className="text-sm text-muted">{u.email}</div>
                 <div className="mt-2">
-                  <RoleBadge role={roleLabel(u)} />
+                  {(() => {
+                    const info = resolveRole(u);
+                    return <RoleBadge role={info.slug} label={info.label} />;
+                  })()}
                 </div>
               </div>
             ))

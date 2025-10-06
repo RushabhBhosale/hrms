@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { setAuth } from "../lib/auth";
+import { clearAuth, setAuth } from "../lib/auth";
 import { Field } from "../components/ui/Field";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { PasswordField } from "../components/ui/PasswordInput";
+import toast from "react-hot-toast";
+import { useNavigate } from "react-router-dom";
 
 // ---------- Helpers ----------
 const strip = (v: string) => v.trim();
@@ -18,6 +21,14 @@ const formatAadhaar = (v: string) =>
 const ProfileSchema = z.object({
   name: z.string().min(2, "Enter full name").max(120, "Too long"),
   email: z.string().email("Invalid email"),
+  personalEmail: z
+    .string()
+    .transform(strip)
+    .refine(
+      (v) => v === "" || z.string().email().safeParse(v).success,
+      "Invalid personal email"
+    )
+    .default(""),
   phone: z
     .string()
     .transform(strip)
@@ -58,7 +69,7 @@ const ProfileSchema = z.object({
   bankIfsc: z
     .string()
     .transform((v) => v.toUpperCase())
-    .refine((v) => v === "" || /^[A-Z]{4}0[A-Z0-9]{6}$/.test(v), "Invalid IFSC")
+    .refine((v) => v === "" || v.length > 10, "Must be exactly 11 characters")
     .default(""),
 });
 type ProfileValues = z.output<typeof ProfileSchema>;
@@ -76,8 +87,10 @@ const PasswordSchema = z
 type PasswordValues = z.output<typeof PasswordSchema>;
 
 export default function Profile() {
+  const nav = useNavigate();
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [canEditProtected, setCanEditProtected] = useState(false);
 
   const {
     register,
@@ -92,6 +105,7 @@ export default function Profile() {
     defaultValues: {
       name: "",
       email: "",
+      personalEmail: "",
       phone: "",
       address: "",
       dob: "",
@@ -126,9 +140,13 @@ export default function Profile() {
         const res = await api.get("/auth/me");
         console.log("hdsgdswkc", res);
         const emp = res.data.employee || {};
+        setCanEditProtected(
+          ["ADMIN", "SUPERADMIN"].includes(emp.primaryRole || "")
+        );
         reset({
           name: emp.name || "",
           email: emp.email || "",
+          personalEmail: emp.personalEmail || "",
           phone: emp.phone || "",
           address: emp.address || "",
           dob: emp.dob ? new Date(emp.dob).toISOString().slice(0, 10) : "",
@@ -173,8 +191,11 @@ export default function Profile() {
       });
       resetPw();
       setOk("Password updated");
+      clearAuth();
+      nav("/login");
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to change password");
+      toast.error(e?.response?.data?.error || "Failed to change password");
     }
   };
 
@@ -229,12 +250,33 @@ export default function Profile() {
             <Field label="Email" required>
               <input
                 type="email"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full rounded-md border border-border px-3 py-2 outline-none focus:ring-2 focus:ring-primary ${
+                  canEditProtected
+                    ? "bg-surface"
+                    : "bg-muted/10 text-muted cursor-not-allowed"
+                }`}
                 {...register("email")}
+                readOnly={!canEditProtected}
+                aria-readonly={!canEditProtected}
               />
               {errors.email && (
                 <p className="text-xs text-error mt-1">
                   {errors.email.message}
+                </p>
+              )}
+            </Field>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Personal Email">
+              <input
+                type="email"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                {...register("personalEmail")}
+              />
+              {errors.personalEmail && (
+                <p className="text-xs text-error mt-1">
+                  {errors.personalEmail.message}
                 </p>
               )}
             </Field>
@@ -285,12 +327,18 @@ export default function Profile() {
                 name="aadharNumber"
                 render={({ field }) => (
                   <input
-                    className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                    className={`w-full rounded-md border border-border px-3 py-2 outline-none focus:ring-2 focus:ring-primary ${
+                      canEditProtected
+                        ? "bg-surface"
+                        : "bg-muted/10 text-muted cursor-not-allowed"
+                    }`}
                     value={formatAadhaar(field.value || "")}
                     onChange={(e) => field.onChange(e.target.value)}
                     inputMode="numeric"
                     maxLength={14}
                     placeholder="1234 5678 9012"
+                    readOnly={!canEditProtected}
+                    aria-readonly={!canEditProtected}
                   />
                 )}
               />
@@ -302,9 +350,15 @@ export default function Profile() {
             </Field>
             <Field label="PAN Number">
               <input
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full rounded-md border border-border px-3 py-2 uppercase outline-none focus:ring-2 focus:ring-primary ${
+                  canEditProtected
+                    ? "bg-surface"
+                    : "bg-muted/10 text-muted cursor-not-allowed"
+                }`}
                 maxLength={10}
                 {...register("panNumber")}
+                readOnly={!canEditProtected}
+                aria-readonly={!canEditProtected}
               />
               {errors.panNumber && (
                 <p className="text-xs text-error mt-1">
@@ -340,6 +394,7 @@ export default function Profile() {
             </Field>
             <Field label="IFSC Code">
               <input
+                maxLength={11}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 {...register("bankIfsc")}
               />
@@ -374,45 +429,21 @@ export default function Profile() {
           className="px-6 py-5 space-y-5"
         >
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Current password" required>
-              <input
-                type="password"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                {...registerPw("currentPassword")}
-                required
-              />
-              {pwErrors.currentPassword && (
-                <p className="text-xs text-error mt-1">
-                  {pwErrors.currentPassword.message}
-                </p>
-              )}
-            </Field>
-            <Field label="New password (min 6 chars)" required>
-              <input
-                type="password"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                {...registerPw("newPassword")}
-                required
-              />
-              {pwErrors.newPassword && (
-                <p className="text-xs text-error mt-1">
-                  {pwErrors.newPassword.message}
-                </p>
-              )}
-            </Field>
-            <Field label="Confirm password" required>
-              <input
-                type="password"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                {...registerPw("confirmPassword")}
-                required
-              />
-              {pwErrors.confirmPassword && (
-                <p className="text-xs text-error mt-1">
-                  {pwErrors.confirmPassword.message}
-                </p>
-              )}
-            </Field>
+            <PasswordField
+              label="Current password"
+              registration={registerPw("currentPassword")}
+              error={pwErrors.currentPassword}
+            />
+            <PasswordField
+              label="New password (min 6 chars)"
+              registration={registerPw("newPassword")}
+              error={pwErrors.newPassword}
+            />
+            <PasswordField
+              label="Confirm password"
+              registration={registerPw("confirmPassword")}
+              error={pwErrors.confirmPassword}
+            />
           </div>
 
           <div className="pt-2">

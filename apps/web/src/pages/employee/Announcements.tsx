@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { api } from "../../lib/api";
 import { toast } from "react-hot-toast";
-import { getEmployee } from "../../lib/auth";
+import { getEmployee, hasPermission } from "../../lib/auth";
 import {
   AnnouncementFormValues,
   announcementFormSchema,
@@ -22,11 +22,7 @@ export default function Announcements() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const u = getEmployee();
-  const canManage =
-    !!u &&
-    (u.primaryRole === "ADMIN" ||
-      u.primaryRole === "SUPERADMIN" ||
-      (u.subRoles || []).includes("hr"));
+  const canManage = hasPermission(u, "announcements", "write");
 
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementFormSchema),

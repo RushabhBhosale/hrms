@@ -944,7 +944,7 @@ export default function ProjectDetails() {
               </div>
 
               {/* Manual time entry (add hours) */}
-              {canCollaborate && (
+              {/* {canCollaborate && (
                 <div className="mt-3 grid sm:grid-cols-[140px_120px] gap-2 items-center">
                   <input
                     className="h-9 rounded border border-border bg-bg px-3 text-sm"
@@ -972,7 +972,7 @@ export default function ProjectDetails() {
                     Save Time
                   </button>
                 </div>
-              )}
+              )} */}
             </div>
           );
         })}

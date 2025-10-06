@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
 import { toast } from "react-hot-toast";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { RoleDefinition } from "../../types/roles";
 
 type Employee = {
   id: string;
@@ -31,6 +32,8 @@ type Employee = {
     unpaid?: number;
   };
   totalLeaveAvailable?: number;
+  employmentStatus?: "PERMANENT" | "PROBATION";
+  probationSince?: string | null;
 };
 
 const BLOOD_GROUP_OPTIONS = [
@@ -157,17 +160,34 @@ export default function EmployeeDetails() {
   const [uOk, setUOk] = useState<string | null>(null);
 
   const [role, setRole] = useState("");
-  const [roles, setRoles] = useState<string[]>([]);
+  const [roles, setRoles] = useState<RoleDefinition[]>([]);
   const [roleLoading, setRoleLoading] = useState(false);
   const [roleErr, setRoleErr] = useState<string | null>(null);
   const [roleOk, setRoleOk] = useState<string | null>(null);
+  const roleOptions = useMemo(
+    () => roles.map((r) => ({ value: r.name, label: r.label })),
+    [roles]
+  );
 
   const [adjustAmount, setAdjustAmount] = useState("");
   const [adjustLoading, setAdjustLoading] = useState(false);
   const [adjustErr, setAdjustErr] = useState<string | null>(null);
   const [adjustOk, setAdjustOk] = useState<string | null>(null);
 
+  const [statusUpdating, setStatusUpdating] = useState(false);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
+  const [statusOk, setStatusOk] = useState<string | null>(null);
+
   const [ctcMode, setCtcMode] = useState<"monthly" | "annual">("annual");
+
+  const employmentStatus = employee?.employmentStatus || "PROBATION";
+  const isOnProbation = employmentStatus === "PROBATION";
+  const probationSinceLabel = (() => {
+    if (!employee?.probationSince) return "—";
+    const d = new Date(employee.probationSince);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString();
+  })();
 
   const {
     register,
@@ -207,6 +227,8 @@ export default function EmployeeDetails() {
         setEmployee(e);
         setReportingPerson(e?.reportingPerson?.id || "");
         setRole(e?.subRoles?.[0] || "");
+        setStatusErr(null);
+        setStatusOk(null);
 
         reset({
           phone: e.phone || "",
@@ -243,7 +265,13 @@ export default function EmployeeDetails() {
       } catch {}
       try {
         const r = await api.get("/companies/roles");
-        setRoles(r.data.roles || []);
+        const defs: RoleDefinition[] = r.data.roles || [];
+        setRoles(defs);
+        if (!role) {
+          const fallback =
+            defs.find((item) => !item.system)?.name || defs[0]?.name || "";
+          if (fallback) setRole(fallback);
+        }
       } catch {}
     })();
   }, []);
@@ -267,8 +295,15 @@ export default function EmployeeDetails() {
   }, [id, month]);
 
   useEffect(() => {
-    if (!role && roles.length) setRole(roles[0]);
-  }, [roles, role]);
+    if (!role && roleOptions.length) {
+      const fallback =
+        roleOptions.find((opt) => {
+          const meta = roles.find((r) => r.name === opt.value);
+          return meta ? !meta.system : false;
+        })?.value || roleOptions[0]?.value || "";
+      if (fallback) setRole(fallback);
+    }
+  }, [role, roleOptions, roles]);
 
   async function updateReporting(e: React.FormEvent) {
     e.preventDefault();
@@ -367,6 +402,52 @@ export default function EmployeeDetails() {
       toast.error(msg);
     } finally {
       setAdjustLoading(false);
+    }
+  }
+
+  async function changeEmploymentStatus(
+    next: "PERMANENT" | "PROBATION"
+  ) {
+    if (!id) return;
+    try {
+      setStatusUpdating(true);
+      setStatusErr(null);
+      setStatusOk(null);
+      const res = await api.put(`/companies/employees/${id}/probation`, {
+        status: next,
+      });
+      const payload = res.data?.employee;
+      setEmployee((prev) =>
+        prev
+          ? {
+              ...prev,
+              employmentStatus:
+                (payload?.employmentStatus as Employee["employmentStatus"]) ||
+                next,
+              probationSince: payload?.probationSince || null,
+              totalLeaveAvailable:
+                payload?.totalLeaveAvailable ?? prev.totalLeaveAvailable,
+              leaveBalances: payload?.leaveBalances || prev.leaveBalances,
+            }
+          : prev
+      );
+      setStatusOk(
+        next === "PROBATION"
+          ? "Employee marked as probation"
+          : "Employee marked permanent"
+      );
+      toast.success(
+        next === "PROBATION"
+          ? "Employee moved to probation"
+          : "Employee is now permanent"
+      );
+    } catch (e: any) {
+      const msg =
+        e?.response?.data?.error || "Failed to update employment status";
+      setStatusErr(msg);
+      toast.error(msg);
+    } finally {
+      setStatusUpdating(false);
     }
   }
 
@@ -766,6 +847,48 @@ export default function EmployeeDetails() {
         </div>
       </form>
 
+      <section className="space-y-4 bg-surface border border-border rounded-md p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-semibold">Employment Status</h3>
+          {statusErr && <div className="text-sm text-error">{statusErr}</div>}
+          {statusOk && <div className="text-sm text-success">{statusOk}</div>}
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-md border border-border/60 bg-muted/10 p-4 space-y-2">
+            <div className="text-xs uppercase tracking-wide text-muted">
+              Current Status
+            </div>
+            <div className="text-2xl font-semibold">
+              {isOnProbation ? "Probation" : "Permanent"}
+            </div>
+            <div className="text-sm text-muted">
+              Probation since: {probationSinceLabel}
+            </div>
+          </div>
+          <div className="rounded-md border border-border/60 bg-bg p-4 space-y-3 text-sm">
+            <p>
+              Toggle between permanent and probation to adjust the accrual rate
+              applied to this employee. Changes take effect immediately for
+              future accruals.
+            </p>
+            <button
+              type="button"
+              disabled={statusUpdating}
+              onClick={() =>
+                changeEmploymentStatus(isOnProbation ? "PERMANENT" : "PROBATION")
+              }
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white text-sm font-medium disabled:opacity-60"
+            >
+              {statusUpdating
+                ? "Updating…"
+                : isOnProbation
+                ? "Mark as Permanent"
+                : "Set to Probation"}
+            </button>
+          </div>
+        </div>
+      </section>
+
       {/* Leave Balance */}
       <section className="space-y-4 bg-surface border border-border rounded-md p-4">
         <div className="flex items-center justify-between">
@@ -856,9 +979,9 @@ export default function EmployeeDetails() {
             onChange={(e) => setRole(e.target.value)}
             className="rounded-md border border-border bg-bg px-3 h-10 outline-none focus:ring-2 focus:ring-primary"
           >
-            {roles.map((r) => (
-              <option key={r} value={r}>
-                {r.charAt(0).toUpperCase() + r.slice(1)}
+            {roleOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
               </option>
             ))}
           </select>

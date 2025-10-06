@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import { Th, Td } from "../../components/ui/Table";
 import { toast } from "react-hot-toast";
-import { getEmployee } from "../../lib/auth";
+import { getEmployee, hasPermission } from "../../lib/auth";
 import type { PrimaryRole } from "../../lib/auth";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -58,6 +58,7 @@ type CreateProjectValues = z.infer<typeof CreateProjectSchema>;
 export default function ProjectsAdmin() {
   const nav = useNavigate();
   const u = getEmployee();
+  const canManageProjects = hasPermission(u, "projects", "write");
 
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
@@ -141,6 +142,10 @@ export default function ProjectsAdmin() {
 
   // ----- onSubmit for create form (uses zod-validated data) -----
   const onCreate = async (data: CreateProjectValues) => {
+    if (!canManageProjects) {
+      toast.error("You do not have permission to create projects");
+      return;
+    }
     try {
       setLoading(true);
 
@@ -195,10 +200,11 @@ export default function ProjectsAdmin() {
       </div>
 
       {/* Create form (RHF + Zod) */}
-      <form
-        onSubmit={handleSubmit(onCreate)}
-        className="space-y-4 bg-surface border border-border rounded-md p-4"
-      >
+      {canManageProjects && (
+        <form
+          onSubmit={handleSubmit(onCreate)}
+          className="space-y-4 bg-surface border border-border rounded-md p-4"
+        >
         <div className="grid md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm mb-1 required-label">Title</label>
@@ -335,7 +341,8 @@ export default function ProjectsAdmin() {
             {isSubmitting || loading ? "Creating…" : "Create Project"}
           </button>
         </div>
-      </form>
+        </form>
+      )}
 
       {/* List as table */}
       <div className="overflow-auto border border-border rounded-md bg-surface">

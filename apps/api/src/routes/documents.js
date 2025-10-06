@@ -32,7 +32,6 @@ router.get(
   requirePrimary(["ADMIN", "SUPERADMIN"]),
   async (req, res) => {
     const doc = await Employee.findById(req.params.id);
-    console.log(":=dshjdsc", doc);
     if (!doc) return res.status(404).json({ error: "Not found" });
     await syncLeaveBalances(doc);
     try {
@@ -71,6 +70,8 @@ router.get(
           bankName: doc.bankDetails?.bankName || "",
           ifsc: doc.bankDetails?.ifsc || "",
         },
+        employmentStatus: doc.employmentStatus || "PROBATION",
+        probationSince: doc.probationSince || null,
       },
     });
   }

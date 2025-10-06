@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import type { ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
+import { resolveLocationLabel } from "../../lib/location";
 import ProjectTime from "../report/ProjectTime";
 import {
   Users,
@@ -10,6 +12,7 @@ import {
   Receipt,
   PieChart as PieChartIcon,
   CalendarClock,
+  AlertTriangle,
 } from "lucide-react";
 import { Card } from "../../components/ui/Card";
 import {
@@ -46,6 +49,8 @@ type Attendance = {
   firstPunchIn?: string;
   lastPunchOut?: string;
   lastPunchIn?: string;
+  firstPunchInLocation?: string | null;
+  lastPunchInLocation?: string | null;
   workedMs?: number;
 };
 
@@ -103,6 +108,12 @@ type FinanceSummary = {
   recurringTrend: RecurringTrendPoint[];
 };
 
+type MissingIssue = {
+  date: string;
+  type: "missingPunchOut" | "autoPunch" | "noAttendance";
+  autoPunchOutAt?: string;
+};
+
 function formatCurrency(value: number, currency = "INR") {
   const formatter = new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -126,6 +137,42 @@ function formatDateLabel(value?: string | null) {
     month: "short",
     year: "numeric",
   });
+}
+
+function fmtDateKey(key: string) {
+  const [y, m, d] = key.split("-").map((x) => parseInt(x, 10));
+  const local = new Date(y, (m || 1) - 1, d || 1);
+  return local.toLocaleDateString();
+}
+
+function fmtShortTime(iso?: string) {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function describeIssue(issue: MissingIssue) {
+  switch (issue.type) {
+    case "autoPunch":
+      return "Auto punch-out pending";
+    case "noAttendance":
+      return "No punches recorded";
+    default:
+      return "Punch-out missing";
+  }
+}
+
+function renderIssueHint(issue: MissingIssue) {
+  if (issue.type === "autoPunch") {
+    const time = fmtShortTime(issue.autoPunchOutAt);
+    return time
+      ? `System closed the day at ${time}. Confirm the actual punch-out time.`
+      : "System closed the day automatically. Confirm the actual punch-out time.";
+  }
+  if (issue.type === "noAttendance")
+    return "Apply leave or notify an admin to record the punches for that day.";
+  return "Set the punch-out time and log the tasks you worked on.";
 }
 
 function titleCase(value?: string | null) {
@@ -380,6 +427,7 @@ function format(ms: number) {
 }
 
 export default function AdminDash() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState({ employees: 0, present: 0 });
   const [attendance, setAttendance] = useState<Attendance | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -394,6 +442,24 @@ export default function AdminDash() {
   const [finance, setFinance] = useState<FinanceSummary | null>(null);
   const [loadingFinance, setLoadingFinance] = useState(false);
   const [financeError, setFinanceError] = useState<string | null>(null);
+  const [missingIssues, setMissingIssues] = useState<MissingIssue[]>([]);
+  const [missingLoading, setMissingLoading] = useState(false);
+  const [missingErr, setMissingErr] = useState<string | null>(null);
+  const [showMissing, setShowMissing] = useState(false);
+
+  const todayKey = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(now.getDate()).padStart(2, "0")}`;
+  }, []);
+
+  const blockingIssues = useMemo(
+    () => missingIssues.filter((issue) => issue.date !== todayKey),
+    [missingIssues, todayKey]
+  );
+  const hasBlockingIssues = blockingIssues.length > 0;
 
   useEffect(() => {
     async function load() {
@@ -452,6 +518,7 @@ export default function AdminDash() {
       }
     }
     load();
+    loadMissingOut();
   }, []);
 
   async function loadAttendance() {
@@ -464,6 +531,55 @@ export default function AdminDash() {
       setErr(e?.response?.data?.error || "Failed to load attendance");
     } finally {
       setLoadingAtt(false);
+    }
+  }
+
+  async function loadMissingOut() {
+    try {
+      setMissingErr(null);
+      setMissingLoading(true);
+      const now = new Date();
+      const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+        2,
+        "0"
+      )}`;
+      const res = await api.get("/attendance/missing-out", {
+        params: { month: ym, scope: "all" },
+      });
+      const payload = res.data || {};
+      let issues: MissingIssue[] = [];
+      if (Array.isArray(payload.issues)) {
+        issues = (payload.issues as any[])
+          .map((issue) => {
+            const date = typeof issue?.date === "string" ? issue.date : null;
+            if (!date) return null;
+            const type: MissingIssue["type"] =
+              issue?.type === "autoPunch" || issue?.type === "noAttendance"
+                ? issue.type
+                : "missingPunchOut";
+            return {
+              date,
+              type,
+              autoPunchOutAt:
+                typeof issue?.autoPunchOutAt === "string"
+                  ? issue.autoPunchOutAt
+                  : undefined,
+            } as MissingIssue;
+          })
+          .filter(Boolean) as MissingIssue[];
+      } else if (Array.isArray(payload.days)) {
+        issues = (payload.days as string[]).map((date) => ({
+          date,
+          type: "missingPunchOut",
+        }));
+      }
+      setMissingIssues(issues);
+    } catch (e: any) {
+      setMissingErr(
+        e?.response?.data?.error || "Failed to load attendance issues"
+      );
+    } finally {
+      setMissingLoading(false);
     }
   }
 
@@ -487,7 +603,14 @@ export default function AdminDash() {
     if (pending) return;
     try {
       setPending(action);
-      await api.post("/attendance/punch", { action });
+      let locationLabel: string | null = null;
+      if (action === "in") {
+        locationLabel = await resolveLocationLabel();
+      }
+      await api.post("/attendance/punch", {
+        action,
+        ...(locationLabel ? { location: locationLabel } : {}),
+      });
       await loadAttendance();
     } catch (e: any) {
       setErr(e?.response?.data?.error || `Failed to punch ${action}`);
@@ -581,6 +704,49 @@ export default function AdminDash() {
 
   return (
     <div className="space-y-8">
+      {hasBlockingIssues && (
+        <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3 text-sm">
+              <AlertTriangle className="mt-0.5 h-4 w-4 text-warning" />
+              <div>
+                <div className="font-medium text-warning">
+                  {blockingIssues.length} pending attendance
+                  {blockingIssues.length > 1 ? " issues" : " issue"} found.
+                </div>
+                <div className="text-muted">
+                  Resolve these days to keep your attendance and reports accurate.
+                </div>
+                {missingErr && (
+                  <div className="mt-1 text-xs text-error">{missingErr}</div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="rounded-md border border-border px-3 py-2 text-xs"
+                onClick={loadMissingOut}
+                disabled={missingLoading}
+              >
+                {missingLoading ? "Checking…" : "Refresh"}
+              </button>
+              <button
+                className="rounded-md border border-border px-3 py-2 text-xs"
+                onClick={() => setShowMissing(true)}
+              >
+                View Details
+              </button>
+              <button
+                className="rounded-md bg-secondary px-3 py-2 text-xs text-white"
+                onClick={() => navigate("/admin/attendance/manual-requests")}
+              >
+                Manual Resolve
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
         <div className="flex items-center justify-between">
           <div className="space-y-1">
@@ -605,6 +771,17 @@ export default function AdminDash() {
                 {punchedIn ? "Punched In" : "Punched Out"}
               </span>
             </div>
+            {(() => {
+              const location =
+                attendance?.lastPunchInLocation ||
+                attendance?.firstPunchInLocation;
+              if (!location) return null;
+              return (
+                <div className="mt-2 text-xs text-muted">
+                  Last punched in from {location}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="flex items-center gap-2">
@@ -1026,6 +1203,77 @@ export default function AdminDash() {
           </button>
         </div>
       </section>
+
+      {showMissing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setShowMissing(false)}
+          />
+          <div className="relative w-full max-w-lg rounded-lg border border-border bg-surface p-5 shadow-lg">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-lg font-semibold">Pending Attendance Issues</h4>
+              <button
+                className="text-sm underline"
+                onClick={() => setShowMissing(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="text-sm text-muted mb-3">
+              Review the days below and use the tools to resolve them.
+            </div>
+            {missingLoading ? (
+              <div className="text-sm text-muted">Loading…</div>
+            ) : blockingIssues.length === 0 ? (
+              <div className="text-sm">No unresolved days. You're all set!</div>
+            ) : (
+              <ul className="space-y-2 max-h-80 overflow-auto pr-1">
+                {blockingIssues.map((issue) => (
+                  <li
+                    key={issue.date}
+                    className="flex flex-col gap-2 rounded border border-border px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium">
+                          {fmtDateKey(issue.date)}
+                        </div>
+                        <div className="text-xs text-muted">
+                          {describeIssue(issue)}
+                        </div>
+                      </div>
+                      <span className="rounded-full border border-border px-2 py-0.5 text-[11px] uppercase">
+                        {issue.type}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted">
+                      {renderIssueHint(issue)}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <Link
+                        to="/admin/attendance/manual-requests"
+                        className="rounded-md border border-border px-3 py-1"
+                        onClick={() => setShowMissing(false)}
+                      >
+                        Manual Attendance Tools
+                      </Link>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-4 flex items-center justify-end">
+              <button
+                className="rounded-md border border-border px-4 py-2 text-sm"
+                onClick={() => setShowMissing(false)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

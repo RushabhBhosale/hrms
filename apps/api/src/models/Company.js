@@ -35,11 +35,24 @@ const CompanySchema = new mongoose.Schema(
       ref: 'CompanyTypeMaster',
     },
     companyTypeName: { type: String },
-    roles: { type: [String], default: ['hr', 'manager', 'developer'] },
+    roles: {
+      type: [String],
+      default: ['admin', 'hr', 'manager'],
+    },
+    roleSettings: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     // Leave policy (simplified): total annual leaves, monthly accrual, and per-type caps from the total
     leavePolicy: {
       totalAnnual: { type: Number, default: 0 },
       ratePerMonth: { type: Number, default: 0 },
+      probationRatePerMonth: { type: Number, default: 0 },
+      accrualStrategy: {
+        type: String,
+        enum: ['ACCRUAL', 'LUMP_SUM'],
+        default: 'ACCRUAL',
+      },
       applicableFrom: { type: Date },
       typeCaps: {
         paid: { type: Number, default: 0 },

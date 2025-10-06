@@ -80,122 +80,125 @@ function canManageProjects(emp) {
 }
 
 // Create project - admin or HR
-router.post(
-  "/",
-  auth,
-  async (req, res) => {
-    try {
-      if (!canManageProjects(req.employee))
-        return res.status(403).json({ error: "Forbidden" });
+router.post("/", auth, async (req, res) => {
+  try {
+    if (!canManageProjects(req.employee))
+      return res.status(403).json({ error: "Forbidden" });
 
-      const computeEstimatedMinutes = () => {
-        if (req.body.estimatedTimeMinutes !== undefined) {
-          const m = parseInt(req.body.estimatedTimeMinutes, 10);
-          if (Number.isFinite(m) && m >= 0) return m;
-        }
-        if (req.body.estimatedHours !== undefined || req.body.estimatedTimeHours !== undefined) {
-          const source =
-            req.body.estimatedHours !== undefined
-              ? req.body.estimatedHours
-              : req.body.estimatedTimeHours;
-          const hours = parseFloat(String(source));
-          if (Number.isFinite(hours) && hours >= 0) return Math.round(hours * 60);
-        }
-        return 0;
-      };
-
-      const parseStartTime = () => {
-        const value = req.body.startTime;
-        if (value === undefined || value === null) return undefined;
-        const trimmed = String(value).trim();
-        if (!trimmed) return undefined;
-        const date = new Date(trimmed);
-        return Number.isNaN(date.getTime()) ? undefined : date;
-      };
-
-      const normalizeMembers = (input) => {
-        if (!Array.isArray(input)) return [];
-        return input
-          .map((member) => {
-            if (member && typeof member === "object") {
-              if (member._id) return String(member._id);
-              return "";
-            }
-            return String(member ?? "").trim();
-          })
-          .filter(Boolean);
-      };
-
-      const normalizeTechStack = (input) => {
-        if (Array.isArray(input)) {
-          return input
-            .map((item) => String(item || "").trim())
-            .filter(Boolean);
-        }
-        if (typeof input === "string") {
-          return input
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean);
-        }
-        return [];
-      };
-
-      const teamLeadId = (() => {
-        const raw = req.body?.teamLead;
-        if (raw && typeof raw === "object") {
-          if (raw._id) return String(raw._id);
-          return "";
-        }
-        if (raw === undefined || raw === null) return "";
-        return String(raw).trim();
-      })();
-
-      const startTime = parseStartTime();
-
-      const validation = parseWithSchema(projectSchema, {
-        title:
-          typeof req.body?.title === "string" ? req.body.title.trim() : req.body?.title,
-        description: req.body?.description,
-        techStack: normalizeTechStack(req.body?.techStack),
-        teamLead: teamLeadId,
-        members: normalizeMembers(req.body?.members),
-        company: String(req.employee.company),
-        estimatedTimeMinutes: computeEstimatedMinutes(),
-        ...(startTime ? { startTime } : {}),
-      });
-
-      if (!validation.ok) {
-        return res
-          .status(400)
-          .json({ error: "Invalid project data", details: validation.issues });
+    const computeEstimatedMinutes = () => {
+      if (req.body.estimatedTimeMinutes !== undefined) {
+        const m = parseInt(req.body.estimatedTimeMinutes, 10);
+        if (Number.isFinite(m) && m >= 0) return m;
       }
+      if (
+        req.body.estimatedHours !== undefined ||
+        req.body.estimatedTimeHours !== undefined
+      ) {
+        const source =
+          req.body.estimatedHours !== undefined
+            ? req.body.estimatedHours
+            : req.body.estimatedTimeHours;
+        const hours = parseFloat(String(source));
+        if (Number.isFinite(hours) && hours >= 0) return Math.round(hours * 60);
+      }
+      return 0;
+    };
 
-      const projectData = validation.data;
-      const project = await Project.create(projectData);
-      res.json({ project });
+    const parseStartTime = () => {
+      const value = req.body.startTime;
+      if (value === undefined || value === null) return undefined;
+      const trimmed = String(value).trim();
+      if (!trimmed) return undefined;
+      const date = new Date(trimmed);
+      return Number.isNaN(date.getTime()) ? undefined : date;
+    };
 
-      // Fire-and-forget email notification to team lead and members
-      (async () => {
-        try {
-          const companyId = req.employee.company;
-          if (!(await isEmailEnabled(companyId))) return;
-          const ids = [projectData.teamLead, ...(Array.isArray(projectData.members) ? projectData.members : [])]
-            .map((x) => String(x))
-            .filter((x) => x && x.length >= 12);
-          if (!ids.length) return;
-          const people = await Employee.find({ _id: { $in: ids } })
-            .select("name email")
-            .lean();
-          const to = Array.from(
-            new Set(people.map((p) => p?.email).filter(Boolean))
-          );
-          if (!to.length) return;
-          const sub = `Assigned to Project: ${projectData.title}`;
-          const safeDesc = projectData.description
-            ? String(projectData.description).replace(/</g, "&lt;")
-            : "";
-          const html = `
+    const normalizeMembers = (input) => {
+      if (!Array.isArray(input)) return [];
+      return input
+        .map((member) => {
+          if (member && typeof member === "object") {
+            if (member._id) return String(member._id);
+            return "";
+          }
+          return String(member ?? "").trim();
+        })
+        .filter(Boolean);
+    };
+
+    const normalizeTechStack = (input) => {
+      if (Array.isArray(input)) {
+        return input.map((item) => String(item || "").trim()).filter(Boolean);
+      }
+      if (typeof input === "string") {
+        return input
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+      return [];
+    };
+
+    const teamLeadId = (() => {
+      const raw = req.body?.teamLead;
+      if (raw && typeof raw === "object") {
+        if (raw._id) return String(raw._id);
+        return "";
+      }
+      if (raw === undefined || raw === null) return "";
+      return String(raw).trim();
+    })();
+
+    const startTime = parseStartTime();
+
+    const validation = parseWithSchema(projectSchema, {
+      title:
+        typeof req.body?.title === "string"
+          ? req.body.title.trim()
+          : req.body?.title,
+      description: req.body?.description,
+      techStack: normalizeTechStack(req.body?.techStack),
+      teamLead: teamLeadId,
+      members: normalizeMembers(req.body?.members),
+      company: String(req.employee.company),
+      estimatedTimeMinutes: computeEstimatedMinutes(),
+      ...(startTime ? { startTime } : {}),
+    });
+
+    if (!validation.ok) {
+      return res
+        .status(400)
+        .json({ error: "Invalid project data", details: validation.issues });
+    }
+
+    const projectData = validation.data;
+    const project = await Project.create(projectData);
+    res.json({ project });
+
+    // Fire-and-forget email notification to team lead and members
+    (async () => {
+      try {
+        const companyId = req.employee.company;
+        if (!(await isEmailEnabled(companyId))) return;
+        const ids = [
+          projectData.teamLead,
+          ...(Array.isArray(projectData.members) ? projectData.members : []),
+        ]
+          .map((x) => String(x))
+          .filter((x) => x && x.length >= 12);
+        if (!ids.length) return;
+        const people = await Employee.find({ _id: { $in: ids } })
+          .select("name email")
+          .lean();
+        const to = Array.from(
+          new Set(people.map((p) => p?.email).filter(Boolean))
+        );
+        if (!to.length) return;
+        const sub = `Assigned to Project: ${projectData.title}`;
+        const safeDesc = projectData.description
+          ? String(projectData.description).replace(/</g, "&lt;")
+          : "";
+        const html = `
           <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; line-height:1.5;">
             <h2 style="margin:0 0 12px;">You've been added to a project</h2>
             <p><strong>Project:</strong> ${projectData.title}</p>
@@ -208,25 +211,24 @@ router.post(
             <p style="margin-top:16px; color:#666; font-size:12px;">This is an automated notification from HRMS.</p>
           </div>
         `;
-          await sendMail({
-            companyId,
-            to,
-            subject: sub,
-            html,
-            text: `You have been added to project: ${projectData.title}`,
-          });
-        } catch (e) {
-          console.warn(
-            "[projects] Failed to send project assignment email:",
-            e?.message || e
-          );
-        }
-      })();
-    } catch (e) {
-      res.status(400).json({ error: e.message });
-    }
+        await sendMail({
+          companyId,
+          to,
+          subject: sub,
+          html,
+          text: `You have been added to project: ${projectData.title}`,
+        });
+      } catch (e) {
+        console.warn(
+          "[projects] Failed to send project assignment email:",
+          e?.message || e
+        );
+      }
+    })();
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
-);
+});
 
 // List projects visible to the user
 router.get("/", auth, async (req, res) => {
@@ -254,14 +256,30 @@ router.get("/", auth, async (req, res) => {
 // Must be declared before parameterized routes like "/:id"
 router.get("/tasks/assigned", auth, async (req, res) => {
   try {
+    const targetId = String(req.query.employeeId || req.employee.id);
+    const isSelf = targetId === String(req.employee.id);
+    const isHr = (req.employee.subRoles || []).includes("hr");
+    const isManager = (req.employee.subRoles || []).includes("manager");
+    const isAdminUser = isAdmin(req.employee);
+    if (!isSelf && !(isAdminUser || isHr || isManager))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const targetEmployee = await Employee.findById(targetId)
+      .select("company")
+      .lean();
+    if (!targetEmployee)
+      return res.status(404).json({ error: "Employee not found" });
+    if (String(targetEmployee.company) !== String(req.employee.company))
+      return res.status(403).json({ error: "Forbidden" });
+
     // Limit to tasks within the same company
-    const projects = await Project.find({ company: req.employee.company })
+    const projects = await Project.find({ company: targetEmployee.company })
       .select("_id")
       .lean();
     const projectIds = projects.map((p) => p._id);
     const tasks = await Task.find({
       project: { $in: projectIds },
-      assignedTo: req.employee.id,
+      assignedTo: targetId,
     })
       .populate("project", "title")
       .lean();
@@ -333,9 +351,11 @@ router.get("/tasks/worked", auth, async (req, res) => {
           : null,
         minutes,
         logs: dayLogs.map((l) => ({
+          _id: l._id,
           minutes: l.minutes,
           note: l.note,
           createdAt: l.createdAt,
+          addedBy: l.addedBy,
         })),
       };
     });
@@ -630,14 +650,12 @@ router.put("/:id/tasks/:taskId", auth, async (req, res) => {
   });
   if (!task) return res.status(404).json({ error: "Not found" });
   const { title, description, status, assignedTo, priority } = req.body;
-  const prevAssignee = String(task.assignedTo);
+  const prevAssignee = String(task.assignedTo || "");
+  console.log("UDSSS", task.createdBy, req.employee.id);
+  const isCreator = task.createdBy?.equals(req.employee?.id);
   // Status updates: only the assignee may change status
-  if (status !== undefined) {
-    const isAssignee = String(task.assignedTo) === String(req.employee.id);
-    if (!isAssignee)
-      return res.status(403).json({ error: "Only assignee may update status" });
-    task.status = status;
-  }
+
+  console.log("sdbhcds", isCreator, task);
 
   // Core fields (title/description/assignee): team lead or admin only
   if (
@@ -649,7 +667,10 @@ router.put("/:id/tasks/:taskId", auth, async (req, res) => {
     req.body.estimatedHours !== undefined ||
     req.body.estimatedTimeHours !== undefined
   ) {
-    if (!isLeadOrAdmin) return res.status(403).json({ error: "Forbidden" });
+    if (!(isLeadOrAdmin || isCreator))
+      return res
+        .status(403)
+        .json({ error: "Only the one who created the task can edit it" });
   }
   if (title !== undefined) task.title = title;
   if (description !== undefined) task.description = description;
@@ -885,8 +906,14 @@ router.post("/:id/tasks/:taskId/time", auth, async (req, res) => {
 router.post("/:id/tasks/:taskId/time-at", auth, async (req, res) => {
   const project = await Project.findById(req.params.id);
   if (!project) return res.status(404).json({ error: "Project not found" });
-  if (!isProjectMember(req.employee, project) && !isAdmin(req.employee))
-    return res.status(403).json({ error: "Forbidden" });
+  const isHr = (req.employee.subRoles || []).includes("hr");
+  const isManager = (req.employee.subRoles || []).includes("manager");
+  const adminOrMember =
+    isProjectMember(req.employee, project) ||
+    isAdmin(req.employee) ||
+    isHr ||
+    isManager;
+  if (!adminOrMember) return res.status(403).json({ error: "Forbidden" });
   const task = await Task.findOne({
     _id: req.params.taskId,
     project: project._id,
@@ -907,6 +934,22 @@ router.post("/:id/tasks/:taskId/time-at", auth, async (req, res) => {
   }
   const note = req.body.note;
 
+  // Determine whose time log to record (self or target employee)
+  const targetEmployeeId = String(req.body.forEmployee || req.employee.id);
+  const isSelf = targetEmployeeId === String(req.employee.id);
+  if (!isSelf) {
+    const isAdminUser = isAdmin(req.employee);
+    if (!(isAdminUser || isHr || isManager))
+      return res.status(403).json({ error: "Forbidden" });
+    const targetEmployee = await Employee.findById(targetEmployeeId)
+      .select("company")
+      .lean();
+    if (!targetEmployee)
+      return res.status(404).json({ error: "Employee not found" });
+    if (String(targetEmployee.company) !== String(req.employee.company))
+      return res.status(403).json({ error: "Forbidden" });
+  }
+
   // Parse date
   if (!req.body.date) return res.status(400).json({ error: "Missing date" });
   const d = new Date(req.body.date);
@@ -924,7 +967,7 @@ router.post("/:id/tasks/:taskId/time-at", auth, async (req, res) => {
       const now = new Date();
       // Current effective worked minutes for today
       const attendance = await Attendance.findOne({
-        employee: req.employee.id,
+        employee: targetEmployeeId,
         date: start,
       });
       let workedMs = 0;
@@ -950,7 +993,7 @@ router.post("/:id/tasks/:taskId/time-at", auth, async (req, res) => {
         project: { $in: projectIds },
         timeLogs: {
           $elemMatch: {
-            addedBy: req.employee.id,
+            addedBy: targetEmployeeId,
             createdAt: { $gte: start, $lt: end },
           },
         },
@@ -961,7 +1004,7 @@ router.post("/:id/tasks/:taskId/time-at", auth, async (req, res) => {
         const mins = (t.timeLogs || [])
           .filter(
             (l) =>
-              String(l.addedBy) === String(req.employee.id) &&
+              String(l.addedBy) === String(targetEmployeeId) &&
               l.createdAt >= start &&
               l.createdAt < end
           )
@@ -984,7 +1027,7 @@ router.post("/:id/tasks/:taskId/time-at", auth, async (req, res) => {
 
   // Push time log with createdAt set to the middle of the target day for clarity
   const createdAt = new Date(start.getTime() + 12 * 60 * 60 * 1000);
-  task.timeLogs.push({ minutes, note, addedBy: req.employee.id, createdAt });
+  task.timeLogs.push({ minutes, note, addedBy: targetEmployeeId, createdAt });
   task.timeSpentMinutes = (task.timeSpentMinutes || 0) + minutes;
   await task.save();
   res.json({
@@ -992,6 +1035,176 @@ router.post("/:id/tasks/:taskId/time-at", auth, async (req, res) => {
     latest: task.timeLogs[task.timeLogs.length - 1],
     taskId: task._id,
   });
+});
+
+router.put("/:id/tasks/:taskId/time-log/:logId", auth, async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    const task = await Task.findOne({
+      _id: req.params.taskId,
+      project: project._id,
+    });
+    if (!task) return res.status(404).json({ error: "Task not found" });
+
+    const log = task.timeLogs.id(req.params.logId);
+    if (!log) return res.status(404).json({ error: "Time log not found" });
+
+    const isHr = (req.employee.subRoles || []).includes("hr");
+    const isManager = (req.employee.subRoles || []).includes("manager");
+    const isAdminUser = isAdmin(req.employee);
+    const isMember = isProjectMember(req.employee, project);
+    const isOwner = String(log.addedBy) === String(req.employee.id);
+    if (!isOwner && !(isAdminUser || isHr || isManager || isMember))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const minutes =
+      req.body.minutes !== undefined
+        ? parseInt(req.body.minutes, 10)
+        : log.minutes;
+    if (!minutes || !Number.isFinite(minutes) || minutes <= 0)
+      return res.status(400).json({ error: "Invalid minutes" });
+
+    let createdAt = log.createdAt ? new Date(log.createdAt) : new Date();
+    if (req.body.date) {
+      const d = new Date(req.body.date);
+      if (isNaN(d.getTime()))
+        return res.status(400).json({ error: "Invalid date" });
+      createdAt = new Date(d);
+      createdAt.setHours(12, 0, 0, 0);
+    }
+
+    const targetEmployeeId = String(log.addedBy);
+    const todayStart = startOfDay(new Date());
+    const newDayStart = startOfDay(createdAt);
+    const isToday = newDayStart.getTime() === todayStart.getTime();
+
+    const delta = minutes - (log.minutes || 0);
+    if (delta > 0 && isToday && String(req.employee.id) === targetEmployeeId) {
+      try {
+        const attendance = await Attendance.findOne({
+          employee: targetEmployeeId,
+          date: todayStart,
+        });
+        let workedMs = 0;
+        if (attendance) {
+          workedMs = attendance.workedMs || 0;
+          if (attendance.lastPunchIn && !attendance.lastPunchOut) {
+            workedMs += Date.now() - new Date(attendance.lastPunchIn).getTime();
+          }
+        }
+        const workedMinutes = Math.max(0, Math.floor(workedMs / 60000));
+        const maxAllowedToday = Math.max(0, workedMinutes - 60);
+
+        const companyProjects = await Project.find({
+          company: project.company,
+        })
+          .select("_id")
+          .lean();
+        const projectIds = companyProjects.map((p) => p._id);
+        const rawTasks = await Task.find({
+          project: { $in: projectIds },
+          timeLogs: {
+            $elemMatch: {
+              addedBy: targetEmployeeId,
+              createdAt: {
+                $gte: todayStart,
+                $lt: new Date(todayStart.getTime() + 24 * 60 * 60 * 1000),
+              },
+            },
+          },
+        })
+          .select("timeLogs")
+          .lean();
+        const alreadyLogged = rawTasks.reduce((acc, t) => {
+          const mins = (t.timeLogs || [])
+            .filter(
+              (l) =>
+                String(l.addedBy) === targetEmployeeId &&
+                l.createdAt >= todayStart &&
+                l.createdAt <
+                  new Date(todayStart.getTime() + 24 * 60 * 60 * 1000) &&
+                String(l._id) !== String(log._id)
+            )
+            .reduce((s, l) => s + (l.minutes || 0), 0);
+          return acc + mins;
+        }, 0);
+        if (alreadyLogged + minutes > maxAllowedToday) {
+          return res.status(400).json({
+            error: `Exceeds allowed time for today. Remaining: ${Math.max(
+              0,
+              maxAllowedToday - alreadyLogged
+            )} minutes.`,
+          });
+        }
+      } catch (capErr) {
+        console.warn("[projects] cap check failed", capErr);
+      }
+    }
+
+    task.timeSpentMinutes =
+      (task.timeSpentMinutes || 0) + (minutes - (log.minutes || 0));
+    log.minutes = minutes;
+    if (typeof req.body.note === "string") log.note = req.body.note;
+    if (req.body.date) log.createdAt = createdAt;
+    else if (
+      newDayStart.getTime() !==
+      startOfDay(log.createdAt || new Date()).getTime()
+    )
+      log.createdAt = createdAt;
+
+    await task.save();
+
+    res.json({
+      log: {
+        id: String(log._id),
+        minutes: log.minutes,
+        note: log.note,
+        createdAt: log.createdAt,
+        addedBy: String(log.addedBy),
+      },
+    });
+  } catch (e) {
+    console.error("time-log update error", e);
+    res.status(500).json({ error: "Failed to update time log" });
+  }
+});
+
+router.delete("/:id/tasks/:taskId/time-log/:logId", auth, async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+
+    const task = await Task.findOne({
+      _id: req.params.taskId,
+      project: project._id,
+    });
+    if (!task) return res.status(404).json({ error: "Task not found" });
+
+    const log = task.timeLogs.id(req.params.logId);
+    if (!log) return res.status(404).json({ error: "Time log not found" });
+
+    const isHr = (req.employee.subRoles || []).includes("hr");
+    const isManager = (req.employee.subRoles || []).includes("manager");
+    const isAdminUser = isAdmin(req.employee);
+    const isMember = isProjectMember(req.employee, project);
+    const isOwner = String(log.addedBy) === String(req.employee.id);
+    if (!isOwner && !(isAdminUser || isHr || isManager || isMember))
+      return res.status(403).json({ error: "Forbidden" });
+
+    task.timeSpentMinutes = Math.max(
+      0,
+      (task.timeSpentMinutes || 0) - (log.minutes || 0)
+    );
+    log.remove();
+    await task.save();
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("time-log delete error", e);
+    res.status(500).json({ error: "Failed to delete time log" });
+  }
 });
 
 // Set total time on a task (replace), without altering historical logs

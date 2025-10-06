@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
@@ -7,10 +7,25 @@ import { api } from "../lib/api";
 import { setAuth } from "../lib/auth";
 import { applyTheme } from "../lib/theme";
 import { LoginSchema, type LoginValues } from "../schemas/auth";
+import { PasswordField } from "../components/ui/PasswordInput";
+import toast from "react-hot-toast";
 
 export default function Login() {
   const nav = useNavigate();
   const [generalError, setGeneralError] = useState<string | null>(null);
+  const [user, setUser] = useState<any>();
+
+  useEffect(() => {
+    getUser();
+    console.log("first");
+  }, []);
+
+  const getUser = async () => {
+    try {
+      const res = await api.get("/auth/me");
+      setUser(res.data.employee);
+    } catch (error) {}
+  };
 
   const {
     register,
@@ -44,6 +59,10 @@ export default function Login() {
       setGeneralError(e?.response?.data?.error || "Login failed");
     }
   };
+
+  console.log("dhscds", user);
+  if (user?.primaryRole === "ADMIN") return <Navigate to="/admin" replace />;
+  if (user?.primaryRole) return <Navigate to="/app" replace />;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-bg text-text">
@@ -81,17 +100,11 @@ export default function Login() {
           </div>
 
           <div className="space-y-1">
-            <label className="text-sm required-label">Password</label>
-            <input
-              type="password"
-              className="w-full border border-border bg-bg rounded px-3 h-10 outline-none focus:ring-2 focus:ring-primary"
-              {...register("password")}
+            <PasswordField
+              label="Password"
+              registration={register("password")}
+              error={errors.password}
             />
-            {errors.password && (
-              <p className="text-xs text-error mt-1">
-                {errors.password.message}
-              </p>
-            )}
           </div>
 
           <button

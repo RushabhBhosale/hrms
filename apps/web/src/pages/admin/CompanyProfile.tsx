@@ -72,6 +72,8 @@ const DEFAULT_SMTP: SmtpInput = {
 type LeavePolicySnapshot = {
   totalAnnual: number;
   ratePerMonth: number;
+  probationRatePerMonth: number;
+  accrualStrategy: "ACCRUAL" | "LUMP_SUM";
   typeCaps: {
     paid: number;
     casual: number;
@@ -83,6 +85,10 @@ function normalizeLeavePolicy(lp: any): LeavePolicySnapshot {
   return {
     totalAnnual: Number(lp?.totalAnnual ?? 0),
     ratePerMonth: Number(lp?.ratePerMonth ?? 0),
+    probationRatePerMonth: Number(lp?.probationRatePerMonth ?? 0),
+    accrualStrategy: (lp?.accrualStrategy || "ACCRUAL") as
+      | "ACCRUAL"
+      | "LUMP_SUM",
     typeCaps: {
       paid: Number(lp?.typeCaps?.paid ?? 0),
       casual: Number(lp?.typeCaps?.casual ?? 0),
@@ -111,6 +117,8 @@ export default function CompanyProfile() {
   const [leavePolicySnapshot, setLeavePolicySnapshot] = useState<LeavePolicySnapshot>({
     totalAnnual: 0,
     ratePerMonth: 0,
+    probationRatePerMonth: 0,
+    accrualStrategy: "ACCRUAL",
     typeCaps: { paid: 0, casual: 0, sick: 0 },
   });
   const [savingLeaveApplicable, setSavingLeaveApplicable] = useState(false);
@@ -266,6 +274,8 @@ export default function CompanyProfile() {
       const res = await api.put("/companies/leave-policy", {
         totalAnnual: leavePolicySnapshot.totalAnnual,
         ratePerMonth: leavePolicySnapshot.ratePerMonth,
+        probationRatePerMonth: leavePolicySnapshot.probationRatePerMonth,
+        accrualStrategy: leavePolicySnapshot.accrualStrategy,
         typeCaps: leavePolicySnapshot.typeCaps,
         applicableFrom: leaveApplicableFrom,
       });
@@ -505,14 +515,36 @@ export default function CompanyProfile() {
               </>
             </Field>
             <div className="md:col-span-2 rounded-md border border-border/60 bg-muted/10 p-4 text-xs text-muted">
-              <div>
-                Current accrual rate: <strong>{leavePolicySnapshot.ratePerMonth}</strong>{" "}
-                leave(s) per month, capped at{' '}
-                <strong>{leavePolicySnapshot.totalAnnual}</strong> annually.
-              </div>
+              {leavePolicySnapshot.accrualStrategy === "LUMP_SUM" ? (
+                <>
+                  <div>
+                    Leaves are granted upfront: employees receive a pool of{' '}
+                    <strong>{leavePolicySnapshot.totalAnnual}</strong> leave(s)
+                    for the year.
+                  </div>
+                  <div className="mt-1">
+                    Probation status does not change balances while this mode is
+                    active.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    Permanent staff accrue{' '}
+                    <strong>{leavePolicySnapshot.ratePerMonth}</strong> leave(s)
+                    per month, capped at{' '}
+                    <strong>{leavePolicySnapshot.totalAnnual}</strong> annually.
+                  </div>
+                  <div className="mt-1">
+                    Probation rate:{' '}
+                    <strong>{leavePolicySnapshot.probationRatePerMonth}</strong>{' '}
+                    leave(s) per month.
+                  </div>
+                </>
+              )}
               <div className="mt-2">
-                Type caps — Paid: {leavePolicySnapshot.typeCaps.paid}, Casual:{" "}
-                {leavePolicySnapshot.typeCaps.casual}, Sick:{" "}
+                Type caps — Paid: {leavePolicySnapshot.typeCaps.paid}, Casual:{' '}
+                {leavePolicySnapshot.typeCaps.casual}, Sick:{' '}
                 {leavePolicySnapshot.typeCaps.sick}
               </div>
             </div>

@@ -1,5 +1,5 @@
-import { Navigate, useLocation } from 'react-router-dom';
-import { getEmployee } from '../lib/auth';
+import { Navigate, useLocation } from "react-router-dom";
+import { getEmployee } from "../lib/auth";
 
 export default function Protected({ children }: { children: React.ReactNode }) {
   const employee = getEmployee();

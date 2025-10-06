@@ -7,10 +7,18 @@ const { auth } = require("../middleware/auth");
 const { syncLeaveBalances } = require("../utils/leaveBalances");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
 const {
+  ensureCompanyRoleDefaults,
+  computeEmployeePermissions,
+} = require("../utils/permissions");
+const {
   isValidEmail,
   isValidPassword,
   isValidPhone,
   normalizePhone,
+  normalizeAadhaar,
+  isValidAadhaar,
+  normalizePan,
+  isValidPan,
 } = require("../utils/validate");
 const ms = (n) => n; // clarity helper
 
@@ -42,6 +50,24 @@ router.post("/login", async (req, res) => {
   }
 
   await syncLeaveBalances(employee);
+
+  let companyDoc = null;
+  if (employee.primaryRole === "ADMIN") {
+    companyDoc = await Company.findOne({ admin: employee._id });
+    if (!companyDoc && employee.company) {
+      companyDoc = await Company.findById(employee.company);
+    }
+  } else if (employee.company) {
+    companyDoc = await Company.findById(employee.company);
+  }
+
+  if (companyDoc) {
+    const ensured = ensureCompanyRoleDefaults(companyDoc);
+    if (ensured) await companyDoc.save();
+  }
+
+  const permissions = computeEmployeePermissions(companyDoc, employee);
+
   // Ensure encrypted fields are decrypted for response payload
   try {
     employee.decryptFieldsSync();
@@ -50,6 +76,7 @@ router.post("/login", async (req, res) => {
     id: employee._id.toString(),
     name: employee.name,
     email: employee.email,
+    personalEmail: employee.personalEmail,
     phone: employee.phone,
     address: employee.address,
     dob: employee.dob,
@@ -62,8 +89,9 @@ router.post("/login", async (req, res) => {
     aadharNumber: employee.aadharNumber,
     panNumber: employee.panNumber,
     bankDetails: employee.bankDetails,
+    permissions,
   };
-  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "2h" });
+  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "30d" });
   res.json({ token, employee: payload });
 });
 
@@ -175,7 +203,7 @@ router.post("/verify-reset-otp", async (req, res) => {
   const resetToken = jwt.sign(
     { sub: employee._id.toString(), purpose: "password_reset" },
     process.env.JWT_SECRET,
-    { expiresIn: "15m" }
+    { expiresIn: "1d" }
   );
   // Do not clear OTP yet, so user can retry if they lose token; it will expire anyway
   res.json({ resetToken });
@@ -266,7 +294,7 @@ router.post("/reset-password", async (req, res) => {
 
 router.get("/me", auth, async (req, res) => {
   const PLUS =
-    "+phone +address +aadharNumber +panNumber +bankDetails.accountNumber +bankDetails.ifsc +dob +ctc";
+    "+phone +address +personalEmail +aadharNumber +panNumber +bankDetails.accountNumber +bankDetails.ifsc +dob +ctc +joiningDate";
 
   let employee = await Employee.findById(req.employee.id).select(PLUS);
   if (!employee) return res.status(404).json({ error: "Not found" });
@@ -285,13 +313,33 @@ router.get("/me", auth, async (req, res) => {
     return res.status(500).json({ error: "Decryption failed" });
   }
 
+  let companyDoc = null;
+  if (employee.primaryRole === "ADMIN") {
+    companyDoc = await Company.findOne({ admin: employee._id });
+    if (!companyDoc && employee.company) {
+      companyDoc = await Company.findById(employee.company);
+    }
+  } else if (employee.company) {
+    companyDoc = await Company.findById(employee.company);
+  }
+
+  if (companyDoc) {
+    const ensured = ensureCompanyRoleDefaults(companyDoc);
+    if (ensured) await companyDoc.save();
+  }
+
+  const permissions = computeEmployeePermissions(companyDoc, employee);
+
   const payload = {
     id: employee._id.toString(),
     name: employee.name,
     email: employee.email,
+    personalEmail: employee.personalEmail,
     phone: employee.phone,
     address: employee.address,
     dob: employee.dob,
+    joiningDate: employee.joiningDate,
+    createdAt: employee.createdAt,
     primaryRole: employee.primaryRole,
     subRoles: employee.subRoles,
     company: employee.company,
@@ -301,6 +349,7 @@ router.get("/me", auth, async (req, res) => {
     aadharNumber: employee.aadharNumber,
     panNumber: employee.panNumber,
     bankDetails: employee.bankDetails,
+    permissions,
   };
 
   res.json({ employee: payload });
@@ -318,19 +367,25 @@ router.put("/me", auth, async (req, res) => {
     bankName,
     bankAccountNumber,
     bankIfsc,
+    personalEmail,
   } = req.body;
   const employee = await Employee.findById(req.employee.id);
   if (!employee) return res.status(404).json({ error: "Not found" });
+
+  const isPrivileged = ["ADMIN", "SUPERADMIN"].includes(employee.primaryRole);
 
   // Basic allowlist: update common profile fields, never employeeId/roles/company via this route
   if (name !== undefined) employee.name = String(name);
 
   if (email !== undefined && email !== employee.email) {
+    if (!isPrivileged)
+      return res.status(400).json({
+        error: "Company email can only be updated by an administrator",
+      });
     const nextEmail = String(email).trim();
     if (!isValidEmail(nextEmail)) {
       return res.status(400).json({ error: "Invalid email address" });
     }
-    // Enforce uniqueness
     const exists = await Employee.findOne({
       email: nextEmail,
       _id: { $ne: employee._id },
@@ -357,8 +412,60 @@ router.put("/me", auth, async (req, res) => {
       return res.status(400).json({ error: "Invalid date of birth" });
     employee.dob = d;
   }
-  if (aadharNumber !== undefined) employee.aadharNumber = aadharNumber;
-  if (panNumber !== undefined) employee.panNumber = panNumber;
+  if (aadharNumber !== undefined) {
+    const rawAadhaar = String(aadharNumber).trim();
+    const digits = normalizeAadhaar(rawAadhaar);
+    const currentDigits = normalizeAadhaar(employee.aadharNumber || "");
+    if (!isPrivileged) {
+      if (digits !== currentDigits) {
+        return res.status(400).json({
+          error: "Aadhaar updates are restricted. Contact your administrator.",
+        });
+      }
+    } else {
+      if (rawAadhaar && !digits) {
+        return res.status(400).json({ error: "Invalid Aadhaar number" });
+      }
+      if (digits && !isValidAadhaar(digits)) {
+        return res.status(400).json({ error: "Invalid Aadhaar number" });
+      }
+      employee.aadharNumber = digits || undefined;
+    }
+  }
+  if (panNumber !== undefined) {
+    const rawPan = String(panNumber).trim();
+    const normalizedPan = rawPan ? normalizePan(rawPan) : "";
+    const currentPan = employee.panNumber
+      ? normalizePan(employee.panNumber)
+      : "";
+    if (!isPrivileged) {
+      if (normalizedPan !== currentPan) {
+        return res.status(400).json({
+          error: "PAN updates are restricted. Contact your administrator.",
+        });
+      }
+    } else {
+      if (normalizedPan) {
+        if (!isValidPan(normalizedPan)) {
+          return res.status(400).json({ error: "Invalid PAN number" });
+        }
+        employee.panNumber = normalizedPan;
+      } else {
+        employee.panNumber = undefined;
+      }
+    }
+  }
+  if (personalEmail !== undefined) {
+    const trimmed = String(personalEmail).trim();
+    if (!trimmed) {
+      employee.personalEmail = undefined;
+    } else {
+      if (!isValidEmail(trimmed)) {
+        return res.status(400).json({ error: "Invalid personal email" });
+      }
+      employee.personalEmail = trimmed;
+    }
+  }
   employee.bankDetails = {
     accountNumber: bankAccountNumber || employee.bankDetails?.accountNumber,
     bankName: bankName || employee.bankDetails?.bankName,

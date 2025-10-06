@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from 'react-hot-toast';
 import { formatMinutesLabel } from "../../lib/time";
-import { getEmployee } from "../../lib/auth";
+import { getEmployee, hasPermission } from "../../lib/auth";
 
 type MonthlyDay = {
   date: string; // yyyy-mm-dd
   firstPunchIn: string | null;
   lastPunchOut: string | null;
+  firstPunchInLocation?: string | null;
+  lastPunchInLocation?: string | null;
   timeSpentMs: number;
   dayType: "FULL_DAY" | "HALF_DAY";
   status?: "" | "WORKED" | "HOLIDAY" | "LEAVE" | "WEEKEND";
@@ -35,10 +37,8 @@ function fmtDur(ms?: number) {
 
 export default function MonthlyReport() {
   const u = getEmployee();
-  const canViewOthers =
-    ["ADMIN", "SUPERADMIN"].includes(u?.primaryRole || "") ||
-    (u?.subRoles || []).some((r) => r === "hr" || r === "manager");
-  const canEditOverrides = canViewOthers; // same roles allowed to edit
+  const canViewOthers = hasPermission(u, "attendance", "read");
+  const canEditOverrides = hasPermission(u, "attendance", "write");
 
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
     []
@@ -205,6 +205,7 @@ export default function MonthlyReport() {
                   <th className="px-3 py-2 font-medium">Date</th>
                   <th className="px-3 py-2 font-medium">Punch In</th>
                   <th className="px-3 py-2 font-medium">Punch Out</th>
+                  <th className="px-3 py-2 font-medium">Location</th>
                   <th className="px-3 py-2 font-medium">Time Spent</th>
                   <th className="px-3 py-2 font-medium">Late</th>
                   <th className="px-3 py-2 font-medium">Overtime</th>
@@ -239,6 +240,11 @@ export default function MonthlyReport() {
                       <td className="px-3 py-2 whitespace-nowrap">{d.date}</td>
                       <td className="px-3 py-2">{fmtTime(d.firstPunchIn)}</td>
                       <td className="px-3 py-2">{fmtTime(d.lastPunchOut)}</td>
+                      <td className="px-3 py-2">
+                        {d.lastPunchInLocation ||
+                          d.firstPunchInLocation ||
+                          "-"}
+                      </td>
                       <td className="px-3 py-2">
                         {statusLabel ? fmtDur(d.timeSpentMs) : ""}
                       </td>

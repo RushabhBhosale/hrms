@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import { Link } from "react-router-dom";
-import { getEmployee } from "../../lib/auth";
+import { getEmployee, hasPermission } from "../../lib/auth";
 import type { PrimaryRole } from "../../lib/auth";
 
 type EmployeeLite = {
@@ -25,10 +25,7 @@ type Project = {
 
 export default function MyProjects() {
   const viewer = getEmployee();
-  const canCreate =
-    viewer?.primaryRole === "ADMIN" ||
-    viewer?.primaryRole === "SUPERADMIN" ||
-    viewer?.subRoles?.includes("hr");
+  const canCreate = hasPermission(viewer, "projects", "write");
   const [projects, setProjects] = useState<Project[]>([]);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [loading, setLoading] = useState(false);

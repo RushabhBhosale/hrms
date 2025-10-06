@@ -13,9 +13,27 @@ const PDFDocument = require("pdfkit");
 const Attendance = require("../models/Attendance");
 const Leave = require("../models/Leave");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
+const { sendMail, isEmailEnabled } = require("../utils/mailer");
 
 function monthValid(m) {
   return typeof m === "string" && /^\d{4}-\d{2}$/.test(m);
+}
+
+function monthKeyFromDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+function isMonthBeforeStart(month, employee) {
+  if (!monthValid(month) || !employee) return false;
+  const startMonth =
+    monthKeyFromDate(employee.joiningDate) || monthKeyFromDate(employee.createdAt);
+  if (!startMonth) return false;
+  return month < startMonth;
 }
 
 // Default locked keys and helpers
@@ -405,12 +423,20 @@ router.get("/slips", auth, async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
 
     // ensure employee is in same company
-    const employee = await Employee.findById(employeeId).select("company ctc __enc_ctc __enc_ctc_d");
+    const employee = await Employee.findById(employeeId).select(
+      "company ctc __enc_ctc __enc_ctc_d joiningDate createdAt email name"
+    );
     try { employee?.decryptFieldsSync?.(); } catch (_) {}
     if (!employee) return res.status(404).json({ error: "Employee not found" });
     const companyId = req.employee.company || employee.company;
     if (!companyId || !employee.company.equals(companyId))
       return res.status(403).json({ error: "Forbidden" });
+
+    if (isMonthBeforeStart(month, employee)) {
+      return res
+        .status(400)
+        .json({ error: "Salary slip not available for this period" });
+    }
 
     const [tpl, slipDoc] = await Promise.all([
       SalaryTemplate.findOne({ company: companyId }).lean(),
@@ -475,7 +501,9 @@ router.get("/slips/mine", auth, async (req, res) => {
     if (!companyId) return res.status(400).json({ error: "Company not found" });
     const [employee, tpl, slipDoc] = await Promise.all([
       (async () => {
-        const e = await Employee.findById(employeeId).select("ctc __enc_ctc __enc_ctc_d");
+        const e = await Employee.findById(employeeId).select(
+          "ctc __enc_ctc __enc_ctc_d joiningDate createdAt email name"
+        );
         try { e?.decryptFieldsSync?.(); } catch (_) {}
         return e;
       })(),
@@ -486,6 +514,12 @@ router.get("/slips/mine", auth, async (req, res) => {
         month,
       }),
     ]);
+    if (isMonthBeforeStart(month, employee)) {
+      return res
+        .status(400)
+        .json({ error: "Salary slip not available for this period" });
+    }
+
     const template = ensureTemplateDefaults(
       tpl || { company: companyId, fields: [] }
     );
@@ -539,11 +573,21 @@ router.post("/slips", auth, async (req, res) => {
       (me.subRoles || []).some((r) => ["hr"].includes(r));
     if (!allowed) return res.status(403).json({ error: "Forbidden" });
 
-    const employee = await Employee.findById(employeeId).select("company");
-    if (!employee) return res.status(404).json({ error: "Employee not found" });
-    const companyId = me.company || employee.company;
-    if (!companyId || !employee.company.equals(companyId))
+    const employeeDoc = await Employee.findById(employeeId).select(
+      "company name email employeeId joiningDate createdAt ctc __enc_ctc __enc_ctc_d"
+    );
+    try { employeeDoc?.decryptFieldsSync?.(); } catch (_) {}
+    if (!employeeDoc)
+      return res.status(404).json({ error: "Employee not found" });
+    const companyId = me.company || employeeDoc.company;
+    if (!companyId || !employeeDoc.company.equals(companyId))
       return res.status(403).json({ error: "Forbidden" });
+
+    if (isMonthBeforeStart(month, employeeDoc)) {
+      return res
+        .status(400)
+        .json({ error: "Salary slip not available for this period" });
+    }
 
     const tpl = await SalaryTemplate.findOne({ company: companyId }).lean();
     const template = ensureTemplateDefaults(tpl || {});
@@ -592,15 +636,13 @@ router.post("/slips", auth, async (req, res) => {
     );
 
     // Return with computed fields overlaid
-    const employeeFull = await Employee.findById(employeeId).select("ctc __enc_ctc __enc_ctc_d");
-    try { employeeFull?.decryptFieldsSync?.(); } catch (_) {}
     if (slip) {
       // Ensure encrypted fields are available on doc
       slip.decryptFieldsSync();
     }
     const lockedVals = computeLockedValues({
       template,
-      employee: employeeFull,
+      employee: employeeDoc,
     });
     let valuesOut = overlayDefaults(
       template,
@@ -617,7 +659,7 @@ router.post("/slips", auth, async (req, res) => {
         companyId,
         month,
       });
-      const perDay = numberOrZero(employeeFull?.ctc) / 30;
+      const perDay = numberOrZero(employeeDoc?.ctc) / 30;
       const lopDeduction = round2(perDay * numberOrZero(lopDays));
       valuesOut = {
         ...valuesOut,
@@ -626,7 +668,25 @@ router.post("/slips", auth, async (req, res) => {
         lop_deduction: lopDeduction,
       };
     } catch (_) {}
-    res.json({ slip: { ...slip.toObject(), values: valuesOut } });
+    const responsePayload = { slip: { ...slip.toObject(), values: valuesOut } };
+    res.json(responsePayload);
+
+    const employeePayload =
+      typeof employeeDoc.toObject === "function"
+        ? employeeDoc.toObject()
+        : employeeDoc;
+    sendSalarySlipEmail({
+      companyId,
+      employee: employeePayload,
+      month,
+      template,
+      slipValues: valuesOut,
+    }).catch((err) =>
+      console.warn(
+        "[salary] slip email async error:",
+        err?.message || err
+      )
+    );
   } catch (e) {
     if (e && e.code === 11000) {
       return res.status(409).json({ error: "Duplicate slip" });
@@ -649,23 +709,73 @@ function numberOrZero(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-async function renderSlipPDF({
-  res,
-  company,
+function formatMonthLabel(month) {
+  if (!monthValid(month)) return month;
+  const [y, m] = month.split("-").map((x) => parseInt(x, 10));
+  const d = new Date(y, m - 1, 1);
+  return d.toLocaleString("en-US", { month: "long", year: "numeric" });
+}
+
+async function sendSalarySlipEmail({
+  companyId,
   employee,
   month,
   template,
   slipValues,
 }) {
-  const doc = new PDFDocument({
-    size: "A4",
-    margins: { top: 36, bottom: 40, left: 36, right: 36 },
-  });
-  const filename = `SalarySlip-${safeFilename(employee?.name)}-${month}.pdf`;
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  doc.pipe(res);
+  try {
+    if (!employee?.email) return;
+    const enabled = await isEmailEnabled(companyId);
+    if (!enabled) return;
 
+    const company = await Company.findById(companyId).lean();
+    if (!company) return;
+
+    const pdfBuffer = await generateSlipPDFBuffer({
+      company,
+      employee,
+      month,
+      template,
+      slipValues,
+    });
+
+    const monthLabel = formatMonthLabel(month);
+    const subject = `${company?.name || "Company"} | Salary Slip - ${monthLabel}`;
+    const greetName = employee?.name || employee?.email || "there";
+    const filename = `SalarySlip-${safeFilename(employee?.name)}-${month}.pdf`;
+
+    const text = `Hi ${greetName},\n\nYour salary slip for ${monthLabel} is attached.\n\nRegards,\n${company?.name || "HR Team"}`;
+    const html = `
+      <div style="font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#111827;">
+        <p>Hi ${greetName},</p>
+        <p>Your salary slip for <strong>${monthLabel}</strong> is attached to this email.</p>
+        <p style="color:#6B7280; font-size:12px;">If you have any questions, please reach out to the HR team.</p>
+        <p>Regards,<br/>${company?.name || "HR Team"}</p>
+      </div>
+    `;
+
+    await sendMail({
+      companyId,
+      to: employee.email,
+      subject,
+      text,
+      html,
+      attachments: [
+        {
+          filename,
+          content: pdfBuffer,
+        },
+      ],
+    });
+  } catch (err) {
+    console.warn(
+      "[salary] Failed to send salary slip email:",
+      err?.message || err
+    );
+  }
+}
+
+function drawSlipPDF(doc, { company, employee, month, template, slipValues }) {
   const pageWidth = doc.page.width;
   const margin = doc.page.margins.left;
   const contentWidth = pageWidth - margin * 2;
@@ -948,8 +1058,47 @@ async function renderSlipPDF({
     { align: "center" }
   );
   doc.fillColor("#000");
+}
 
+async function renderSlipPDF({
+  res,
+  company,
+  employee,
+  month,
+  template,
+  slipValues,
+}) {
+  const doc = new PDFDocument({
+    size: "A4",
+    margins: { top: 36, bottom: 40, left: 36, right: 36 },
+  });
+  const filename = `SalarySlip-${safeFilename(employee?.name)}-${month}.pdf`;
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  doc.pipe(res);
+  drawSlipPDF(doc, { company, employee, month, template, slipValues });
   doc.end();
+}
+
+async function generateSlipPDFBuffer({
+  company,
+  employee,
+  month,
+  template,
+  slipValues,
+}) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: "A4",
+      margins: { top: 36, bottom: 40, left: 36, right: 36 },
+    });
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+    drawSlipPDF(doc, { company, employee, month, template, slipValues });
+    doc.end();
+  });
 }
 
 function lastDayOfMonthString(month) {
@@ -1060,13 +1209,19 @@ router.get("/slips/pdf", auth, async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
 
     const employee = await Employee.findById(employeeId).select(
-      "name email employeeId company ctc __enc_ctc __enc_ctc_d"
+      "name email employeeId company ctc __enc_ctc __enc_ctc_d joiningDate createdAt"
     );
     try { employee?.decryptFieldsSync?.(); } catch (_) {}
     if (!employee) return res.status(404).json({ error: "Employee not found" });
     const companyId = req.employee.company || employee.company;
     if (!companyId || !employee.company.equals(companyId))
       return res.status(403).json({ error: "Forbidden" });
+
+    if (isMonthBeforeStart(month, employee)) {
+      return res
+        .status(400)
+        .json({ error: "Salary slip not available for this period" });
+    }
 
     const [company, templateRaw, slipDoc] = await Promise.all([
       Company.findById(companyId).lean(),
@@ -1077,6 +1232,7 @@ router.get("/slips/pdf", auth, async (req, res) => {
         month,
       }),
     ]);
+
     const template = ensureTemplateDefaults(templateRaw || {});
     if (slipDoc) slipDoc.decryptFieldsSync();
     const slip = slipDoc ? slipDoc.toObject() : null;
@@ -1133,7 +1289,7 @@ router.get("/slips/mine/pdf", auth, async (req, res) => {
     if (!companyId) return res.status(400).json({ error: "Company not found" });
 
     const [employee, company, templateRaw, slipDoc] = await Promise.all([
-      (async () => { const e = await Employee.findById(employeeId).select("name email employeeId company ctc __enc_ctc __enc_ctc_d"); try { e?.decryptFieldsSync?.(); } catch (_) {} return e; })(),
+      (async () => { const e = await Employee.findById(employeeId).select("name email employeeId company ctc __enc_ctc __enc_ctc_d joiningDate createdAt"); try { e?.decryptFieldsSync?.(); } catch (_) {} return e; })(),
       Company.findById(companyId).lean(),
       SalaryTemplate.findOne({ company: companyId }).lean(),
       SalarySlip.findOne({
@@ -1142,6 +1298,11 @@ router.get("/slips/mine/pdf", auth, async (req, res) => {
         month,
       }),
     ]);
+    if (isMonthBeforeStart(month, employee)) {
+      return res
+        .status(400)
+        .json({ error: "Salary slip not available for this period" });
+    }
     const template = ensureTemplateDefaults(templateRaw || {});
     if (slipDoc) slipDoc.decryptFieldsSync();
     const slip = slipDoc ? slipDoc.toObject() : null;

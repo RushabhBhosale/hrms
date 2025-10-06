@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
-import { api } from '../../lib/api';
-import { Th, Td } from '../../components/ui/Table';
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../../lib/api";
+import { Th, Td } from "../../components/ui/Table";
 
 type Task = {
   _id: string;
   title: string;
   description?: string;
   assignedTo: string;
-  status: 'PENDING' | 'INPROGRESS' | 'DONE';
+  status: "PENDING" | "INPROGRESS" | "DONE";
   timeSpentMinutes?: number;
   project: { _id: string; title: string } | string;
   updatedAt?: string;
-  priority?: 'URGENT' | 'FIRST' | 'SECOND' | 'LEAST';
+  priority?: "URGENT" | "FIRST" | "SECOND" | "LEAST";
   timeLogs?: { minutes: number; note?: string; createdAt: string }[];
 };
 
@@ -20,20 +20,26 @@ export default function MyTasks() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Track hours to add to a task (adds a log entry; does not replace total)
-  const [timeEntry, setTimeEntry] = useState<Record<string, { hours?: string; minutes?: string }>>({});
-  const [statusFilter, setStatusFilter] = useState<'ALL' | Task['status']>('ALL');
-  const [projectFilter, setProjectFilter] = useState<'ALL' | string>('ALL');
-  const [view, setView] = useState<'CARD' | 'TABLE'>('TABLE');
-  const [msg, setMsg] = useState<Record<string, { ok?: string; err?: string }>>({});
+  const [timeEntry, setTimeEntry] = useState<
+    Record<string, { hours?: string; minutes?: string }>
+  >({});
+  const [statusFilter, setStatusFilter] = useState<"ALL" | Task["status"]>(
+    "ALL"
+  );
+  const [projectFilter, setProjectFilter] = useState<"ALL" | string>("ALL");
+  const [view, setView] = useState<"CARD" | "TABLE">("TABLE");
+  const [msg, setMsg] = useState<Record<string, { ok?: string; err?: string }>>(
+    {}
+  );
 
   async function load() {
     try {
       setErr(null);
       setLoading(true);
-      const res = await api.get('/projects/tasks/assigned');
+      const res = await api.get("/projects/tasks/assigned");
       setTasks(res.data.tasks || []);
     } catch (e: any) {
-      setErr(e?.response?.data?.error || 'Failed to load tasks');
+      setErr(e?.response?.data?.error || "Failed to load tasks");
     } finally {
       setLoading(false);
     }
@@ -47,8 +53,8 @@ export default function MyTasks() {
     const map = new Map<string, string>();
     tasks.forEach((t) => {
       const p = t.project as any;
-      const id = typeof p === 'string' ? p : p?._id;
-      const title = typeof p === 'string' ? p : p?.title || 'Untitled';
+      const id = typeof p === "string" ? p : p?._id;
+      const title = typeof p === "string" ? p : p?.title || "Untitled";
       if (id) map.set(String(id), title);
     });
     return Array.from(map.entries()).map(([id, title]) => ({ id, title }));
@@ -56,16 +62,19 @@ export default function MyTasks() {
 
   const filtered = useMemo(() => {
     return tasks.filter((t) => {
-      const okStatus = statusFilter === 'ALL' ? true : t.status === statusFilter;
-      const pid = typeof t.project === 'string' ? t.project : t.project?._id;
-      const okProject = projectFilter === 'ALL' ? true : String(pid) === String(projectFilter);
+      const okStatus =
+        statusFilter === "ALL" ? true : t.status === statusFilter;
+      const pid = typeof t.project === "string" ? t.project : t.project?._id;
+      const okProject =
+        projectFilter === "ALL" ? true : String(pid) === String(projectFilter);
       return okStatus && okProject;
     });
   }, [tasks, statusFilter, projectFilter]);
 
-  async function updateStatus(t: Task, status: Task['status']) {
+  async function updateStatus(t: Task, status: Task["status"]) {
     try {
-      const projectId = typeof t.project === 'string' ? t.project : t.project._id;
+      const projectId =
+        typeof t.project === "string" ? t.project : t.project._id;
       await api.put(`/projects/${projectId}/tasks/${t._id}`, { status });
       await load();
     } catch (e) {
@@ -75,25 +84,34 @@ export default function MyTasks() {
 
   async function saveTime(t: Task) {
     const entry = timeEntry[t._id];
-    const hours = parseFloat(entry?.hours || '0');
-    const minsOnly = parseInt(entry?.minutes || '0', 10);
-    const addMinutes = Math.max(0, Math.round((isNaN(hours) ? 0 : hours) * 60) + (Number.isFinite(minsOnly) ? minsOnly : 0));
+    const hours = parseFloat(entry?.hours || "0");
+    const minsOnly = parseInt(entry?.minutes || "0", 10);
+    const addMinutes = Math.max(
+      0,
+      Math.round((isNaN(hours) ? 0 : hours) * 60) +
+        (Number.isFinite(minsOnly) ? minsOnly : 0)
+    );
     if (!addMinutes || addMinutes <= 0) {
-      setMsg((m) => ({ ...m, [t._id]: { err: 'Enter time to add (hours and/or minutes)' } }));
+      setMsg((m) => ({
+        ...m,
+        [t._id]: { err: "Enter time to add (hours and/or minutes)" },
+      }));
       return;
     }
-    const projectId = typeof t.project === 'string' ? t.project : t.project._id;
+    const projectId = typeof t.project === "string" ? t.project : t.project._id;
     try {
       // Add time to this task for today (validated against attendance cap server-side)
-      await api.post(`/projects/${projectId}/tasks/${t._id}/time`, { minutes: addMinutes });
-      setTimeEntry((s) => ({ ...s, [t._id]: { hours: '', minutes: '' } }));
-      setMsg((m) => ({ ...m, [t._id]: { ok: 'Time added' } }));
+      await api.post(`/projects/${projectId}/tasks/${t._id}/time`, {
+        minutes: addMinutes,
+      });
+      setTimeEntry((s) => ({ ...s, [t._id]: { hours: "", minutes: "" } }));
+      setMsg((m) => ({ ...m, [t._id]: { ok: "Time added" } }));
       await load();
     } catch (e: any) {
       const apiErr = e?.response?.data?.error;
       const txt =
         apiErr ||
-        'Failed to add time. Ensure you have remaining time today and are a member of this project.';
+        "Failed to add time. Ensure you have remaining time today and are a member of this project.";
       setMsg((m) => ({ ...m, [t._id]: { err: txt } }));
     }
   }
@@ -127,14 +145,18 @@ export default function MyTasks() {
           </select>
           <div className="inline-flex rounded-md border border-border overflow-hidden">
             <button
-              className={`h-9 px-3 text-sm ${view === 'CARD' ? 'bg-primary text-white' : 'bg-surface'}`}
-              onClick={() => setView('CARD')}
+              className={`h-9 px-3 text-sm ${
+                view === "CARD" ? "bg-primary text-white" : "bg-surface"
+              }`}
+              onClick={() => setView("CARD")}
             >
               Cards
             </button>
             <button
-              className={`h-9 px-3 text-sm border-l border-border ${view === 'TABLE' ? 'bg-primary text-white' : 'bg-surface'}`}
-              onClick={() => setView('TABLE')}
+              className={`h-9 px-3 text-sm border-l border-border ${
+                view === "TABLE" ? "bg-primary text-white" : "bg-surface"
+              }`}
+              onClick={() => setView("TABLE")}
             >
               Table
             </button>
@@ -148,44 +170,54 @@ export default function MyTasks() {
         </div>
       )}
 
-      {view === 'CARD' ? (
+      {view === "CARD" ? (
         <div className="space-y-3">
           {loading && <div className="text-sm text-muted">Loading…</div>}
           {!loading && filtered.length === 0 && (
             <div className="text-sm text-muted">No tasks assigned.</div>
           )}
           {filtered.map((t) => (
-            <div key={t._id} className="border border-border bg-surface rounded-md p-4">
+            <div
+              key={t._id}
+              className="border border-border bg-surface rounded-md p-4"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-xs text-muted">
-                    {typeof t.project === 'string' ? t.project : t.project?.title}
+                    {typeof t.project === "string"
+                      ? t.project
+                      : t.project?.title}
                   </div>
                   <div className="font-semibold flex items-center gap-2">
                     <span>{t.title}</span>
                     {t.priority && (
                       <span className="text-xs px-2 py-0.5 rounded border border-border bg-bg">
-                        {t.priority === 'URGENT'
-                          ? 'Urgent'
-                          : t.priority === 'FIRST'
-                          ? 'First Priority'
-                          : t.priority === 'SECOND'
-                          ? 'Second Priority'
-                          : 'Least Priority'}
+                        {t.priority === "URGENT"
+                          ? "Urgent"
+                          : t.priority === "FIRST"
+                          ? "First Priority"
+                          : t.priority === "SECOND"
+                          ? "Second Priority"
+                          : "Least Priority"}
                       </span>
                     )}
                   </div>
                   {t.description && (
-                    <div className="text-sm text-muted mt-1">{t.description}</div>
+                    <div className="text-sm text-muted mt-1">
+                      {t.description}
+                    </div>
                   )}
                   <div className="mt-2 text-xs text-muted">
-                    Time spent: {Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100} h
+                    Time spent:{" "}
+                    {Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100} h
                   </div>
                 </div>
                 <select
                   className="h-9 rounded border border-border bg-bg px-2 text-sm"
                   value={t.status}
-                  onChange={(e) => updateStatus(t, e.target.value as Task['status'])}
+                  onChange={(e) =>
+                    updateStatus(t, e.target.value as Task["status"])
+                  }
                 >
                   <option value="PENDING">Pending</option>
                   <option value="INPROGRESS">In Progress</option>
@@ -193,47 +225,60 @@ export default function MyTasks() {
                 </select>
               </div>
 
-                  <div className="mt-3 grid sm:grid-cols-[160px_120px_120px] gap-2 items-center">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted">Hours</span>
-                      <input
-                        className="h-9 w-24 rounded border border-border bg-bg px-3 text-sm"
-                        type="number"
-                        min={0}
-                        step={0.25}
-                        placeholder="0"
-                        value={timeEntry[t._id]?.hours || ''}
-                        onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { ...s[t._id], hours: e.target.value } }))}
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted">Minutes</span>
-                      <input
-                        className="h-9 w-24 rounded border border-border bg-bg px-3 text-sm"
-                        type="number"
-                        min={0}
-                        step={5}
-                        placeholder="0"
-                        value={timeEntry[t._id]?.minutes || ''}
-                        onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { ...s[t._id], minutes: e.target.value } }))}
-                      />
-                    </div>
-                    <button
-                      onClick={() => saveTime(t)}
-                      className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg disabled:opacity-50"
-                      disabled={
-                        (!timeEntry[t._id]?.hours && !timeEntry[t._id]?.minutes) ||
-                        (parseFloat(timeEntry[t._id]?.hours || '0') <= 0 && parseInt(timeEntry[t._id]?.minutes || '0', 10) <= 0)
-                      }
-                    >
-                      Add Time
-                    </button>
-                  </div>
+              <div className="mt-3 grid sm:grid-cols-[160px_120px_120px] gap-2 items-center">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted">Hours</span>
+                  <input
+                    className="h-9 w-24 rounded border border-border bg-bg px-3 text-sm"
+                    type="number"
+                    min={0}
+                    step={0.25}
+                    placeholder="0"
+                    value={timeEntry[t._id]?.hours || ""}
+                    onChange={(e) =>
+                      setTimeEntry((s) => ({
+                        ...s,
+                        [t._id]: { ...s[t._id], hours: e.target.value },
+                      }))
+                    }
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted">Minutes</span>
+                  <input
+                    className="h-9 w-24 rounded border border-border bg-bg px-3 text-sm"
+                    type="number"
+                    min={0}
+                    step={5}
+                    placeholder="0"
+                    value={timeEntry[t._id]?.minutes || ""}
+                    onChange={(e) =>
+                      setTimeEntry((s) => ({
+                        ...s,
+                        [t._id]: { ...s[t._id], minutes: e.target.value },
+                      }))
+                    }
+                  />
+                </div>
+                <button
+                  onClick={() => saveTime(t)}
+                  className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg disabled:opacity-50"
+                  disabled={
+                    (!timeEntry[t._id]?.hours && !timeEntry[t._id]?.minutes) ||
+                    (parseFloat(timeEntry[t._id]?.hours || "0") <= 0 &&
+                      parseInt(timeEntry[t._id]?.minutes || "0", 10) <= 0)
+                  }
+                >
+                  Add Time
+                </button>
+              </div>
               {msg[t._id]?.err && (
                 <div className="mt-2 text-xs text-error">{msg[t._id]?.err}</div>
               )}
               {msg[t._id]?.ok && (
-                <div className="mt-2 text-xs text-success">{msg[t._id]?.ok}</div>
+                <div className="mt-2 text-xs text-success">
+                  {msg[t._id]?.ok}
+                </div>
               )}
             </div>
           ))}
@@ -249,38 +294,59 @@ export default function MyTasks() {
                   <Th>Status</Th>
                   <Th>Priority</Th>
                   <Th>Time Spent</Th>
-                  <Th>Update</Th>
+                  {/* <Th>Update</Th> */}
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-10 text-center text-muted">
+                    <td
+                      colSpan={6}
+                      className="px-6 py-10 text-center text-muted"
+                    >
                       Loading…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-10 text-center text-muted">
+                    <td
+                      colSpan={6}
+                      className="px-6 py-10 text-center text-muted"
+                    >
                       No tasks assigned.
                     </td>
                   </tr>
                 ) : (
                   filtered.map((t) => {
                     const projectTitle =
-                      typeof t.project === 'string' ? t.project : t.project?.title;
-                    const totalHours = Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100;
+                      typeof t.project === "string"
+                        ? t.project
+                        : t.project?.title;
+                    const totalHours =
+                      Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100;
                     return (
-                      <tr key={t._id} className="border-t border-border/70 hover:bg-bg/60 transition-colors">
-                        <Td className="whitespace-nowrap text-muted">{projectTitle}</Td>
+                      <tr
+                        key={t._id}
+                        className="border-t border-border/70 hover:bg-bg/60 transition-colors"
+                      >
+                        <Td className="whitespace-nowrap text-muted">
+                          {projectTitle}
+                        </Td>
                         <Td>
-                          <div className="max-w-[32rem] truncate font-medium" title={t.title}>{t.title}</div>
+                          <div
+                            className="max-w-[32rem] truncate font-medium"
+                            title={t.title}
+                          >
+                            {t.title}
+                          </div>
                         </Td>
                         <Td>
                           <select
                             className="h-8 rounded border border-border bg-bg px-2 text-xs"
                             value={t.status}
-                            onChange={(e) => updateStatus(t, e.target.value as Task['status'])}
+                            onChange={(e) =>
+                              updateStatus(t, e.target.value as Task["status"])
+                            }
                           >
                             <option value="PENDING">Pending</option>
                             <option value="INPROGRESS">In Progress</option>
@@ -290,20 +356,20 @@ export default function MyTasks() {
                         <Td>
                           {t.priority ? (
                             <span className="text-xs px-2 py-0.5 rounded border border-border bg-bg">
-                              {t.priority === 'URGENT'
-                                ? 'Urgent'
-                                : t.priority === 'FIRST'
-                                ? 'First'
-                                : t.priority === 'SECOND'
-                                ? 'Second'
-                                : 'Least'}
+                              {t.priority === "URGENT"
+                                ? "Urgent"
+                                : t.priority === "FIRST"
+                                ? "First"
+                                : t.priority === "SECOND"
+                                ? "Second"
+                                : "Least"}
                             </span>
                           ) : (
                             <span className="text-xs text-muted">-</span>
                           )}
                         </Td>
                         <Td>{totalHours} h</Td>
-                        <Td>
+                        {/* <Td>
                           <div className="flex items-center gap-2">
                             <div className="flex items-center gap-2">
                               <span className="text-[11px] text-muted">H</span>
@@ -344,7 +410,7 @@ export default function MyTasks() {
                           {msg[t._id]?.ok && (
                             <div className="mt-1 text-[11px] text-success">{msg[t._id]?.ok}</div>
                           )}
-                        </Td>
+                        </Td> */}
                       </tr>
                     );
                   })
@@ -358,12 +424,15 @@ export default function MyTasks() {
             {loading ? (
               <div className="px-4 py-10 text-center text-muted">Loading…</div>
             ) : filtered.length === 0 ? (
-              <div className="px-4 py-10 text-center text-muted">No tasks assigned.</div>
+              <div className="px-4 py-10 text-center text-muted">
+                No tasks assigned.
+              </div>
             ) : (
               filtered.map((t) => {
                 const projectTitle =
-                  typeof t.project === 'string' ? t.project : t.project?.title;
-                const totalHours = Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100;
+                  typeof t.project === "string" ? t.project : t.project?.title;
+                const totalHours =
+                  Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100;
                 return (
                   <div key={t._id} className="p-4 space-y-2">
                     <div className="text-xs text-muted">{projectTitle}</div>
@@ -372,7 +441,9 @@ export default function MyTasks() {
                       <select
                         className="h-8 rounded border border-border bg-bg px-2 text-xs"
                         value={t.status}
-                        onChange={(e) => updateStatus(t, e.target.value as Task['status'])}
+                        onChange={(e) =>
+                          updateStatus(t, e.target.value as Task["status"])
+                        }
                       >
                         <option value="PENDING">Pending</option>
                         <option value="INPROGRESS">In Progress</option>
@@ -387,26 +458,35 @@ export default function MyTasks() {
                         min={0}
                         step={0.1}
                         placeholder="Add hours (today)"
-                        value={timeEntry[t._id]?.hours || ''}
-                        onChange={(e) => setTimeEntry((s) => ({ ...s, [t._id]: { hours: e.target.value } }))}
+                        value={timeEntry[t._id]?.hours || ""}
+                        onChange={(e) =>
+                          setTimeEntry((s) => ({
+                            ...s,
+                            [t._id]: { hours: e.target.value },
+                          }))
+                        }
                       />
                       <button
                         onClick={() => saveTime(t)}
                         className="h-8 rounded-md border border-border px-2 text-xs hover:bg-bg disabled:opacity-50"
                         disabled={
                           timeEntry[t._id]?.hours === undefined ||
-                          timeEntry[t._id]?.hours === '' ||
-                          parseFloat(timeEntry[t._id]?.hours || '0') <= 0
+                          timeEntry[t._id]?.hours === "" ||
+                          parseFloat(timeEntry[t._id]?.hours || "0") <= 0
                         }
                       >
                         Add
                       </button>
                     </div>
                     {msg[t._id]?.err && (
-                      <div className="mt-1 text-[11px] text-error">{msg[t._id]?.err}</div>
+                      <div className="mt-1 text-[11px] text-error">
+                        {msg[t._id]?.err}
+                      </div>
                     )}
                     {msg[t._id]?.ok && (
-                      <div className="mt-1 text-[11px] text-success">{msg[t._id]?.ok}</div>
+                      <div className="mt-1 text-[11px] text-success">
+                        {msg[t._id]?.ok}
+                      </div>
                     )}
                   </div>
                 );

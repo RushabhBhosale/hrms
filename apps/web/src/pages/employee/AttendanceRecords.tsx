@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
-import { getEmployee } from "../../lib/auth";
+import { getEmployee, hasPermission } from "../../lib/auth";
 
 type AttRecord = {
   date: string; // ISO (00:00:00)
@@ -8,6 +8,8 @@ type AttRecord = {
   lastPunchOut?: string;
   workedMs?: number;
   autoPunchOut?: boolean;
+  firstPunchInLocation?: string | null;
+  lastPunchInLocation?: string | null;
 };
 
 function fmtDate(d: string | Date) {
@@ -65,9 +67,7 @@ function isSameDay(a: Date, b: Date) {
 
 export default function AttendanceRecords() {
   const u = getEmployee();
-  const canViewOthers =
-    ["ADMIN", "SUPERADMIN"].includes(u?.primaryRole || "") ||
-    (u?.subRoles || []).some((r) => r === "hr" || r === "manager");
+  const canViewOthers = hasPermission(u, "attendance", "read");
 
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
     []
@@ -515,9 +515,12 @@ export default function AttendanceRecords() {
                           setDayTasks([]);
                           setTasksLoading(true);
                           try {
-                            const res = await api.get("/projects/tasks/worked", {
-                              params: { employeeId, date: rec.date },
-                            });
+                            const res = await api.get(
+                              "/projects/tasks/worked",
+                              {
+                                params: { employeeId, date: rec.date },
+                              }
+                            );
                             setDayTasks(res.data.tasks || []);
                           } catch (e: any) {
                             setTasksErr(
@@ -539,13 +542,17 @@ export default function AttendanceRecords() {
                             : "",
                           isToday ? "outline outline-2 outline-primary/70" : "",
                         ].join(" ")}
-                        title={
-                          isHoliday
+                        title={(() => {
+                          const base = isHoliday
                             ? `${fmtDate(date)} — Holiday`
                             : isLeave
                             ? `${fmtDate(date)} — Leave`
-                            : `${fmtDate(date)} — ${fmtDur(worked)}`
-                        }
+                            : `${fmtDate(date)} — ${fmtDur(worked)}`;
+                          const location =
+                            rec?.lastPunchInLocation ||
+                            rec?.firstPunchInLocation;
+                          return location ? `${base} — ${location}` : base;
+                        })()}
                       >
                         {/* Day number (top-right) */}
                         <div className="absolute top-1 right-1 text-[11px] font-medium opacity-80">
@@ -560,6 +567,17 @@ export default function AttendanceRecords() {
                             <div className="inline-flex rounded-full bg-white/70 px-2 py-[2px] text-[10px] font-medium">
                               {fmtDur(worked)}
                             </div>
+                            {(() => {
+                              const location =
+                                rec.lastPunchInLocation ||
+                                rec.firstPunchInLocation;
+                              if (!location) return null;
+                              return (
+                                <div className="text-[10px] text-muted">
+                                  {location}
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                         {!rec && isLeave && showLeaves && (
@@ -620,6 +638,26 @@ export default function AttendanceRecords() {
               <div>{fmtTime(detail.firstPunchIn)}</div>
               <div className="text-muted">Last Out</div>
               <div>{fmtTime(detail.lastPunchOut)}</div>
+              {(() => {
+                const loc = detail.firstPunchInLocation;
+                if (!loc) return null;
+                return (
+                  <>
+                    <div className="text-muted">First In Location</div>
+                    <div>{loc}</div>
+                  </>
+                );
+              })()}
+              {(() => {
+                const loc = detail.lastPunchInLocation;
+                if (!loc) return null;
+                return (
+                  <>
+                    {/* <div className="text-muted">Last In Location</div>
+                    <div>{loc}</div> */}
+                  </>
+                );
+              })()}
               <div className="text-muted">Worked</div>
               <div>{fmtDur(inferWorkedMs(detail))}</div>
               {detail.autoPunchOut && (
@@ -639,16 +677,23 @@ export default function AttendanceRecords() {
                 </div>
               )}
               {!tasksLoading && !tasksErr && dayTasks.length === 0 && (
-                <div className="text-sm text-muted">No tasks logged for this day.</div>
+                <div className="text-sm text-muted">
+                  No tasks logged for this day.
+                </div>
               )}
               {!tasksLoading && !tasksErr && dayTasks.length > 0 && (
                 <ul className="space-y-2">
                   {dayTasks.map((t) => (
-                    <li key={t._id} className="flex items-start justify-between gap-3 text-sm">
+                    <li
+                      key={t._id}
+                      className="flex items-start justify-between gap-3 text-sm"
+                    >
                       <div>
                         <div className="font-medium">{t.title}</div>
                         {t.project?.title && (
-                          <div className="text-muted text-xs">{t.project.title}</div>
+                          <div className="text-muted text-xs">
+                            {t.project.title}
+                          </div>
                         )}
                       </div>
                       <div className="shrink-0 inline-flex rounded-full bg-white/70 px-2 py-[2px] text-[11px] font-medium">

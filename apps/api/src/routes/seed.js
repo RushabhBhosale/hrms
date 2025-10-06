@@ -12,6 +12,7 @@ const Expense = require('../models/Expense');
 const ExpenseCategory = require('../models/ExpenseCategory');
 const { auth } = require('../middleware/auth');
 const { isValidEmail, isValidPassword } = require('../utils/validate');
+const { ensureCompanyRoleDefaults } = require('../utils/permissions');
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -119,7 +120,14 @@ router.post('/superadmin', async (req, res) => {
   const exists = await Employee.findOne({ email });
   if (exists) return res.json({ ok: true });
   const passwordHash = await bcrypt.hash(password, 10);
-  await Employee.create({ name, email, passwordHash, primaryRole: 'SUPERADMIN', subRoles: [] });
+  await Employee.create({
+    name,
+    email,
+    passwordHash,
+    primaryRole: 'SUPERADMIN',
+    subRoles: [],
+    employmentStatus: 'PERMANENT',
+  });
   res.json({ ok: true });
 });
 
@@ -403,6 +411,9 @@ router.post('/dummy', async (req, res) => {
       ],
     });
 
+    const seededDefaults = ensureCompanyRoleDefaults(company);
+    if (seededDefaults) await company.save();
+
     const admin = await Employee.create({
       name: 'Alice Admin',
       email: 'admin@acme.test',
@@ -412,6 +423,7 @@ router.post('/dummy', async (req, res) => {
       company: company._id,
       employeeId: 'ACME-ADM-001',
       ctc: 150000,
+      employmentStatus: 'PERMANENT',
     });
 
     // Link admin on company
@@ -442,6 +454,8 @@ router.post('/dummy', async (req, res) => {
           ctc: p.ctc,
           totalLeaveAvailable: 24,
           leaveBalances: { paid: 12, casual: 8, sick: 4, unpaid: 0 },
+          employmentStatus: 'PROBATION',
+          probationSince: new Date(),
         })
       )
     );

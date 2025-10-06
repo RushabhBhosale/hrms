@@ -1,3 +1,5 @@
+"use strict";
+
 const router = require("express").Router();
 const Leave = require("../models/Leave");
 const Employee = require("../models/Employee");
@@ -6,6 +8,9 @@ const { auth } = require("../middleware/auth");
 const { requirePrimary } = require("../middleware/roles");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
+const { accrueTotalIfNeeded } = require("../utils/leaveBalances");
+
+/* ------------------------------ Utils ----------------------------------- */
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -21,7 +26,6 @@ function ymKey(date) {
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${y}-${m}`;
 }
-
 function computeChargeableDays(start, end, bankHolidayKeys) {
   const s = startOfDay(start),
     e = startOfDay(end);
@@ -47,26 +51,12 @@ function computeDerivedBalances(caps, used) {
   };
 }
 
+/* ----------------------- Accrual (with strong logs) ---------------------- */
+
 async function ensureAccruedForMonth(empId, company, targetDate) {
-  const perMonth = Number(company?.leavePolicy?.leaveApplicable);
-  console.log("dsclsc", perMonth);
-  if (!perMonth) return;
-
-  const targetYm = ymKey(targetDate);
-  const emp = await Employee.findById(empId).select("lastAccruedYm");
-  console.log("djshcjwcw");
-  const last = emp?.lastAccruedYm || null;
-
-  if (last === targetYm) return; // ← This check might pass for the same month
-
-  // This update has a race condition!
-  await Employee.updateOne(
-    { _id: empId, lastAccruedYm: { $ne: targetYm } },
-    {
-      $inc: { totalLeaveAvailable: perMonth },
-      $set: { lastAccruedYm: targetYm },
-    }
-  );
+  const employee = await Employee.findById(empId);
+  if (!employee) return;
+  await accrueTotalIfNeeded(employee, company, targetDate || new Date());
 }
 
 /* ------------------------------- Create --------------------------------- */
@@ -226,12 +216,22 @@ router.post("/:id/approve", auth, async (req, res) => {
   const company = await Company.findById(leave.company).select(
     "bankHolidays leavePolicy"
   );
-  // 1) Accrue *once* for this month (idempotent)
+
+  // Accrue once for leave month
   await ensureAccruedForMonth(leave.employee, company, leave.startDate);
 
   // Re-read employee AFTER accrual
   const employee = await Employee.findById(leave.employee).select(
-    "totalLeaveAvailable leaveUsage lastAccruedYm"
+    "totalLeaveAvailable leaveUsage leaveBalances leaveAccrual.lastAccruedYearMonth"
+  );
+
+  console.log(
+    "LEAVES: 📦 BEFORE APPROVAL employee snapshot:",
+    JSON.stringify({
+      totalLeaveAvailable: employee?.totalLeaveAvailable,
+      leaveUsage: employee?.leaveUsage,
+      lastAccruedYearMonth: employee?.leaveAccrual?.lastAccruedYearMonth,
+    })
   );
 
   // 2) Build holiday set with overrides
@@ -255,6 +255,7 @@ router.post("/:id/approve", auth, async (req, res) => {
     if (o.type === "HOLIDAY") bankHolidayKeys.add(k);
   }
   const days = Math.max(computeChargeableDays(start, end, bankHolidayKeys), 0);
+  console.log(`LEAVES: 🧮 Chargeable days (excl weekends/holidays): ${days}`);
 
   // 3) Allocate against caps and pool
   const caps = company?.leavePolicy?.typeCaps || {};
@@ -284,10 +285,11 @@ router.post("/:id/approve", auth, async (req, res) => {
     let remaining = Math.max(0, days - firstPart);
     if (remaining > 0) {
       const fb = String(leave.fallbackType || "").toLowerCase();
-      if (!fb)
+      if (!fb) {
         return res.status(400).json({
           error: `Insufficient ${typeKey} leaves. Choose fallback (Paid/Sick/Unpaid/Casual).`,
         });
+      }
 
       if (fb === "unpaid") {
         allocations.unpaid += remaining;
@@ -315,11 +317,14 @@ router.post("/:id/approve", auth, async (req, res) => {
     }
   }
 
+  console.log("LEAVES: 📦 Allocations decided:", allocations);
+
   // 4) Atomic: decrement pool, bump usage, set derived balances
   const poolDeduct =
     (allocations.paid || 0) +
     (allocations.casual || 0) +
     (allocations.sick || 0);
+
   const usedNext = {
     paid: (usedPrev.paid || 0) + (allocations.paid || 0),
     casual: (usedPrev.casual || 0) + (allocations.casual || 0),
@@ -328,7 +333,11 @@ router.post("/:id/approve", auth, async (req, res) => {
   };
   const derived = computeDerivedBalances(caps, usedNext);
 
-  const updatedEmp = await Employee.findOneAndUpdate(
+  console.log(
+    `LEAVES: 🔻 Pool deduct=${poolDeduct}, BEFORE totalLeaveAvailable=${employee.totalLeaveAvailable}`
+  );
+
+  const updateRes = await Employee.updateOne(
     { _id: employee._id },
     {
       $inc: {
@@ -339,9 +348,25 @@ router.post("/:id/approve", auth, async (req, res) => {
         "leaveUsage.unpaid": allocations.unpaid || 0,
       },
       $set: { leaveBalances: derived },
-    },
-    { new: true }
-  ).select("totalLeaveAvailable leaveBalances leaveUsage lastAccruedYm");
+    }
+  );
+
+  console.log(
+    `LEAVES: 🧾 Employee.updateOne result matched=${updateRes.matchedCount} modified=${updateRes.modifiedCount}`
+  );
+
+  const updatedEmp = await Employee.findById(employee._id).select(
+    "totalLeaveAvailable leaveBalances leaveUsage leaveAccrual.lastAccruedYearMonth"
+  );
+  console.log(
+    "LEAVES: 📦 AFTER APPROVAL SNAPSHOT:",
+    JSON.stringify({
+      totalLeaveAvailable: updatedEmp?.totalLeaveAvailable,
+      leaveBalances: updatedEmp?.leaveBalances,
+      leaveUsage: updatedEmp?.leaveUsage,
+      lastAccruedYearMonth: updatedEmp?.leaveAccrual?.lastAccruedYearMonth,
+    })
+  );
 
   leave.status = "APPROVED";
   leave.adminMessage = req.body.message;
@@ -469,16 +494,17 @@ router.post(
         const r = rows[i] || {};
         try {
           let emp = null;
-          if (r.employeeId)
+          if (r.employeeId) {
             emp = await Employee.findOne({
               _id: r.employeeId,
               company: companyId,
             });
-          else if (r.email)
+          } else if (r.email) {
             emp = await Employee.findOne({
               email: r.email,
               company: companyId,
             });
+          }
           if (!emp) throw new Error("Employee not found in company");
           if (!r.type) throw new Error("Missing type");
 
@@ -496,19 +522,13 @@ router.post(
           out.created += 1;
 
           if (approve) {
-            // 1) Accrue once for that month
-            await ensureAccruedForMonth(
-              leave.employee,
-              company,
-              leave.startDate
-            );
+            // NOTE: We purposely don’t do accrual here for every backfill; if needed,
+            // you can call ensureAccruedForMonth(leave.employee, company, leave.startDate);
 
-            // Re-read employee AFTER accrual
             const employee = await Employee.findById(leave.employee).select(
               "totalLeaveAvailable leaveUsage"
             );
 
-            // 2) Holidays/overrides
             const start = startOfDay(leave.startDate);
             const end = startOfDay(leave.endDate);
             const bankHolidayKeys = new Set(
@@ -523,6 +543,7 @@ router.post(
             })
               .select("date type")
               .lean();
+
             for (const o of overrides) {
               const k = toIsoDay(o.date);
               if (o.type === "WORKING") bankHolidayKeys.delete(k);
@@ -533,7 +554,6 @@ router.post(
               0
             );
 
-            // 3) Allocate
             const caps = company?.leavePolicy?.typeCaps || {};
             const usedPrev = employee.leaveUsage || {
               paid: 0,
@@ -597,11 +617,11 @@ router.post(
               }
             }
 
-            // 4) Persist
             const poolDeduct =
               (allocations.paid || 0) +
               (allocations.casual || 0) +
               (allocations.sick || 0);
+
             const usedNext = {
               paid: (usedPrev.paid || 0) + (allocations.paid || 0),
               casual: (usedPrev.casual || 0) + (allocations.casual || 0),
