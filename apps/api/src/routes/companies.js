@@ -54,6 +54,70 @@ function formatApplicableMonth(date) {
   return `${year}-${month}`;
 }
 
+function normalizeReportingIds(value) {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => normalizeReportingIds(item))
+      .map((id) => String(id).trim())
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return normalizeReportingIds(parsed);
+        }
+      } catch (_) {
+        // fall back to comma split below
+      }
+    }
+    if (trimmed.includes(',')) {
+      return trimmed
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+    }
+    return [trimmed];
+  }
+  return [String(value).trim()].filter(Boolean);
+}
+
+async function resolveReportingEmployees(companyId, value) {
+  const normalized = normalizeReportingIds(value);
+  const orderedUnique = Array.from(new Set(normalized));
+  if (!orderedUnique.length) return [];
+  const invalid = orderedUnique.find(
+    (id) => !mongoose.Types.ObjectId.isValid(String(id))
+  );
+  if (invalid) {
+    const err = new Error('Reporting person not found');
+    err.statusCode = 400;
+    throw err;
+  }
+  const matches = await Employee.find({
+    _id: { $in: orderedUnique },
+    company: companyId,
+  });
+  if (matches.length !== orderedUnique.length) {
+    const err = new Error('Reporting person not found');
+    err.statusCode = 400;
+    throw err;
+  }
+  const map = new Map(matches.map((doc) => [String(doc._id), doc]));
+  return orderedUnique.map((id) => map.get(String(id))).filter(Boolean);
+}
+
+function formatReportingResponse(reportingDocs = []) {
+  return reportingDocs.map((doc) => ({
+    id: doc._id,
+    name: doc.name,
+  }));
+}
+
 function parseBooleanInput(value, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;
@@ -971,12 +1035,22 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     return res.status(400).json({ error: "Employee already exists" });
   const passwordHash = await bcrypt.hash(password, 10);
   const documents = (req.files || []).map((f) => f.filename);
-  let reporting = null;
-  if (reportingPerson) {
-    reporting = await Employee.findById(reportingPerson);
-    if (!reporting || !reporting.company.equals(company._id))
-      return res.status(400).json({ error: "Reporting person not found" });
+  const reportingInput =
+    req.body.reportingPersons !== undefined
+      ? req.body.reportingPersons
+      : reportingPerson;
+  let reportingDocs = [];
+  try {
+    reportingDocs = await resolveReportingEmployees(
+      company._id,
+      reportingInput
+    );
+  } catch (err) {
+    return res
+      .status(err?.statusCode || err?.status || 400)
+      .json({ error: err?.message || "Reporting person not found" });
   }
+  const reportingIds = reportingDocs.map((doc) => doc._id);
   const leaveBalances = {
     casual: company.leavePolicy?.casual || 0,
     paid: company.leavePolicy?.paid || 0,
@@ -999,7 +1073,8 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     employeeId,
     ctc: Number.isFinite(Number(ctc)) ? Number(ctc) : 0,
     documents,
-    reportingPerson: reporting ? reporting._id : undefined,
+    reportingPerson: reportingIds[0] || undefined,
+    reportingPersons: reportingIds,
     leaveBalances,
   });
   try { employee.decryptFieldsSync(); } catch (_) {}
@@ -1012,6 +1087,7 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
       bloodGroup: employee.bloodGroup || '',
       joiningDate: employee.joiningDate,
       subRoles: employee.subRoles,
+      reportingPersons: formatReportingResponse(reportingDocs),
     },
   });
 });
@@ -1274,27 +1350,36 @@ router.post("/leave-balances/reset", auth, async (req, res) => {
 router.put("/employees/:id/reporting", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { reportingPerson } = req.body;
+  const { reportingPersons, reportingPerson } = req.body;
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   const employee = await Employee.findById(req.params.id);
   if (!employee || !employee.company.equals(company._id))
     return res.status(404).json({ error: "Employee not found" });
 
-  if (reportingPerson) {
-    const reporting = await Employee.findById(reportingPerson);
-    if (!reporting || !reporting.company.equals(company._id))
-      return res.status(400).json({ error: "Reporting person not found" });
-    employee.reportingPerson = reporting._id;
-  } else {
-    employee.reportingPerson = undefined;
+  const reportingInput =
+    reportingPersons !== undefined ? reportingPersons : reportingPerson;
+  let reportingDocs = [];
+  try {
+    reportingDocs = await resolveReportingEmployees(
+      company._id,
+      reportingInput
+    );
+  } catch (err) {
+    return res
+      .status(err?.statusCode || err?.status || 400)
+      .json({ error: err?.message || "Reporting person not found" });
   }
+  const reportingIds = reportingDocs.map((doc) => doc._id);
+  employee.reportingPersons = reportingIds;
+  employee.reportingPerson = reportingIds[0] || undefined;
 
   await employee.save();
   res.json({
     employee: {
       id: employee._id,
       reportingPerson: employee.reportingPerson || null,
+      reportingPersons: formatReportingResponse(reportingDocs),
     },
   });
 });
@@ -1507,10 +1592,26 @@ router.delete("/employees/:id", auth, async (req, res) => {
   await Project.updateMany({ members: employee._id }, { $pull: { members: employee._id } });
 
   // Clear as reportingPerson for others within company
-  await Employee.updateMany(
-    { company: company._id, reportingPerson: employee._id },
-    { $unset: { reportingPerson: "" } }
-  );
+  const impacted = await Employee.find({
+    company: company._id,
+    $or: [
+      { reportingPerson: employee._id },
+      { reportingPersons: employee._id },
+    ],
+  });
+  for (const other of impacted) {
+    const filtered = (other.reportingPersons || []).filter(
+      (id) => String(id) !== String(employee._id)
+    );
+    other.reportingPersons = filtered;
+    if (
+      other.reportingPerson &&
+      String(other.reportingPerson) === String(employee._id)
+    ) {
+      other.reportingPerson = filtered[0] || undefined;
+    }
+    await other.save();
+  }
 
   await Employee.deleteOne({ _id: employee._id });
   res.json({ ok: true });
