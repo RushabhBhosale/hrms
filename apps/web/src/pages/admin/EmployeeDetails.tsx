@@ -5,6 +5,7 @@ import { toast } from "react-hot-toast";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import ReportingPersonMultiSelect from "../../components/ReportingPersonMultiSelect";
 import type { RoleDefinition } from "../../types/roles";
 
 type Employee = {
@@ -1033,44 +1034,35 @@ export default function EmployeeDetails() {
           {uErr && <div className="text-sm text-error">{uErr}</div>}
           {uOk && <div className="text-sm text-success">{uOk}</div>}
         </div>
-        <form onSubmit={updateReporting} className="flex items-center gap-2">
-          <select
-            multiple
-            value={reportingPersons}
-            onChange={(e) => {
-              const selected = Array.from(e.target.selectedOptions).map(
-                (opt) => opt.value
-              );
-              setReportingPersons(selected);
-            }}
-            className="rounded-md border border-border bg-bg px-3 py-2 min-h-[2.5rem] outline-none focus:ring-2 focus:ring-primary"
-          >
-            {employees
+        <form onSubmit={updateReporting} className="space-y-3">
+          <ReportingPersonMultiSelect
+            options={employees
               .filter((e) => e.id !== id)
-              .map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => setReportingPersons([])}
-            className="h-10 rounded-md border border-border px-3 text-sm"
-            disabled={uLoading || reportingPersons.length === 0}
-          >
-            Clear
-          </button>
-          <button
-            type="submit"
-            disabled={uLoading}
-            className="rounded-md bg-primary px-4 h-10 text-white disabled:opacity-50"
-          >
-            {uLoading ? "Saving…" : "Save"}
-          </button>
+              .map((e) => ({ value: e.id, label: e.name }))}
+            value={reportingPersons}
+            onChange={setReportingPersons}
+          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setReportingPersons([])}
+              className="h-10 rounded-md border border-border px-3 text-sm"
+              disabled={uLoading || reportingPersons.length === 0}
+            >
+              Clear
+            </button>
+            <button
+              type="submit"
+              disabled={uLoading}
+              className="rounded-md bg-primary px-4 h-10 text-white disabled:opacity-50"
+            >
+              {uLoading ? "Saving…" : "Save"}
+            </button>
+          </div>
         </form>
         <p className="text-xs text-muted">
-          Hold Ctrl (or Cmd on Mac) to select multiple managers.
+          Select one or more managers to receive attendance and leave updates
+          for this employee.
         </p>
       </section>
 

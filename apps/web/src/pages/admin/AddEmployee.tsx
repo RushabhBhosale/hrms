@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../../lib/api";
 import { Field } from "../../components/ui/Field";
+import ReportingPersonMultiSelect from "../../components/ReportingPersonMultiSelect";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -316,28 +317,19 @@ export default function AddEmployee() {
                 name="reportingPersons"
                 control={control}
                 render={({ field }) => (
-                  <select
-                    multiple
-                    value={field.value}
-                    onChange={(e) => {
-                      const selected = Array.from(
-                        e.target.selectedOptions
-                      ).map((opt) => opt.value);
-                      field.onChange(selected);
-                    }}
+                  <ReportingPersonMultiSelect
+                    options={employees.map((emp) => ({
+                      value: emp.id,
+                      label: emp.name,
+                    }))}
+                    value={field.value || []}
+                    onChange={field.onChange}
                     onBlur={field.onBlur}
-                    className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary min-h-[2.5rem]"
-                  >
-                    {employees.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 )}
               />
               <p className="text-xs text-muted mt-1">
-                Hold Ctrl (or Cmd on Mac) to select multiple.
+                Choose one or more managers who should receive updates.
               </p>
             </Field>
             <Field label="Employee ID" required>
