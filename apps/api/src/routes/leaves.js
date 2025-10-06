@@ -73,10 +73,21 @@ router.post("/", auth, async (req, res) => {
     )
       return res.status(400).json({ error: "Invalid fallback type" });
 
+    const reportingIds = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(emp.reportingPersons)
+            ? emp.reportingPersons.map((id) => String(id))
+            : []),
+          emp.reportingPerson ? String(emp.reportingPerson) : null,
+        ].filter(Boolean)
+      )
+    );
+
     const leave = await Leave.create({
       employee: emp._id,
       company: emp.company,
-      approver: emp.reportingPerson,
+      approver: reportingIds[0] || null,
       type,
       fallbackType: fallbackType || null,
       startDate,
@@ -91,14 +102,18 @@ router.post("/", auth, async (req, res) => {
       const companyId = emp.company;
       if (!(await isEmailEnabled(companyId))) return;
       try {
-        const [approver, company] = await Promise.all([
-          emp.reportingPerson
-            ? Employee.findById(emp.reportingPerson).select("name email")
-            : null,
+        const [reportingMembers, company] = await Promise.all([
+          reportingIds.length
+            ? Employee.find({ _id: { $in: reportingIds } }).select(
+                "name email"
+              )
+            : [],
           Company.findById(emp.company).populate("admin", "name email"),
         ]);
         const recipients = new Set();
-        if (approver?.email) recipients.add(approver.email);
+        for (const member of reportingMembers) {
+          if (member?.email) recipients.add(member.email);
+        }
         if (company?.admin?.email) recipients.add(company.admin.email);
         if (Array.isArray(notify)) {
           const ids = notify.map(String).filter((x) => x && x.length >= 12);

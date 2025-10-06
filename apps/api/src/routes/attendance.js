@@ -360,16 +360,33 @@ router.post("/punch", auth, async (req, res) => {
     (async () => {
       try {
         const emp = await Employee.findById(req.employee.id)
-          .select("name email company reportingPerson")
+          .select(
+            "name email company reportingPersons reportingPerson"
+          )
           .lean();
         if (!emp) return;
         const companyId = emp.company;
         if (!(await isEmailEnabled(companyId))) return;
-        if (!emp.reportingPerson) return; // no reporting person configured
-        const rp = await Employee.findById(emp.reportingPerson)
+        const reportingIds = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(emp.reportingPersons)
+                ? emp.reportingPersons.map((id) => String(id))
+                : []),
+              emp.reportingPerson ? String(emp.reportingPerson) : null,
+            ].filter(Boolean)
+          )
+        );
+        if (!reportingIds.length) return; // no reporting person configured
+        const reportingRecipients = await Employee.find({
+          _id: { $in: reportingIds },
+        })
           .select("name email")
           .lean();
-        if (!rp?.email) return;
+        const recipientEmails = reportingRecipients
+          .map((rp) => rp?.email)
+          .filter((email) => typeof email === 'string' && email.trim());
+        if (!recipientEmails.length) return;
 
         // Determine the calendar day for the record
         const dayStart = startOfDay(record.date);
@@ -468,7 +485,7 @@ router.post("/punch", auth, async (req, res) => {
         const subject = `Daily Status: ${emp.name} — ${dateStr}`;
         await sendMail({
           companyId,
-          to: rp.email,
+          to: Array.from(new Set(recipientEmails)),
           subject,
           html,
           text: `Daily Status Report for ${emp.name} on ${dateStr}: Total ${Math.round((totalMinutes / 60) * 10) / 10} hours.`,

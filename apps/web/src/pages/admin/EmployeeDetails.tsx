@@ -14,6 +14,7 @@ type Employee = {
   dob?: string;
   documents: string[];
   reportingPerson?: { id: string; name: string } | null;
+  reportingPersons?: { id: string; name: string }[];
   subRoles: string[];
   address?: string;
   phone?: string;
@@ -154,7 +155,7 @@ export default function EmployeeDetails() {
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
     []
   );
-  const [reportingPerson, setReportingPerson] = useState("");
+  const [reportingPersons, setReportingPersons] = useState<string[]>([]);
   const [uLoading, setULoading] = useState(false);
   const [uErr, setUErr] = useState<string | null>(null);
   const [uOk, setUOk] = useState<string | null>(null);
@@ -225,7 +226,12 @@ export default function EmployeeDetails() {
         const res = await api.get(`/documents/${id}`);
         const e: Employee = res.data.employee;
         setEmployee(e);
-        setReportingPerson(e?.reportingPerson?.id || "");
+        const initialReporting = e?.reportingPersons?.length
+          ? e.reportingPersons.map((rp) => rp.id)
+          : e?.reportingPerson?.id
+          ? [e.reportingPerson.id]
+          : [];
+        setReportingPersons(initialReporting);
         setRole(e?.subRoles?.[0] || "");
         setStatusErr(null);
         setStatusOk(null);
@@ -312,10 +318,35 @@ export default function EmployeeDetails() {
       setULoading(true);
       setUErr(null);
       setUOk(null);
-      await api.put(`/companies/employees/${id}/reporting`, {
-        reportingPerson,
+      const res = await api.put(`/companies/employees/${id}/reporting`, {
+        reportingPersons,
       });
-      setUOk("Reporting person updated");
+      const serverReporting = res?.data?.employee?.reportingPersons;
+      let updated: { id: string; name: string }[] = Array.isArray(
+        serverReporting
+      )
+        ? serverReporting
+        : [];
+      if (serverReporting === undefined) {
+        updated = reportingPersons.length
+          ? employees
+              .filter((emp) => reportingPersons.includes(emp.id))
+              .map((emp) => ({ id: emp.id, name: emp.name }))
+          : [];
+      }
+      setReportingPersons(
+        updated.length ? updated.map((rp) => rp.id) : []
+      );
+      setEmployee((prev) =>
+        prev
+          ? {
+              ...prev,
+              reportingPersons: updated,
+              reportingPerson: updated[0] || null,
+            }
+          : prev
+      );
+      setUOk("Reporting persons updated");
     } catch (e: any) {
       const msg = e?.response?.data?.error || "Failed to update";
       setUErr(msg);
@@ -995,20 +1026,25 @@ export default function EmployeeDetails() {
         </form>
       </section>
 
-      {/* Reporting Person */}
+      {/* Reporting Persons */}
       <section className="space-y-3 bg-surface border border-border rounded-md p-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Reporting Person</h3>
+          <h3 className="font-semibold">Reporting Persons</h3>
           {uErr && <div className="text-sm text-error">{uErr}</div>}
           {uOk && <div className="text-sm text-success">{uOk}</div>}
         </div>
         <form onSubmit={updateReporting} className="flex items-center gap-2">
           <select
-            value={reportingPerson}
-            onChange={(e) => setReportingPerson(e.target.value)}
-            className="rounded-md border border-border bg-bg px-3 h-10 outline-none focus:ring-2 focus:ring-primary"
+            multiple
+            value={reportingPersons}
+            onChange={(e) => {
+              const selected = Array.from(e.target.selectedOptions).map(
+                (opt) => opt.value
+              );
+              setReportingPersons(selected);
+            }}
+            className="rounded-md border border-border bg-bg px-3 py-2 min-h-[2.5rem] outline-none focus:ring-2 focus:ring-primary"
           >
-            <option value="">None</option>
             {employees
               .filter((e) => e.id !== id)
               .map((e) => (
@@ -1018,6 +1054,14 @@ export default function EmployeeDetails() {
               ))}
           </select>
           <button
+            type="button"
+            onClick={() => setReportingPersons([])}
+            className="h-10 rounded-md border border-border px-3 text-sm"
+            disabled={uLoading || reportingPersons.length === 0}
+          >
+            Clear
+          </button>
+          <button
             type="submit"
             disabled={uLoading}
             className="rounded-md bg-primary px-4 h-10 text-white disabled:opacity-50"
@@ -1025,6 +1069,9 @@ export default function EmployeeDetails() {
             {uLoading ? "Saving…" : "Save"}
           </button>
         </form>
+        <p className="text-xs text-muted">
+          Hold Ctrl (or Cmd on Mac) to select multiple managers.
+        </p>
       </section>
 
       {/* Documents */}

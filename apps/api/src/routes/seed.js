@@ -450,6 +450,7 @@ router.post('/dummy', async (req, res) => {
           subRoles: p.roles,
           company: company._id,
           reportingPerson: p.roles.includes('developer') ? admin._id : undefined,
+          reportingPersons: p.roles.includes('developer') ? [admin._id] : [],
           employeeId: p.id,
           ctc: p.ctc,
           totalLeaveAvailable: 24,

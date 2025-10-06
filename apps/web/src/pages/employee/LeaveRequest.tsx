@@ -366,7 +366,7 @@ export default function LeaveRequest() {
                 Notify Others (optional)
               </label>
               <div className="text-xs text-muted">
-                Default recipients: Company Admin and your Reporting Person
+                Default recipients: Company Admin and your reporting person(s)
               </div>
               <div className="rounded-md border border-border p-3 bg-bg">
                 <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2">

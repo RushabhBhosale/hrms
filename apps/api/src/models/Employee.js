@@ -48,7 +48,19 @@ const EmployeeSchema = new mongoose.Schema(
     // Monthly CTC used for salary computations
     ctc: { type: Number, default: 0 },
     documents: { type: [String], default: [] },
+    // Primary reporting person is kept for backward compatibility while
+    // the application gradually transitions to supporting multiple
+    // reporting managers for an employee.
     reportingPerson: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+    reportingPersons: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Employee",
+        },
+      ],
+      default: [],
+    },
     // Derived/display leave balances (kept for backward-compatible API payloads)
     leaveBalances: {
       casual: { type: Number, default: 0 },

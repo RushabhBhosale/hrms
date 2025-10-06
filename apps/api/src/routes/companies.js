@@ -13,8 +13,15 @@ const MasterState = require("../models/MasterState");
 const MasterCity = require("../models/MasterCity");
 const CompanyTypeMaster = require("../models/CompanyTypeMaster");
 const { upload } = require("../utils/uploads");
-const { syncLeaveBalances, accrueTotalIfNeeded } = require("../utils/leaveBalances");
-const { sendMail, isEmailEnabled, invalidateCompanyTransporter } = require("../utils/mailer");
+const {
+  syncLeaveBalances,
+  accrueTotalIfNeeded,
+} = require("../utils/leaveBalances");
+const {
+  sendMail,
+  isEmailEnabled,
+  invalidateCompanyTransporter,
+} = require("../utils/mailer");
 const {
   isValidEmail,
   isValidPassword,
@@ -37,7 +44,9 @@ const {
 
 // Utility: simple hex validation
 function isHexColor(v) {
-  return typeof v === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim());
+  return (
+    typeof v === "string" && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim())
+  );
 }
 
 function startOfDay(d) {
@@ -51,7 +60,7 @@ function parseApplicableMonth(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), 1));
   }
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     const trimmed = value.trim();
     if (!trimmed) return undefined;
     const match = trimmed.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
@@ -68,22 +77,95 @@ function formatApplicableMonth(date) {
   const d = new Date(date);
   if (Number.isNaN(d.getTime())) return "";
   const year = d.getUTCFullYear();
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${year}-${month}`;
 }
 
+function normalizeReportingIds(value) {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => normalizeReportingIds(item))
+      .map((id) => String(id).trim())
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return normalizeReportingIds(parsed);
+        }
+      } catch (_) {
+        // fall back to comma split below
+      }
+    }
+    if (trimmed.includes(",")) {
+      return trimmed
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+    }
+    return [trimmed];
+  }
+  return [String(value).trim()].filter(Boolean);
+}
+
+async function resolveReportingEmployees(companyId, value) {
+  const normalized = normalizeReportingIds(value);
+  const orderedUnique = Array.from(new Set(normalized));
+  if (!orderedUnique.length) return [];
+  const invalid = orderedUnique.find(
+    (id) => !mongoose.Types.ObjectId.isValid(String(id))
+  );
+  if (invalid) {
+    const err = new Error("Reporting person not found");
+    err.statusCode = 400;
+    throw err;
+  }
+  const matches = await Employee.find({
+    _id: { $in: orderedUnique },
+    company: companyId,
+  });
+  if (matches.length !== orderedUnique.length) {
+    const err = new Error("Reporting person not found");
+    err.statusCode = 400;
+    throw err;
+  }
+  const map = new Map(matches.map((doc) => [String(doc._id), doc]));
+  return orderedUnique.map((id) => map.get(String(id))).filter(Boolean);
+}
+
+function formatReportingResponse(reportingDocs = []) {
+  return reportingDocs.map((doc) => ({
+    id: doc._id,
+    name: doc.name,
+  }));
+}
+
 function parseBooleanInput(value, fallback = false) {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
-  if (typeof value === 'string') {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
-    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
-    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+    if (["true", "1", "yes", "y", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "n", "off"].includes(normalized)) return false;
   }
   return fallback;
 }
 
-const BLOOD_GROUPS = new Set(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
+const BLOOD_GROUPS = new Set([
+  "A+",
+  "A-",
+  "B+",
+  "B-",
+  "AB+",
+  "AB-",
+  "O+",
+  "O-",
+]);
 
 function normalizeBloodGroup(v) {
   if (typeof v !== "string") return undefined;
@@ -94,10 +176,11 @@ function normalizeBloodGroup(v) {
 
 function scheduleApprovalEmail(companyOrName, email, passwordPlain) {
   if (!email) return;
-  const companyId = companyOrName && companyOrName._id ? companyOrName._id : null;
+  const companyId =
+    companyOrName && companyOrName._id ? companyOrName._id : null;
   const companyName =
     (companyOrName && companyOrName.name) ||
-    (typeof companyOrName === 'string' ? companyOrName : 'Company');
+    (typeof companyOrName === "string" ? companyOrName : "Company");
   const loginLink = process.env.CLIENT_ORIGIN
     ? `${process.env.CLIENT_ORIGIN}/login`
     : null;
@@ -110,17 +193,17 @@ function scheduleApprovalEmail(companyOrName, email, passwordPlain) {
       "Password: (use the password you set during registration or reset it from the login page)"
     );
   }
-  const credentialsText = credentialLines.join('\n');
+  const credentialsText = credentialLines.join("\n");
   const text = `Good news! Your company "${companyName}" has been approved. You can now log in.${
-    loginLink ? `\n\nLogin: ${loginLink}` : ''
+    loginLink ? `\n\nLogin: ${loginLink}` : ""
   }\n\n${credentialsText}`;
   const htmlLogin = loginLink
     ? `<p><a href="${loginLink}">Log in</a> to get started.</p>`
-    : '';
+    : "";
   const htmlCredentials = `<p><strong>Administrator credentials</strong><br>Email: ${email}${
     passwordPlain
       ? `<br>Password: ${passwordPlain}`
-      : '<br>Password: Use the password you set during registration or reset it from the login page.'
+      : "<br>Password: Use the password you set during registration or reset it from the login page."
   }</p>`;
   (async () => {
     try {
@@ -133,17 +216,21 @@ function scheduleApprovalEmail(companyOrName, email, passwordPlain) {
         html: `<p>Good news! Your company <strong>${companyName}</strong> has been approved.</p>${htmlLogin}${htmlCredentials}<p style="color:#666;font-size:12px;">Automated email from HRMS</p>`,
       });
     } catch (err) {
-      console.warn('[companies] failed to send approval email:', err?.message || err);
+      console.warn(
+        "[companies] failed to send approval email:",
+        err?.message || err
+      );
     }
   })();
 }
 
 function scheduleRejectionEmail(companyOrName, email) {
   if (!email) return;
-  const companyId = companyOrName && companyOrName._id ? companyOrName._id : null;
+  const companyId =
+    companyOrName && companyOrName._id ? companyOrName._id : null;
   const companyName =
     (companyOrName && companyOrName.name) ||
-    (typeof companyOrName === 'string' ? companyOrName : 'Company');
+    (typeof companyOrName === "string" ? companyOrName : "Company");
   const subject = `Your company registration was rejected: ${companyName}`;
   const text = `We’re sorry, but your company "${companyName}" was not approved at this time.`;
   const html = `<p>We’re sorry, but your company <strong>${companyName}</strong> was not approved at this time.</p><p>If you believe this is an error, please contact support.</p>`;
@@ -152,7 +239,10 @@ function scheduleRejectionEmail(companyOrName, email) {
       if (!(await isEmailEnabled(companyId))) return;
       await sendMail({ companyId, to: email, subject, text, html });
     } catch (err) {
-      console.warn('[companies] failed to send rejection email:', err?.message || err);
+      console.warn(
+        "[companies] failed to send rejection email:",
+        err?.message || err
+      );
     }
   })();
 }
@@ -183,16 +273,14 @@ async function resolveLocationAndType({
 
   if (!country) throw httpError(400, "Selected country not found");
   if (!state || !state.country.equals(country._id)) {
-    throw httpError(
-      400,
-      "Selected state is not valid for the chosen country"
-    );
+    throw httpError(400, "Selected state is not valid for the chosen country");
   }
-  if (!city || !city.state.equals(state._id) || !city.country.equals(country._id)) {
-    throw httpError(
-      400,
-      "Selected city is not valid for the chosen state"
-    );
+  if (
+    !city ||
+    !city.state.equals(state._id) ||
+    !city.country.equals(country._id)
+  ) {
+    throw httpError(400, "Selected city is not valid for the chosen state");
   }
   if (!companyType) throw httpError(400, "Selected company type not found");
 
@@ -229,7 +317,11 @@ async function approvePendingCompany(company) {
   await company.save();
 
   const populated = await company.populate("admin", "name email");
-  scheduleApprovalEmail(company, pendingAdmin.email, pendingAdmin.passwordPlain);
+  scheduleApprovalEmail(
+    company,
+    pendingAdmin.email,
+    pendingAdmin.passwordPlain
+  );
   return populated;
 }
 
@@ -237,7 +329,9 @@ async function rejectPendingCompany(company) {
   if (company.status !== "pending") {
     throw httpError(400, "Company is not pending");
   }
-  const pendingAdmin = company.requestedAdmin ? { ...company.requestedAdmin } : null;
+  const pendingAdmin = company.requestedAdmin
+    ? { ...company.requestedAdmin }
+    : null;
   company.status = "rejected";
   if (company.requestedAdmin) {
     company.requestedAdmin.passwordPlain = undefined;
@@ -318,17 +412,23 @@ router.get("/branding", auth, async (req, res) => {
   try {
     let company = null;
     if (["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole)) {
-      company = await Company.findOne({ admin: req.employee.id }).select("name logo logoSquare logoHorizontal");
+      company = await Company.findOne({ admin: req.employee.id }).select(
+        "name logo logoSquare logoHorizontal"
+      );
     } else if (req.employee.primaryRole === "EMPLOYEE") {
-      company = await Company.findById(req.employee.company).select("name logo logoSquare logoHorizontal");
+      company = await Company.findById(req.employee.company).select(
+        "name logo logoSquare logoHorizontal"
+      );
     }
     if (!company) return res.status(200).json({ branding: null });
-    return res.json({ branding: {
-      name: company.name,
-      logo: company.logo || null,
-      logoSquare: company.logoSquare || null,
-      logoHorizontal: company.logoHorizontal || null,
-    } });
+    return res.json({
+      branding: {
+        name: company.name,
+        logo: company.logo || null,
+        logoSquare: company.logoSquare || null,
+        logoHorizontal: company.logoHorizontal || null,
+      },
+    });
   } catch (e) {
     return res.status(500).json({ error: "Failed to get branding" });
   }
@@ -342,13 +442,21 @@ router.put("/theme", auth, async (req, res) => {
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
 
-  const allowed = ["primary", "secondary", "accent", "success", "warning", "error"];
+  const allowed = [
+    "primary",
+    "secondary",
+    "accent",
+    "success",
+    "warning",
+    "error",
+  ];
   const patch = {};
   for (const k of allowed) {
     const v = req.body?.[k];
     if (v === undefined) continue;
     if (v === null || v === "") continue; // ignore empty
-    if (!isHexColor(v)) return res.status(400).json({ error: `Invalid color for ${k}` });
+    if (!isHexColor(v))
+      return res.status(400).json({ error: `Invalid color for ${k}` });
     patch[k] = v.trim();
   }
   company.theme = { ...(company.theme || {}), ...patch };
@@ -374,15 +482,19 @@ router.delete("/theme", auth, async (req, res) => {
 router.get("/profile", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const company = await Company.findOne({ admin: req.employee.id }).select("name logo logoSquare logoHorizontal");
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "name logo logoSquare logoHorizontal"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
-  res.json({ company: {
-    id: company._id,
-    name: company.name,
-    logo: company.logo || null,
-    logoSquare: company.logoSquare || null,
-    logoHorizontal: company.logoHorizontal || null,
-  } });
+  res.json({
+    company: {
+      id: company._id,
+      name: company.name,
+      logo: company.logo || null,
+      logoSquare: company.logoSquare || null,
+      logoHorizontal: company.logoHorizontal || null,
+    },
+  });
 });
 
 // Admin: update company name
@@ -396,19 +508,23 @@ router.put("/profile", auth, async (req, res) => {
 
   const trimmed = name.trim();
   if (trimmed.length < 2 || trimmed.length > 120)
-    return res.status(400).json({ error: "Company name must be 2-120 characters" });
+    return res
+      .status(400)
+      .json({ error: "Company name must be 2-120 characters" });
 
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   company.name = trimmed;
   await company.save();
-  res.json({ company: {
-    id: company._id,
-    name: company.name,
-    logo: company.logo || null,
-    logoSquare: company.logoSquare || null,
-    logoHorizontal: company.logoHorizontal || null,
-  } });
+  res.json({
+    company: {
+      id: company._id,
+      name: company.name,
+      logo: company.logo || null,
+      logoSquare: company.logoSquare || null,
+      logoHorizontal: company.logoHorizontal || null,
+    },
+  });
 });
 
 // Admin: get SMTP configuration
@@ -416,18 +532,20 @@ router.get("/smtp", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
 
-  const company = await Company.findOne({ admin: req.employee.id }).select('smtp');
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "smtp"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
   const smtp = company.smtp || {};
   res.json({
     smtp: {
       enabled: !!smtp.enabled,
-      host: smtp.host || '',
-      port: typeof smtp.port === 'number' ? smtp.port : 587,
+      host: smtp.host || "",
+      port: typeof smtp.port === "number" ? smtp.port : 587,
       secure: !!smtp.secure,
-      user: smtp.user || '',
-      from: smtp.from || '',
-      replyTo: smtp.replyTo || '',
+      user: smtp.user || "",
+      from: smtp.from || "",
+      replyTo: smtp.replyTo || "",
       passwordSet: !!smtp.pass,
     },
   });
@@ -438,7 +556,9 @@ router.put("/smtp", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
 
-  const company = await Company.findOne({ admin: req.employee.id }).select('smtp');
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "smtp"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const body = req.body || {};
@@ -451,40 +571,42 @@ router.put("/smtp", auth, async (req, res) => {
     return res.json({
       smtp: {
         enabled: false,
-        host: '',
+        host: "",
         port: 587,
         secure: false,
-        user: '',
-        from: '',
-        replyTo: '',
+        user: "",
+        from: "",
+        replyTo: "",
         passwordSet: false,
       },
     });
   }
 
-  const host = typeof body.host === 'string' ? body.host.trim() : '';
-  if (!host) return res.status(400).json({ error: 'SMTP host is required' });
+  const host = typeof body.host === "string" ? body.host.trim() : "";
+  if (!host) return res.status(400).json({ error: "SMTP host is required" });
 
   const portRaw = body.port !== undefined ? body.port : 587;
   const portNum = parseInt(portRaw, 10);
   if (!Number.isFinite(portNum) || portNum <= 0 || portNum > 65535) {
-    return res.status(400).json({ error: 'SMTP port must be between 1 and 65535' });
+    return res
+      .status(400)
+      .json({ error: "SMTP port must be between 1 and 65535" });
   }
 
   const secure = parseBooleanInput(body.secure, portNum === 465);
-  const user = typeof body.user === 'string' ? body.user.trim() : '';
-  const from = typeof body.from === 'string' ? body.from.trim() : '';
-  const replyTo = typeof body.replyTo === 'string' ? body.replyTo.trim() : '';
+  const user = typeof body.user === "string" ? body.user.trim() : "";
+  const from = typeof body.from === "string" ? body.from.trim() : "";
+  const replyTo = typeof body.replyTo === "string" ? body.replyTo.trim() : "";
 
   let nextPass = (company.smtp && company.smtp.pass) || undefined;
-  if (Object.prototype.hasOwnProperty.call(body, 'password')) {
+  if (Object.prototype.hasOwnProperty.call(body, "password")) {
     const raw = body.password;
-    if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+    if (raw === null || (typeof raw === "string" && raw.trim() === "")) {
       nextPass = undefined;
-    } else if (typeof raw === 'string') {
+    } else if (typeof raw === "string") {
       nextPass = raw;
     } else {
-      return res.status(400).json({ error: 'Invalid password value' });
+      return res.status(400).json({ error: "Invalid password value" });
     }
   }
 
@@ -507,9 +629,9 @@ router.put("/smtp", auth, async (req, res) => {
       host,
       port: portNum,
       secure,
-      user: user || '',
-      from: from || '',
-      replyTo: replyTo || '',
+      user: user || "",
+      from: from || "",
+      replyTo: replyTo || "",
       passwordSet: !!nextPass,
     },
   });
@@ -520,7 +642,8 @@ router.post("/logo", auth, upload.single("logo"), async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   try {
-    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
+    if (!req.file)
+      return res.status(400).json({ error: "No logo file uploaded" });
     const company = await Company.findOne({ admin: req.employee.id });
     if (!company) return res.status(400).json({ error: "Company not found" });
     company.logo = req.file.filename;
@@ -536,7 +659,8 @@ router.post("/logo-square", auth, upload.single("logo"), async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   try {
-    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
+    if (!req.file)
+      return res.status(400).json({ error: "No logo file uploaded" });
     const company = await Company.findOne({ admin: req.employee.id });
     if (!company) return res.status(400).json({ error: "Company not found" });
     company.logoSquare = req.file.filename;
@@ -548,20 +672,28 @@ router.post("/logo-square", auth, upload.single("logo"), async (req, res) => {
 });
 
 // Admin: upload/replace horizontal logo
-router.post("/logo-horizontal", auth, upload.single("logo"), async (req, res) => {
-  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
-    return res.status(403).json({ error: "Forbidden" });
-  try {
-    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
-    const company = await Company.findOne({ admin: req.employee.id });
-    if (!company) return res.status(400).json({ error: "Company not found" });
-    company.logoHorizontal = req.file.filename;
-    await company.save();
-    return res.json({ logoHorizontal: company.logoHorizontal });
-  } catch (e) {
-    return res.status(500).json({ error: "Failed to upload horizontal logo" });
+router.post(
+  "/logo-horizontal",
+  auth,
+  upload.single("logo"),
+  async (req, res) => {
+    if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+      return res.status(403).json({ error: "Forbidden" });
+    try {
+      if (!req.file)
+        return res.status(400).json({ error: "No logo file uploaded" });
+      const company = await Company.findOne({ admin: req.employee.id });
+      if (!company) return res.status(400).json({ error: "Company not found" });
+      company.logoHorizontal = req.file.filename;
+      await company.save();
+      return res.json({ logoHorizontal: company.logoHorizontal });
+    } catch (e) {
+      return res
+        .status(500)
+        .json({ error: "Failed to upload horizontal logo" });
+    }
   }
-});
+);
 
 // Public: company self-registration (landing page submission)
 router.post("/register", async (req, res) => {
@@ -593,7 +725,9 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Invalid admin email" });
     }
     if (!isValidPassword(adminPassword)) {
-      return res.status(400).json({ error: "Password must be more than 5 characters" });
+      return res
+        .status(400)
+        .json({ error: "Password must be more than 5 characters" });
     }
 
     let country, state, city, companyType;
@@ -606,10 +740,10 @@ router.post("/register", async (req, res) => {
       }));
     } catch (err) {
       const statusCode = err.statusCode || 500;
-      if (statusCode >= 500) console.error('[companies/register]', err);
+      if (statusCode >= 500) console.error("[companies/register]", err);
       return res
         .status(statusCode)
-        .json({ error: err.message || 'Invalid master selections' });
+        .json({ error: err.message || "Invalid master selections" });
     }
 
     const existingAdmin = await Employee.findOne({ email: adminEmail });
@@ -660,20 +794,24 @@ router.post("/register", async (req, res) => {
     if (seededDefaults) await company.save();
 
     // Async notifications (non-blocking)
-    ;(async () => {
+    (async () => {
       try {
         if (await isEmailEnabled()) {
           // Notify platform superadmins
-          const supers = await Employee.find({ primaryRole: 'SUPERADMIN' }).select('email name');
+          const supers = await Employee.find({
+            primaryRole: "SUPERADMIN",
+          }).select("email name");
           const to = (supers || []).map((u) => u.email).filter(Boolean);
           if (to.length) {
             const subject = `New company registration pending: ${company.name}`;
             const text = `A new company has requested approval.\n\nCompany: ${company.name}\nAdmin: ${adminName} <${adminEmail}>\n\nReview in the dashboard.`;
-            const link = process.env.CLIENT_ORIGIN ? `${process.env.CLIENT_ORIGIN}/superadmin/companies` : null;
+            const link = process.env.CLIENT_ORIGIN
+              ? `${process.env.CLIENT_ORIGIN}/superadmin/companies`
+              : null;
             const html = `<p>A new company has requested approval.</p>
               <p><strong>Company:</strong> ${company.name}</p>
               <p><strong>Admin:</strong> ${adminName} &lt;${adminEmail}&gt;</p>
-              ${link ? `<p><a href="${link}">Review in dashboard</a></p>` : ''}
+              ${link ? `<p><a href="${link}">Review in dashboard</a></p>` : ""}
               <p style="color:#666;font-size:12px;">Automated email from HRMS</p>`;
             await sendMail({ to, subject, text, html });
           }
@@ -681,10 +819,19 @@ router.post("/register", async (req, res) => {
           const subject2 = `Registration received: ${company.name}`;
           const text2 = `Thanks for registering ${company.name}. Your request is pending approval. We will notify you once reviewed.`;
           const html2 = `<p>Thanks for registering <strong>${company.name}</strong>.</p><p>Your request is pending approval. We will notify you once reviewed.</p>`;
-          await sendMail({ companyId: company._id, to: adminEmail.trim(), subject: subject2, text: text2, html: html2 });
+          await sendMail({
+            companyId: company._id,
+            to: adminEmail.trim(),
+            subject: subject2,
+            text: text2,
+            html: html2,
+          });
         }
       } catch (e) {
-        console.warn('[companies/register] failed to send email:', e?.message || e);
+        console.warn(
+          "[companies/register] failed to send email:",
+          e?.message || e
+        );
       }
     })();
 
@@ -728,7 +875,9 @@ router.post("/", auth, async (req, res) => {
     return res.status(400).json({ error: "Invalid admin email" });
   }
   if (!isValidPassword(adminPassword)) {
-    return res.status(400).json({ error: "Password must be more than 5 characters" });
+    return res
+      .status(400)
+      .json({ error: "Password must be more than 5 characters" });
   }
   let admin = await Employee.findOne({ email: adminEmail });
   if (admin) return res.status(400).json({ error: "Admin already exists" });
@@ -745,8 +894,10 @@ router.post("/", auth, async (req, res) => {
     }));
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    if (statusCode >= 500) console.error('[companies/create]', err);
-    return res.status(statusCode).json({ error: err.message || 'Invalid master selections' });
+    if (statusCode >= 500) console.error("[companies/create]", err);
+    return res
+      .status(statusCode)
+      .json({ error: err.message || "Invalid master selections" });
   }
 
   admin = await Employee.create({
@@ -812,7 +963,9 @@ router.post("/:companyId/admin", auth, async (req, res) => {
     return res.status(400).json({ error: "Invalid admin email" });
   }
   if (!isValidPassword(adminPassword)) {
-    return res.status(400).json({ error: "Password must be more than 5 characters" });
+    return res
+      .status(400)
+      .json({ error: "Password must be more than 5 characters" });
   }
   const company = await Company.findById(req.params.companyId);
   if (!company) return res.status(404).json({ error: "Company not found" });
@@ -847,8 +1000,10 @@ router.post("/:companyId/approve", auth, async (req, res) => {
     return res.json({ company: populated });
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    if (statusCode >= 500) console.error('[companies/approve]', err);
-    return res.status(statusCode).json({ error: err.message || 'Failed to approve company' });
+    if (statusCode >= 500) console.error("[companies/approve]", err);
+    return res
+      .status(statusCode)
+      .json({ error: err.message || "Failed to approve company" });
   }
 });
 
@@ -863,8 +1018,10 @@ router.post("/:companyId/reject", auth, async (req, res) => {
     return res.json({ company: populated });
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    if (statusCode >= 500) console.error('[companies/reject]', err);
-    return res.status(statusCode).json({ error: err.message || 'Failed to reject company' });
+    if (statusCode >= 500) console.error("[companies/reject]", err);
+    return res
+      .status(statusCode)
+      .json({ error: err.message || "Failed to reject company" });
   }
 });
 
@@ -873,7 +1030,9 @@ router.patch("/:companyId/status", auth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   const { status } = req.body || {};
   if (!status || !["approved", "rejected"].includes(status)) {
-    return res.status(400).json({ error: "Status must be approved or rejected" });
+    return res
+      .status(400)
+      .json({ error: "Status must be approved or rejected" });
   }
   const company = await Company.findById(req.params.companyId);
   if (!company) return res.status(404).json({ error: "Company not found" });
@@ -883,8 +1042,10 @@ router.patch("/:companyId/status", auth, async (req, res) => {
     return res.json({ company: populated });
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    if (statusCode >= 500) console.error('[companies/status]', err);
-    return res.status(statusCode).json({ error: err.message || 'Failed to update company status' });
+    if (statusCode >= 500) console.error("[companies/status]", err);
+    return res
+      .status(statusCode)
+      .json({ error: err.message || "Failed to update company status" });
   }
 });
 
@@ -928,9 +1089,11 @@ router.post("/roles", auth, async (req, res) => {
 
   company.roles.push(rawName);
   company.roleSettings[rawName] = {
-    label: typeof label === "string" && label.trim() ? label.trim() : formatRoleLabel(rawName),
-    description:
-      typeof description === "string" ? description.trim() : "",
+    label:
+      typeof label === "string" && label.trim()
+        ? label.trim()
+        : formatRoleLabel(rawName),
+    description: typeof description === "string" ? description.trim() : "",
     modules: sanitizedPermissions,
     system: false,
     canDelete: true,
@@ -1031,13 +1194,22 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
   } = req.body;
   if (!name || !email || !password || !role || !employeeId)
     return res.status(400).json({ error: "Missing fields" });
-  if (!isValidEmail(email)) return res.status(400).json({ error: "Invalid email" });
-  if (!isValidPassword(password)) return res.status(400).json({ error: "Password must be more than 5 characters" });
+  if (!isValidEmail(email))
+    return res.status(400).json({ error: "Invalid email" });
+  if (!isValidPassword(password))
+    return res
+      .status(400)
+      .json({ error: "Password must be more than 5 characters" });
   if (phone !== undefined && phone !== null && String(phone).trim() !== "") {
-    if (!isValidPhone(phone)) return res.status(400).json({ error: "Phone must be exactly 10 digits" });
+    if (!isValidPhone(phone))
+      return res.status(400).json({ error: "Phone must be exactly 10 digits" });
   }
   let personalEmailNormalized;
-  if (personalEmail !== undefined && personalEmail !== null && String(personalEmail).trim() !== "") {
+  if (
+    personalEmail !== undefined &&
+    personalEmail !== null &&
+    String(personalEmail).trim() !== ""
+  ) {
     personalEmailNormalized = String(personalEmail).trim();
     if (!isValidEmail(personalEmailNormalized)) {
       return res.status(400).json({ error: "Invalid personal email" });
@@ -1054,7 +1226,11 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     return res.status(400).json({ error: "Invalid blood group" });
   }
   let parsedJoiningDate;
-  if (joiningDate !== undefined && joiningDate !== null && String(joiningDate).trim() !== "") {
+  if (
+    joiningDate !== undefined &&
+    joiningDate !== null &&
+    String(joiningDate).trim() !== ""
+  ) {
     const jd = new Date(joiningDate);
     if (Number.isNaN(jd.getTime())) {
       return res.status(400).json({ error: "Invalid joining date" });
@@ -1098,12 +1274,22 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     return res.status(400).json({ error: "Employee already exists" });
   const passwordHash = await bcrypt.hash(password, 10);
   const documents = (req.files || []).map((f) => f.filename);
-  let reporting = null;
-  if (reportingPerson) {
-    reporting = await Employee.findById(reportingPerson);
-    if (!reporting || !reporting.company.equals(company._id))
-      return res.status(400).json({ error: "Reporting person not found" });
+  const reportingInput =
+    req.body.reportingPersons !== undefined
+      ? req.body.reportingPersons
+      : reportingPerson;
+  let reportingDocs = [];
+  try {
+    reportingDocs = await resolveReportingEmployees(
+      company._id,
+      reportingInput
+    );
+  } catch (err) {
+    return res
+      .status(err?.statusCode || err?.status || 400)
+      .json({ error: err?.message || "Reporting person not found" });
   }
+  const reportingIds = reportingDocs.map((doc) => doc._id);
   const leaveBalances = {
     casual: company.leavePolicy?.casual || 0,
     paid: company.leavePolicy?.paid || 0,
@@ -1126,27 +1312,31 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     employeeId,
     ctc: Number.isFinite(Number(ctc)) ? Number(ctc) : 0,
     documents,
-    reportingPerson: reporting ? reporting._id : undefined,
+    reportingPerson: reportingIds[0] || undefined,
+    reportingPersons: reportingIds,
     leaveBalances,
     aadharNumber: normalizedAadhaar,
     panNumber: normalizedPan,
     employmentStatus: "PROBATION",
     probationSince: parsedJoiningDate || new Date(),
   });
-  try { employee.decryptFieldsSync(); } catch (_) {}
+  try {
+    employee.decryptFieldsSync();
+  } catch (_) {}
   res.json({
     employee: {
       id: employee._id,
       name: employee.name,
       email: employee.email,
-      personalEmail: employee.personalEmail || '',
-      bloodGroup: employee.bloodGroup || '',
+      personalEmail: employee.personalEmail || "",
+      bloodGroup: employee.bloodGroup || "",
       joiningDate: employee.joiningDate,
       subRoles: employee.subRoles,
-      aadharNumber: employee.aadharNumber || '',
-      panNumber: employee.panNumber || '',
-      employmentStatus: employee.employmentStatus || 'PROBATION',
+      aadharNumber: employee.aadharNumber || "",
+      panNumber: employee.panNumber || "",
+      employmentStatus: employee.employmentStatus || "PROBATION",
       probationSince: employee.probationSince || null,
+      reportingPersons: formatReportingResponse(reportingDocs),
     },
   });
 });
@@ -1165,7 +1355,7 @@ router.get("/leave-policy", auth, async (req, res) => {
       totalAnnual: lp.totalAnnual || 0,
       ratePerMonth: lp.ratePerMonth || 0,
       probationRatePerMonth: lp.probationRatePerMonth || 0,
-      accrualStrategy: lp.accrualStrategy || 'ACCRUAL',
+      accrualStrategy: lp.accrualStrategy || "ACCRUAL",
       applicableFrom: formatApplicableMonth(lp.applicableFrom),
       typeCaps: {
         paid: lp.typeCaps?.paid || 0,
@@ -1185,7 +1375,13 @@ router.get("/work-hours", auth, async (req, res) => {
   );
   if (!company) return res.status(400).json({ error: "Company not found" });
   const wh = company.workHours || { start: "", end: "", graceMinutes: 0 };
-  res.json({ workHours: { start: wh.start || "", end: wh.end || "", graceMinutes: wh.graceMinutes || 0 } });
+  res.json({
+    workHours: {
+      start: wh.start || "",
+      end: wh.end || "",
+      graceMinutes: wh.graceMinutes || 0,
+    },
+  });
 });
 
 // Admin: update work hours (company timing)
@@ -1195,13 +1391,22 @@ router.put("/work-hours", auth, async (req, res) => {
   const { start, end, graceMinutes } = req.body || {};
   // Basic validation: HH:mm format for times, non-negative grace
   function isHHmm(s) {
-    return typeof s === 'string' && /^\d{2}:\d{2}$/.test(s);
+    return typeof s === "string" && /^\d{2}:\d{2}$/.test(s);
   }
   if (!isHHmm(start) || !isHHmm(end))
     return res.status(400).json({ error: "Invalid time format. Use HH:mm" });
   const [sh, sm] = start.split(":").map((x) => parseInt(x, 10));
   const [eh, em] = end.split(":").map((x) => parseInt(x, 10));
-  if (sh < 0 || sh > 23 || sm < 0 || sm > 59 || eh < 0 || eh > 23 || em < 0 || em > 59)
+  if (
+    sh < 0 ||
+    sh > 23 ||
+    sm < 0 ||
+    sm > 59 ||
+    eh < 0 ||
+    eh > 23 ||
+    em < 0 ||
+    em > 59
+  )
     return res.status(400).json({ error: "Invalid time values" });
   const gm = parseInt(graceMinutes, 10);
   if (!Number.isFinite(gm) || gm < 0)
@@ -1231,27 +1436,35 @@ router.put("/leave-policy", auth, async (req, res) => {
   const total = Number(totalAnnual) || 0;
   const rpm = Number(ratePerMonth) || 0;
   const probationRpm = Number(probationRatePerMonth) || 0;
-  const strategy = typeof accrualStrategy === 'string'
-    ? accrualStrategy.toUpperCase()
-    : 'ACCRUAL';
+  const strategy =
+    typeof accrualStrategy === "string"
+      ? accrualStrategy.toUpperCase()
+      : "ACCRUAL";
   const caps = {
     paid: Number(typeCaps?.paid) || 0,
     casual: Number(typeCaps?.casual) || 0,
     sick: Number(typeCaps?.sick) || 0,
   };
-  if (!['ACCRUAL', 'LUMP_SUM'].includes(strategy))
-    return res.status(400).json({ error: 'Invalid accrual strategy' });
+  if (!["ACCRUAL", "LUMP_SUM"].includes(strategy))
+    return res.status(400).json({ error: "Invalid accrual strategy" });
   if (total < 0 || rpm < 0 || probationRpm < 0)
     return res.status(400).json({ error: "Invalid totals" });
   const sumCaps = caps.paid + caps.casual + caps.sick;
-  if (sumCaps > total) return res.status(400).json({ error: "Type caps cannot exceed total annual leaves" });
+  if (sumCaps > total)
+    return res
+      .status(400)
+      .json({ error: "Type caps cannot exceed total annual leaves" });
   const previousApplicable = company.leavePolicy?.applicableFrom || undefined;
   let applicableFromDate = previousApplicable;
   if (applicableFrom === null) {
     applicableFromDate = undefined;
-  } else if (typeof applicableFrom !== 'undefined') {
+  } else if (typeof applicableFrom !== "undefined") {
     const parsed = parseApplicableMonth(applicableFrom);
-    if (!parsed && typeof applicableFrom === 'string' && applicableFrom.trim()) {
+    if (
+      !parsed &&
+      typeof applicableFrom === "string" &&
+      applicableFrom.trim()
+    ) {
       return res.status(400).json({ error: "Invalid leave applicable date" });
     }
     applicableFromDate = parsed ?? previousApplicable;
@@ -1267,7 +1480,7 @@ router.put("/leave-policy", auth, async (req, res) => {
   await company.save();
   const updated = company.leavePolicy || {};
 
-  ;(async () => {
+  (async () => {
     try {
       const employees = await Employee.find({ company: company._id }).select(
         "company totalLeaveAvailable leaveUsage leaveAccrual joiningDate createdAt employmentStatus probationSince"
@@ -1277,11 +1490,18 @@ router.put("/leave-policy", auth, async (req, res) => {
           await accrueTotalIfNeeded(emp, company, new Date());
           await syncLeaveBalances(emp);
         } catch (err) {
-          console.warn('[companies/leave-policy] failed to sync employee', String(emp._id), err?.message || err);
+          console.warn(
+            "[companies/leave-policy] failed to sync employee",
+            String(emp._id),
+            err?.message || err
+          );
         }
       }
     } catch (err) {
-      console.warn('[companies/leave-policy] failed to refresh employees', err?.message || err);
+      console.warn(
+        "[companies/leave-policy] failed to refresh employees",
+        err?.message || err
+      );
     }
   })();
 
@@ -1290,7 +1510,7 @@ router.put("/leave-policy", auth, async (req, res) => {
       totalAnnual: updated.totalAnnual || 0,
       ratePerMonth: updated.ratePerMonth || 0,
       probationRatePerMonth: updated.probationRatePerMonth || 0,
-      accrualStrategy: updated.accrualStrategy || 'ACCRUAL',
+      accrualStrategy: updated.accrualStrategy || "ACCRUAL",
       applicableFrom: formatApplicableMonth(updated.applicableFrom),
       typeCaps: {
         paid: updated.typeCaps?.paid || 0,
@@ -1321,7 +1541,9 @@ router.post("/bank-holidays", auth, async (req, res) => {
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   const existing = company.bankHolidays?.some(
-    (h) => h.date.toISOString().slice(0, 10) === new Date(date).toISOString().slice(0, 10)
+    (h) =>
+      h.date.toISOString().slice(0, 10) ===
+      new Date(date).toISOString().slice(0, 10)
   );
   if (!existing) {
     company.bankHolidays.push({ date, name });
@@ -1335,7 +1557,9 @@ router.post("/bank-holidays", auth, async (req, res) => {
 router.get("/day-overrides", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "_id"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const { month } = req.query || {};
@@ -1347,12 +1571,16 @@ router.get("/day-overrides", auth, async (req, res) => {
     filter = { ...filter, date: { $gte: start, $lt: end } };
   }
 
-  const overrides = await CompanyDayOverride.find(filter).sort({ date: 1 }).lean();
-  res.json({ overrides: overrides.map(o => ({
-    date: new Date(o.date).toISOString().slice(0,10),
-    type: o.type,
-    note: o.note || "",
-  })) });
+  const overrides = await CompanyDayOverride.find(filter)
+    .sort({ date: 1 })
+    .lean();
+  res.json({
+    overrides: overrides.map((o) => ({
+      date: new Date(o.date).toISOString().slice(0, 10),
+      type: o.type,
+      note: o.note || "",
+    })),
+  });
 });
 
 // Admin: upsert a company day override
@@ -1361,27 +1589,49 @@ router.post("/day-overrides", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   const { date, type, note } = req.body || {};
-  if (!date || !type) return res.status(400).json({ error: "Missing date or type" });
-  if (!['WORKING','HOLIDAY','HALF_DAY'].includes(type))
+  if (!date || !type)
+    return res.status(400).json({ error: "Missing date or type" });
+  if (!["WORKING", "HOLIDAY", "HALF_DAY"].includes(type))
     return res.status(400).json({ error: "Invalid type" });
 
-  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "_id"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const day = startOfDay(new Date(date));
-  if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
+  if (isNaN(day.getTime()))
+    return res.status(400).json({ error: "Invalid date" });
 
   await CompanyDayOverride.findOneAndUpdate(
     { company: company._id, date: day },
-    { $setOnInsert: { company: company._id, date: day }, $set: { type, note: note || "", updatedBy: req.employee.id } },
+    {
+      $setOnInsert: { company: company._id, date: day },
+      $set: { type, note: note || "", updatedBy: req.employee.id },
+    },
     { upsert: true }
   );
 
-  const month = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}`;
+  const month = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}`;
   const start = startOfDay(new Date(month + "-01"));
-  const end = new Date(start); end.setMonth(end.getMonth()+1);
-  const overrides = await CompanyDayOverride.find({ company: company._id, date: { $gte: start, $lt: end } }).sort({ date: 1 }).lean();
-  res.json({ overrides: overrides.map(o => ({ date: new Date(o.date).toISOString().slice(0,10), type: o.type, note: o.note || "" })) });
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+  const overrides = await CompanyDayOverride.find({
+    company: company._id,
+    date: { $gte: start, $lt: end },
+  })
+    .sort({ date: 1 })
+    .lean();
+  res.json({
+    overrides: overrides.map((o) => ({
+      date: new Date(o.date).toISOString().slice(0, 10),
+      type: o.type,
+      note: o.note || "",
+    })),
+  });
 });
 
 // Admin: delete a company day override by date
@@ -1389,10 +1639,13 @@ router.delete("/day-overrides/:date", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   const { date } = req.params;
-  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "_id"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
   const day = startOfDay(new Date(date));
-  if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
+  if (isNaN(day.getTime()))
+    return res.status(400).json({ error: "Invalid date" });
   await CompanyDayOverride.deleteOne({ company: company._id, date: day });
   res.json({ ok: true });
 });
@@ -1403,7 +1656,9 @@ router.post("/leave-balances/reset", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   const { reaccrue } = req.body || {};
-  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "_id leavePolicy"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
   const emps = await Employee.find({ company: company._id });
   let count = 0;
@@ -1419,7 +1674,11 @@ router.post("/leave-balances/reset", auth, async (req, res) => {
       }
       count++;
     } catch (err) {
-      console.warn('[leave-reset] failed for employee', String(e._id), err?.message || err);
+      console.warn(
+        "[leave-reset] failed for employee",
+        String(e._id),
+        err?.message || err
+      );
     }
   }
   res.json({ ok: true, count });
@@ -1429,27 +1688,36 @@ router.post("/leave-balances/reset", auth, async (req, res) => {
 router.put("/employees/:id/reporting", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { reportingPerson } = req.body;
+  const { reportingPersons, reportingPerson } = req.body;
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   const employee = await Employee.findById(req.params.id);
   if (!employee || !employee.company.equals(company._id))
     return res.status(404).json({ error: "Employee not found" });
 
-  if (reportingPerson) {
-    const reporting = await Employee.findById(reportingPerson);
-    if (!reporting || !reporting.company.equals(company._id))
-      return res.status(400).json({ error: "Reporting person not found" });
-    employee.reportingPerson = reporting._id;
-  } else {
-    employee.reportingPerson = undefined;
+  const reportingInput =
+    reportingPersons !== undefined ? reportingPersons : reportingPerson;
+  let reportingDocs = [];
+  try {
+    reportingDocs = await resolveReportingEmployees(
+      company._id,
+      reportingInput
+    );
+  } catch (err) {
+    return res
+      .status(err?.statusCode || err?.status || 400)
+      .json({ error: err?.message || "Reporting person not found" });
   }
+  const reportingIds = reportingDocs.map((doc) => doc._id);
+  employee.reportingPersons = reportingIds;
+  employee.reportingPerson = reportingIds[0] || undefined;
 
   await employee.save();
   res.json({
     employee: {
       id: employee._id,
       reportingPerson: employee.reportingPerson || null,
+      reportingPersons: formatReportingResponse(reportingDocs),
     },
   });
 });
@@ -1506,69 +1774,79 @@ router.put("/employees/:id", auth, async (req, res) => {
 
   if (email !== undefined) {
     const trimmed = String(email).trim();
-    if (!trimmed) return res.status(400).json({ error: 'Email cannot be empty' });
-    if (!isValidEmail(trimmed)) return res.status(400).json({ error: 'Invalid email' });
+    if (!trimmed)
+      return res.status(400).json({ error: "Email cannot be empty" });
+    if (!isValidEmail(trimmed))
+      return res.status(400).json({ error: "Invalid email" });
     const existingEmail = await Employee.findOne({ email: trimmed });
     if (existingEmail && !existingEmail._id.equals(employee._id))
-      return res.status(400).json({ error: 'Email already taken' });
+      return res.status(400).json({ error: "Email already taken" });
     employee.email = trimmed;
   }
 
   // Validate and assign fields
-  if (typeof address === 'string') employee.address = address.trim();
+  if (typeof address === "string") employee.address = address.trim();
   if (phone !== undefined) {
-    if (phone === null || String(phone).trim() === '') {
+    if (phone === null || String(phone).trim() === "") {
       employee.phone = undefined;
     } else {
-      if (!isValidPhone(phone)) return res.status(400).json({ error: 'Phone must be exactly 10 digits' });
+      if (!isValidPhone(phone))
+        return res
+          .status(400)
+          .json({ error: "Phone must be exactly 10 digits" });
       employee.phone = normalizePhone(phone);
     }
   }
   if (dob) {
     const d = new Date(dob);
-    if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid DOB' });
+    if (isNaN(d.getTime()))
+      return res.status(400).json({ error: "Invalid DOB" });
     employee.dob = d;
   }
   if (joiningDate !== undefined) {
-    if (joiningDate === null || String(joiningDate).trim() === '') {
+    if (joiningDate === null || String(joiningDate).trim() === "") {
       employee.joiningDate = undefined;
     } else {
       const jd = new Date(joiningDate);
-      if (isNaN(jd.getTime())) return res.status(400).json({ error: 'Invalid joining date' });
+      if (isNaN(jd.getTime()))
+        return res.status(400).json({ error: "Invalid joining date" });
       employee.joiningDate = jd;
     }
   }
   if (personalEmail !== undefined) {
-    if (personalEmail === null || String(personalEmail).trim() === '') {
+    if (personalEmail === null || String(personalEmail).trim() === "") {
       employee.personalEmail = undefined;
     } else {
       const trimmed = String(personalEmail).trim();
-      if (!isValidEmail(trimmed)) return res.status(400).json({ error: 'Invalid personal email' });
+      if (!isValidEmail(trimmed))
+        return res.status(400).json({ error: "Invalid personal email" });
       employee.personalEmail = trimmed;
     }
   }
   if (bloodGroup !== undefined) {
-    if (bloodGroup === null || String(bloodGroup).trim() === '') {
+    if (bloodGroup === null || String(bloodGroup).trim() === "") {
       employee.bloodGroup = undefined;
     } else {
       const normalized = normalizeBloodGroup(bloodGroup);
-      if (!normalized) return res.status(400).json({ error: 'Invalid blood group' });
+      if (!normalized)
+        return res.status(400).json({ error: "Invalid blood group" });
       employee.bloodGroup = normalized;
     }
   }
   if (ctc !== undefined) {
     const n = Number(ctc);
-    if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'Invalid CTC' });
+    if (!Number.isFinite(n) || n < 0)
+      return res.status(400).json({ error: "Invalid CTC" });
     employee.ctc = n;
   }
   if (aadharNumber !== undefined) {
     const rawAadhaar = String(aadharNumber).trim();
     const digits = normalizeAadhaar(rawAadhaar);
     if (rawAadhaar && !digits) {
-      return res.status(400).json({ error: 'Invalid Aadhar number' });
+      return res.status(400).json({ error: "Invalid Aadhar number" });
     }
     if (digits && !isValidAadhaar(digits)) {
-      return res.status(400).json({ error: 'Invalid Aadhar number' });
+      return res.status(400).json({ error: "Invalid Aadhar number" });
     }
     employee.aadharNumber = digits || undefined;
   }
@@ -1577,44 +1855,49 @@ router.put("/employees/:id", auth, async (req, res) => {
     if (rawPan) {
       const pan = normalizePan(rawPan);
       if (!isValidPan(pan)) {
-        return res.status(400).json({ error: 'Invalid PAN number' });
+        return res.status(400).json({ error: "Invalid PAN number" });
       }
       employee.panNumber = pan;
     } else {
       employee.panNumber = undefined;
     }
   }
-  if (bankDetails && typeof bankDetails === 'object') {
+  if (bankDetails && typeof bankDetails === "object") {
     employee.bankDetails = employee.bankDetails || {};
-    if (typeof bankDetails.accountNumber === 'string') employee.bankDetails.accountNumber = bankDetails.accountNumber.trim();
-    if (typeof bankDetails.bankName === 'string') employee.bankDetails.bankName = bankDetails.bankName.trim();
-    if (typeof bankDetails.ifsc === 'string') employee.bankDetails.ifsc = bankDetails.ifsc.trim();
+    if (typeof bankDetails.accountNumber === "string")
+      employee.bankDetails.accountNumber = bankDetails.accountNumber.trim();
+    if (typeof bankDetails.bankName === "string")
+      employee.bankDetails.bankName = bankDetails.bankName.trim();
+    if (typeof bankDetails.ifsc === "string")
+      employee.bankDetails.ifsc = bankDetails.ifsc.trim();
   }
 
   await employee.save();
   await accrueTotalIfNeeded(employee, company, new Date());
   await syncLeaveBalances(employee);
-  try { employee.decryptFieldsSync(); } catch (_) {}
-  const responsePersonalEmail = employee.personalEmail || '';
-  const responseBloodGroup = employee.bloodGroup || '';
+  try {
+    employee.decryptFieldsSync();
+  } catch (_) {}
+  const responsePersonalEmail = employee.personalEmail || "";
+  const responseBloodGroup = employee.bloodGroup || "";
   const responseJoiningDate = employee.joiningDate || null;
   res.json({
     employee: {
       id: employee._id,
-      address: employee.address || '',
-      phone: employee.phone || '',
+      address: employee.address || "",
+      phone: employee.phone || "",
       dob: employee.dob,
       joiningDate: responseJoiningDate,
       personalEmail: responsePersonalEmail,
       bloodGroup: responseBloodGroup,
       ctc: employee.ctc || 0,
-      aadharNumber: employee.aadharNumber || '',
-      panNumber: employee.panNumber || '',
+      aadharNumber: employee.aadharNumber || "",
+      panNumber: employee.panNumber || "",
       email: employee.email,
       bankDetails: {
-        accountNumber: employee.bankDetails?.accountNumber || '',
-        bankName: employee.bankDetails?.bankName || '',
-        ifsc: employee.bankDetails?.ifsc || '',
+        accountNumber: employee.bankDetails?.accountNumber || "",
+        bankName: employee.bankDetails?.bankName || "",
+        ifsc: employee.bankDetails?.ifsc || "",
       },
     },
   });
@@ -1627,12 +1910,14 @@ router.put("/employees/:id/probation", auth, async (req, res) => {
 
   const { status, since } = req.body || {};
   const normalizedStatus =
-    typeof status === 'string' ? status.trim().toUpperCase() : '';
-  if (!['PROBATION', 'PERMANENT'].includes(normalizedStatus)) {
-    return res.status(400).json({ error: 'Invalid employment status' });
+    typeof status === "string" ? status.trim().toUpperCase() : "";
+  if (!["PROBATION", "PERMANENT"].includes(normalizedStatus)) {
+    return res.status(400).json({ error: "Invalid employment status" });
   }
 
-  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "_id leavePolicy"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const employee = await Employee.findById(req.params.id);
@@ -1642,18 +1927,18 @@ router.put("/employees/:id/probation", auth, async (req, res) => {
   await accrueTotalIfNeeded(employee, company, new Date());
   const currentTotal = Number(employee.totalLeaveAvailable) || 0;
 
-  if (normalizedStatus === 'PROBATION') {
+  if (normalizedStatus === "PROBATION") {
     let probationSince = since ? new Date(since) : new Date();
     if (since && Number.isNaN(probationSince.getTime())) {
-      return res.status(400).json({ error: 'Invalid probation start date' });
+      return res.status(400).json({ error: "Invalid probation start date" });
     }
     if (Number.isNaN(probationSince.getTime())) {
       probationSince = new Date();
     }
-    employee.employmentStatus = 'PROBATION';
+    employee.employmentStatus = "PROBATION";
     employee.probationSince = probationSince;
   } else {
-    employee.employmentStatus = 'PERMANENT';
+    employee.employmentStatus = "PERMANENT";
     employee.probationSince = undefined;
   }
 
@@ -1661,7 +1946,8 @@ router.put("/employees/:id/probation", auth, async (req, res) => {
 
   await accrueTotalIfNeeded(employee, company, new Date());
   const recalculatedTotal = Number(employee.totalLeaveAvailable) || 0;
-  const existingAdjustment = Number(employee.leaveAccrual?.manualAdjustment) || 0;
+  const existingAdjustment =
+    Number(employee.leaveAccrual?.manualAdjustment) || 0;
   const delta = currentTotal - recalculatedTotal;
   if (Math.abs(delta) > 1e-6) {
     employee.leaveAccrual = employee.leaveAccrual || {};
@@ -1699,7 +1985,9 @@ router.post("/employees/:id/leave-adjust", auth, async (req, res) => {
     return res.status(400).json({ error: "Amount must be a number" });
   }
 
-  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "_id leavePolicy"
+  );
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const employee = await Employee.findById(req.params.id);
@@ -1710,7 +1998,8 @@ router.post("/employees/:id/leave-adjust", auth, async (req, res) => {
   const current = Number(employee.totalLeaveAvailable) || 0;
   employee.totalLeaveAvailable = current + delta;
   employee.leaveAccrual = employee.leaveAccrual || {};
-  const existingAdjustment = Number(employee.leaveAccrual.manualAdjustment) || 0;
+  const existingAdjustment =
+    Number(employee.leaveAccrual.manualAdjustment) || 0;
   employee.leaveAccrual.manualAdjustment = existingAdjustment + delta;
   await employee.save();
   await syncLeaveBalances(employee);
@@ -1745,30 +2034,66 @@ router.delete("/employees/:id", auth, async (req, res) => {
   if (["ADMIN", "SUPERADMIN"].includes(employee.primaryRole))
     return res.status(400).json({ error: "Cannot delete an admin account" });
   if (String(employee._id) === String(req.employee.id))
-    return res.status(400).json({ error: "You cannot delete your own account" });
+    return res
+      .status(400)
+      .json({ error: "You cannot delete your own account" });
 
   // Safety checks for project/team lead
   const leads = await Project.countDocuments({ teamLead: employee._id });
   if (leads > 0)
-    return res.status(400).json({ error: "Employee is a team lead on projects. Reassign before deleting." });
+    return res
+      .status(400)
+      .json({
+        error: "Employee is a team lead on projects. Reassign before deleting.",
+      });
 
   // Safety checks for dependent records that can't be safely reassigned here
-  const hasTasks = await Task.exists({ $or: [{ assignedTo: employee._id }, { createdBy: employee._id }] });
+  const hasTasks = await Task.exists({
+    $or: [{ assignedTo: employee._id }, { createdBy: employee._id }],
+  });
   if (hasTasks)
-    return res.status(400).json({ error: "Employee has tasks. Reassign or remove tasks before deleting." });
+    return res
+      .status(400)
+      .json({
+        error: "Employee has tasks. Reassign or remove tasks before deleting.",
+      });
 
   const hasSlips = await SalarySlip.exists({ employee: employee._id });
   if (hasSlips)
-    return res.status(400).json({ error: "Employee has salary slips. Delete slips before deleting employee." });
+    return res
+      .status(400)
+      .json({
+        error:
+          "Employee has salary slips. Delete slips before deleting employee.",
+      });
 
   // Remove from project memberships
-  await Project.updateMany({ members: employee._id }, { $pull: { members: employee._id } });
+  await Project.updateMany(
+    { members: employee._id },
+    { $pull: { members: employee._id } }
+  );
 
   // Clear as reportingPerson for others within company
-  await Employee.updateMany(
-    { company: company._id, reportingPerson: employee._id },
-    { $unset: { reportingPerson: "" } }
-  );
+  const impacted = await Employee.find({
+    company: company._id,
+    $or: [
+      { reportingPerson: employee._id },
+      { reportingPersons: employee._id },
+    ],
+  });
+  for (const other of impacted) {
+    const filtered = (other.reportingPersons || []).filter(
+      (id) => String(id) !== String(employee._id)
+    );
+    other.reportingPersons = filtered;
+    if (
+      other.reportingPerson &&
+      String(other.reportingPerson) === String(employee._id)
+    ) {
+      other.reportingPerson = filtered[0] || undefined;
+    }
+    await other.save();
+  }
 
   await Employee.deleteOne({ _id: employee._id });
   res.json({ ok: true });
@@ -1791,7 +2116,9 @@ router.get("/employees", auth, async (req, res) => {
   }
 
   const employees = await Employee.find({ company: companyId })
-    .select("name email subRoles primaryRole employmentStatus probationSince createdAt")
+    .select(
+      "name email subRoles primaryRole employmentStatus probationSince createdAt"
+    )
     .lean();
   res.json({
     employees: employees.map((u) => ({
@@ -1800,7 +2127,7 @@ router.get("/employees", auth, async (req, res) => {
       email: u.email,
       subRoles: u.subRoles,
       primaryRole: u.primaryRole,
-      employmentStatus: u.employmentStatus || 'PROBATION',
+      employmentStatus: u.employmentStatus || "PROBATION",
       probationSince: u.probationSince || null,
       createdAt: u.createdAt || null,
     })),
