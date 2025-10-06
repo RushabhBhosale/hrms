@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../../lib/api";
 import { Field } from "../../components/ui/Field";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "react-router-dom";
@@ -44,10 +44,16 @@ const schema = z.object({
     )
     .default(""),
   bloodGroup: z.union([z.literal(""), z.enum(BLOOD_GROUP_OPTIONS)]).default(""),
-  reportingPerson: z
-    .string()
-    .optional()
-    .transform((v) => (v && v.trim() !== "" ? v : "")),
+  reportingPersons: z
+    .array(z.string().min(1))
+    .default([])
+    .transform((vals) =>
+      Array.from(
+        new Set(
+          (vals || []).map((val) => val.trim()).filter((val) => val.length > 0)
+        )
+      )
+    ),
   employeeId: z.string().min(1, "Employee Id is required"),
   ctc: z
     .string()
@@ -81,7 +87,7 @@ export default function AddEmployee() {
       dob: "",
       joiningDate: "",
       bloodGroup: "",
-      reportingPerson: "",
+      reportingPersons: [],
       employeeId: "",
       ctc: "",
       ctcMode: "annual",
@@ -95,6 +101,7 @@ export default function AddEmployee() {
     handleSubmit,
     reset,
     setValue,
+    control,
     formState: { errors },
     watch,
   } = form;
@@ -140,8 +147,16 @@ export default function AddEmployee() {
         ...data,
         ctc: String(monthlyCtc),
       };
-      const { ctcMode: _omit, ...rest } = payload as any;
-      Object.entries(rest).forEach(([k, v]) => fd.append(k, String(v)));
+      const { ctcMode: _omit, reportingPersons, ...rest } = payload as any;
+      Object.entries(rest).forEach(([k, v]) => {
+        if (v === undefined || v === null) return;
+        fd.append(k, String(v));
+      });
+      if (Array.isArray(reportingPersons)) {
+        reportingPersons.forEach((id: string) => {
+          if (id) fd.append("reportingPersons", id);
+        });
+      }
       if (docs) Array.from(docs).forEach((f) => fd.append("documents", f));
 
       await api.post("/companies/employees", fd, {
@@ -159,7 +174,7 @@ export default function AddEmployee() {
         dob: "",
         joiningDate: "",
         bloodGroup: "",
-        reportingPerson: "",
+        reportingPersons: [],
         employeeId: "",
         ctc: "",
         ctcMode: "annual",
@@ -274,18 +289,34 @@ export default function AddEmployee() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Reporting Person">
-              <select
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                {...register("reportingPerson")}
-              >
-                <option value="">None</option>
-                {employees.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name}
-                  </option>
-                ))}
-              </select>
+            <Field label="Reporting Persons">
+              <Controller
+                name="reportingPersons"
+                control={control}
+                render={({ field }) => (
+                  <select
+                    multiple
+                    value={field.value}
+                    onChange={(e) => {
+                      const selected = Array.from(
+                        e.target.selectedOptions
+                      ).map((opt) => opt.value);
+                      field.onChange(selected);
+                    }}
+                    onBlur={field.onBlur}
+                    className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary min-h-[2.5rem]"
+                  >
+                    {employees.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              />
+              <p className="text-xs text-muted mt-1">
+                Hold Ctrl (or Cmd on Mac) to select multiple.
+              </p>
             </Field>
             <Field label="Employee ID" required>
               <input

@@ -34,13 +34,32 @@ router.get(
     const doc = await Employee.findById(req.params.id);
     console.log(":=dshjdsc", doc);
     if (!doc) return res.status(404).json({ error: "Not found" });
+    await doc.populate([
+      { path: 'reportingPersons', select: 'name' },
+      { path: 'reportingPerson', select: 'name' },
+    ]);
     await syncLeaveBalances(doc);
     try {
       doc.decryptFieldsSync();
     } catch (_) {}
-    const reporting = doc.reportingPerson
-      ? { id: doc.reportingPerson._id, name: doc.reportingPerson.name }
-      : null;
+    const reportingDocs = Array.isArray(doc.reportingPersons)
+      ? doc.reportingPersons
+      : [];
+    const reportingFallback =
+      (!reportingDocs || reportingDocs.length === 0) && doc.reportingPerson
+        ? [doc.reportingPerson]
+        : [];
+    const reportingList = [...reportingDocs, ...reportingFallback].reduce(
+      (acc, current) => {
+        const id = String(current._id);
+        if (!acc.some((item) => item.id === id)) {
+          acc.push({ id, name: current.name });
+        }
+        return acc;
+      },
+      []
+    );
+    const reporting = reportingList[0] || null;
     res.json({
       employee: {
         id: doc._id,
@@ -49,6 +68,7 @@ router.get(
         dob: doc.dob,
         documents: doc.documents,
         reportingPerson: reporting,
+        reportingPersons: reportingList,
         subRoles: doc.subRoles || [],
         address: doc.address || "",
         phone: doc.phone || "",
