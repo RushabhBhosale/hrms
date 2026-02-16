@@ -1,6 +1,4 @@
 const router = require("express").Router();
-const path = require("path");
-const fs = require("fs");
 const PDFDocument = require("pdfkit");
 
 const { auth } = require("../middleware/auth");
@@ -11,7 +9,18 @@ const Company = require("../models/Company");
 const { parseWithSchema } = require("../utils/zod");
 const { expenseSchema } = require("../../../libs/schemas/expense");
 
-const { upload, uploadsDir } = require("../utils/uploads");
+const {
+  upload,
+  getStoredFileId,
+  deleteStoredFile,
+  deleteStoredFiles,
+} = require("../utils/fileStorage");
+const { uploadBufferToS3 } = require("../utils/s3");
+
+function sendSuccess(res, message, payload = {}) {
+  if (message) res.set("X-Success-Message", message);
+  return res.json({ message, ...payload });
+}
 
 const DEFAULT_CATEGORIES = [
   "Housekeeping",
@@ -31,7 +40,11 @@ function canManage(req) {
 }
 
 async function ensureDefaultCategories(companyId, employeeId) {
-  const count = await ExpenseCategory.countDocuments({ company: companyId });
+  const count = await ExpenseCategory.countDocuments({
+    company: companyId,
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
+  });
   if (count > 0) return;
   const docs = DEFAULT_CATEGORIES.map((name) => ({
     company: companyId,
@@ -124,22 +137,11 @@ function parseNumber(value) {
 }
 
 function removeFiles(filenames = []) {
-  filenames.forEach((file) => {
-    if (!file) return;
-    const filePath = path.join(uploadsDir, file);
-    fs.promises.unlink(filePath).catch(() => {});
-  });
+  deleteStoredFiles(filenames);
 }
 
 async function removeFileSafe(filename) {
-  if (!filename) return;
-  const filePath = path.join(uploadsDir, filename);
-  try {
-    await fs.promises.unlink(filePath);
-  } catch (err) {
-    if (err && err.code !== "ENOENT")
-      console.error("voucher file remove err", err);
-  }
+  await deleteStoredFile(filename);
 }
 
 async function nextVoucherNumber(companyId) {
@@ -168,12 +170,15 @@ function formatCurrencyINR(amount) {
 
 async function generateVoucherPdf(expense, company) {
   const fileName = `voucher-${expense._id}-${Date.now()}.pdf`;
-  const filePath = path.join(uploadsDir, fileName);
-  await fs.promises.mkdir(uploadsDir, { recursive: true }).catch(() => {});
+  const key = `expenses/vouchers/${String(expense.company || "unknown")}/${fileName}`;
 
   const doc = new PDFDocument({ margin: 50 });
-  const stream = fs.createWriteStream(filePath);
-  doc.pipe(stream);
+  const chunks = [];
+  doc.on("data", (c) => chunks.push(c));
+  const done = new Promise((resolve, reject) => {
+    doc.on("end", resolve);
+    doc.on("error", reject);
+  });
 
   const heading = company?.name
     ? `${company.name} - Expense Voucher`
@@ -206,14 +211,14 @@ async function generateVoucherPdf(expense, company) {
   doc.moveDown(3);
   doc.font("Helvetica").text("Signature: ____________________________");
 
-  const done = new Promise((resolve, reject) => {
-    stream.on("finish", resolve);
-    stream.on("error", reject);
-  });
-
   doc.end();
   await done;
-  return fileName;
+  const buffer = Buffer.concat(chunks);
+  await uploadBufferToS3(buffer, {
+    key,
+    contentType: "application/pdf",
+  });
+  return key;
 }
 
 router.use(auth);
@@ -223,6 +228,8 @@ router.get("/categories", async (req, res) => {
     await ensureDefaultCategories(req.employee.company, req.employee.id);
     const categories = await ExpenseCategory.find({
       company: req.employee.company,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
     })
       .sort({ name: 1 })
       .lean();
@@ -244,7 +251,8 @@ router.post("/categories", async (req, res) => {
       isDefault: false,
       createdBy: req.employee.id,
     });
-    res.status(201).json({ category: cat });
+    res.status(201);
+    sendSuccess(res, "Category created", { category: cat });
   } catch (err) {
     if (err && err.code === 11000)
       return res.status(400).json({ error: "Category already exists" });
@@ -265,6 +273,7 @@ router.delete("/categories/:id", async (req, res) => {
     const usage = await Expense.countDocuments({
       company: req.employee.company,
       category: cat._id,
+      isDeleted: { $ne: true },
     });
     if (usage > 0) {
       return res
@@ -273,8 +282,10 @@ router.delete("/categories/:id", async (req, res) => {
           error: "Category is in use by expenses and cannot be removed",
         });
     }
-    await ExpenseCategory.deleteOne({ _id: cat._id });
-    res.json({ message: "Deleted" });
+    cat.isDeleted = true;
+    cat.isActive = false;
+    await cat.save();
+    sendSuccess(res, "Category deleted", { success: true });
   } catch (err) {
     console.error("expense categories delete err", err);
     res.status(500).json({ error: "Failed to delete category" });
@@ -283,7 +294,11 @@ router.delete("/categories/:id", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
-    const filter = { company: req.employee.company };
+    const filter = {
+      company: req.employee.company,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+    };
     const { from, to, category, paidBy, recurring, q } = req.query;
     if (from) {
       const d = normalizeDateInput(from);
@@ -330,7 +345,9 @@ router.get("/", async (req, res) => {
 
 router.post("/", upload.array("attachments", 5), async (req, res) => {
   if (!canManage(req)) return res.status(403).json({ error: "Forbidden" });
-  const attachments = (req.files || []).map((f) => f.filename);
+  const attachments = (req.files || [])
+    .map((f) => getStoredFileId(f))
+    .filter(Boolean);
   try {
     const date = normalizeDateInput(req.body.date);
     if (!date) return res.status(400).json({ error: "Invalid date" });
@@ -433,7 +450,8 @@ router.post("/", upload.array("attachments", 5), async (req, res) => {
     }
 
     const populated = await expense.populate("category", "name");
-    res.status(201).json({ expense: populated });
+    res.status(201);
+    sendSuccess(res, "Expense created", { expense: populated });
   } catch (err) {
     console.error("expense create err", err);
     removeFiles(attachments);
@@ -443,7 +461,9 @@ router.post("/", upload.array("attachments", 5), async (req, res) => {
 
 router.put("/:id", upload.array("attachments", 5), async (req, res) => {
   if (!canManage(req)) return res.status(403).json({ error: "Forbidden" });
-  const attachments = (req.files || []).map((f) => f.filename);
+  const attachments = (req.files || [])
+    .map((f) => getStoredFileId(f))
+    .filter(Boolean);
   try {
     const expense = await Expense.findOne({
       _id: req.params.id,
@@ -676,7 +696,7 @@ router.put("/:id", upload.array("attachments", 5), async (req, res) => {
     }
 
     const populated = await expense.populate("category", "name");
-    res.json({ expense: populated });
+    sendSuccess(res, "Expense updated", { expense: populated });
   } catch (err) {
     console.error("expense update err", err);
     removeFiles(attachments);
@@ -692,11 +712,10 @@ router.delete("/:id", async (req, res) => {
       company: req.employee.company,
     });
     if (!expense) return res.status(404).json({ error: "Not found" });
-    const attachments = [...(expense.attachments || [])];
-    if (expense.voucher?.pdfFile) attachments.push(expense.voucher.pdfFile);
-    await expense.deleteOne();
-    removeFiles(attachments);
-    res.json({ message: "Deleted" });
+    expense.isDeleted = true;
+    expense.isActive = false;
+    await expense.save();
+    sendSuccess(res, "Expense deleted", { success: true });
   } catch (err) {
     console.error("expense delete err", err);
     res.status(500).json({ error: "Failed to delete expense" });

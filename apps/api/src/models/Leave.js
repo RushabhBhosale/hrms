@@ -24,8 +24,20 @@ const LeaveSchema = new mongoose.Schema(
       sick: { type: Number, default: 0 },
       unpaid: { type: Number, default: 0 },
     },
+    isAuto: { type: Boolean, default: false },
+    autoPenalty: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AttendancePenalty',
+    },
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
+);
+
+LeaveSchema.index(
+  { autoPenalty: 1 },
+  { unique: true, sparse: true }
 );
 
 module.exports = mongoose.model('Leave', LeaveSchema);

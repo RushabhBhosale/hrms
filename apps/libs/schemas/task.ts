@@ -25,7 +25,7 @@ const taskSchema = z.object({
   project: objectId,
   title: nonEmptyString,
   description: z.string().optional(),
-  assignedTo: objectId,
+  assignedTo: z.union([objectId, z.array(objectId).nonempty()]),
   createdBy: objectId,
   status: z.enum(["PENDING", "INPROGRESS", "DONE"]).optional(),
   priority: z.enum(["URGENT", "FIRST", "SECOND", "LEAST"]).optional(),
@@ -33,6 +33,8 @@ const taskSchema = z.object({
   comments: z.array(taskCommentSchema).optional(),
   timeLogs: z.array(taskTimeLogSchema).optional(),
   timeSpentMinutes: nonNegativeNumber.optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 module.exports = {

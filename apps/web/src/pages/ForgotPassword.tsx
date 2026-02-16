@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { api } from "../lib/api";
 import { Link, useNavigate } from "react-router-dom";
+import { Button } from "../components/ui/button";
 
 export default function ForgotPassword() {
   const nav = useNavigate();
@@ -48,21 +49,18 @@ export default function ForgotPassword() {
             placeholder="you@company.com"
           />
         </div>
-        <button
-          disabled={loading}
-          className="w-full h-10 rounded bg-black text-white"
-        >
+        <Button disabled={loading} className="w-full h-10">
           {loading ? "..." : "Send OTP"}
-        </button>
+        </Button>
         <div className="text-sm text-center">
-          <Link className="text-primary hover:underline" to="/reset-password">
-            Have an OTP? Reset here
-          </Link>
+          <Button asChild variant="outline" className="w-full justify-center">
+            <Link to="/reset-password">Have an OTP? Reset here</Link>
+          </Button>
         </div>
         <div className="text-xs text-center text-gray-500">
-          <Link to="/login" className="hover:underline">
-            Back to login
-          </Link>
+          <Button asChild variant="outline" className="w-full justify-center">
+            <Link to="/login">Back to login</Link>
+          </Button>
         </div>
       </form>
     </div>

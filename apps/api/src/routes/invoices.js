@@ -1,18 +1,22 @@
 const router = require("express").Router();
-const path = require("path");
-const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
 
 const { auth } = require("../middleware/auth");
-const { upload, uploadsDir } = require("../utils/uploads");
+const { upload, loadFileBuffer, getStoredFileId } = require("../utils/fileStorage");
 const { requirePrimary, requireAnySub } = require("../middleware/roles");
 const Invoice = require("../models/Invoice");
 const Counter = require("../models/Counter");
 const Employee = require("../models/Employee");
 const Company = require("../models/Company");
 const Project = require("../models/Project");
+const Client = require("../models/Client");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
+
+function sendSuccess(res, message, payload = {}) {
+  if (message) res.set("X-Success-Message", message);
+  return res.json({ message, ...payload });
+}
 
 // Helper: allow ADMIN/SUPERADMIN or HR subrole
 function allowAdminOrHR(req, res, next) {
@@ -65,6 +69,17 @@ function computeTotals(lineItems = []) {
   return { normalized, subtotal, taxTotal, totalAmount };
 }
 
+async function loadInvoiceAssets(inv) {
+  const companyLogoFile =
+    inv.company?.logoHorizontal || inv.company?.logo || inv.company?.logoSquare;
+  const partyLogoFile = inv.partyLogo || null;
+  const [companyLogoBuffer, partyLogoBuffer] = await Promise.all([
+    loadFileBuffer(companyLogoFile),
+    loadFileBuffer(partyLogoFile),
+  ]);
+  return { companyLogoBuffer, partyLogoBuffer };
+}
+
 async function nextInvoiceNumber(companyId) {
   const now = new Date();
   const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(
@@ -86,7 +101,7 @@ function safeName(s) {
   return String(s || "").replace(/[^a-z0-9\-_.]+/gi, "_");
 }
 
-function drawInvoice(doc, inv) {
+function drawInvoice(doc, inv, assets = {}) {
   const pageW = doc.page.width;
   const margin = 36;
   const contentW = pageW - margin * 2;
@@ -104,19 +119,12 @@ function drawInvoice(doc, inv) {
   doc.roundedRect(margin, headerY, contentW, headerH, 8).fill("#F9FAFB");
   doc.fillColor("#111827");
   try {
-    const logoFile =
-      inv.company?.logoHorizontal ||
-      inv.company?.logo ||
-      inv.company?.logoSquare;
-    if (logoFile) {
-      const logoPath = path.join(uploadsDir, String(logoFile));
-      if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, margin + 10, headerY + 10, {
-          fit: [160, 36],
-          align: "left",
-          valign: "center",
-        });
-      }
+    if (assets.companyLogoBuffer) {
+      doc.image(assets.companyLogoBuffer, margin + 10, headerY + 10, {
+        fit: [160, 36],
+        align: "left",
+        valign: "center",
+      });
     }
   } catch (_) {}
   doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827");
@@ -152,10 +160,10 @@ function drawInvoice(doc, inv) {
   doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827");
   doc.text("Bill To", billX + PAD, y);
   try {
-    if (inv.partyLogo) {
-      const lp = path.join(uploadsDir, String(inv.partyLogo));
-      if (fs.existsSync(lp))
-        doc.image(lp, billX + PAD, y + 18, { fit: [90, 28] });
+    if (assets.partyLogoBuffer) {
+      doc.image(assets.partyLogoBuffer, billX + PAD, y + 18, {
+        fit: [90, 28],
+      });
     }
   } catch (_) {}
   doc.font("Helvetica").fontSize(10).fillColor("#111827");
@@ -288,6 +296,7 @@ router.post("/", auth, allowAdminOrHR, async (req, res) => {
       partyName,
       partyEmail,
       partyAddress,
+      clientId,
       issueDate,
       dueDate,
       paymentTerms,
@@ -302,10 +311,14 @@ router.post("/", auth, allowAdminOrHR, async (req, res) => {
     if (!["client", "employee", "vendor"].includes(partyType))
       return res.status(400).json({ error: "Invalid partyType" });
     if (!issueDate) return res.status(400).json({ error: "Missing issueDate" });
+    if (clientId && partyType !== "client")
+      return res.status(400).json({ error: "clientId allowed only for client invoices" });
 
     // resolve partyName from employee or project when provided
     let resolvedPartyName = partyName;
     let resolvedPartyId = partyId;
+    let resolvedPartyEmail = partyEmail;
+    let resolvedClientId = undefined;
     if (partyType === "employee" && partyId) {
       const emp = await Employee.findById(partyId).select("name email");
       if (emp) {
@@ -314,7 +327,7 @@ router.post("/", auth, allowAdminOrHR, async (req, res) => {
     }
     let resolvedProjectId = projectId;
     if (projectId) {
-      const project = await Project.findById(projectId).select("title company");
+      const project = await Project.findById(projectId).select("title company client");
       if (!project) return res.status(400).json({ error: "Invalid projectId" });
       if (String(project.company) !== String(req.employee.company))
         return res.status(403).json({ error: "Forbidden project" });
@@ -322,6 +335,20 @@ router.post("/", auth, allowAdminOrHR, async (req, res) => {
       resolvedPartyName = resolvedPartyName || project.title;
       // If partyType omitted, default to client for project based invoices
       // (but we still require partyType in validation above; user passed it)
+    }
+
+    if (clientId && partyType === "client") {
+      const client = await Client.findOne({
+        _id: clientId,
+        company: req.employee.company,
+        isDeleted: { $ne: true },
+      })
+        .select("name email")
+        .lean();
+      if (!client) return res.status(400).json({ error: "Invalid clientId" });
+      resolvedClientId = client._id;
+      resolvedPartyName = resolvedPartyName || client.name;
+      resolvedPartyEmail = resolvedPartyEmail || client.email;
     }
 
     const { normalized, subtotal, taxTotal, totalAmount } =
@@ -341,8 +368,9 @@ router.post("/", auth, allowAdminOrHR, async (req, res) => {
       partyType,
       partyId: resolvedPartyId || undefined,
       project: resolvedProjectId || undefined,
+      client: resolvedClientId || undefined,
       partyName: resolvedPartyName || undefined,
-      partyEmail: partyEmail || undefined,
+      partyEmail: resolvedPartyEmail || undefined,
       partyAddress: partyAddress || undefined,
       issueDate,
       dueDate,
@@ -355,7 +383,7 @@ router.post("/", auth, allowAdminOrHR, async (req, res) => {
       notes,
       status: status || "draft",
     });
-    res.json({ invoice: inv });
+    sendSuccess(res, "Invoice created", { invoice: inv });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to create invoice" });
@@ -383,7 +411,11 @@ router.get("/", auth, allowAdminOrHR, async (req, res) => {
       offset,
     } = req.query || {};
 
-    const filter = { company: req.employee.company };
+    const filter = {
+      company: req.employee.company,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+    };
     if (type) filter.type = type;
     if (status) filter.status = status;
     if (partyType) filter.partyType = partyType;
@@ -436,7 +468,9 @@ router.get("/:id", auth, allowAdminOrHR, async (req, res) => {
   const inv = await Invoice.findOne({
     _id: req.params.id,
     company: req.employee.company,
-  }).populate("project", "title");
+  })
+    .populate("project", "title")
+    .populate("client", "name email");
   if (!inv) return res.status(404).json({ error: "Not found" });
   res.json({ invoice: inv });
 });
@@ -450,6 +484,7 @@ router.put("/:id", auth, allowAdminOrHR, async (req, res) => {
       "partyName",
       "partyEmail",
       "partyAddress",
+      "client",
       "project",
       "issueDate",
       "dueDate",
@@ -472,13 +507,38 @@ router.put("/:id", auth, allowAdminOrHR, async (req, res) => {
       data.taxTotal = taxTotal;
       data.totalAmount = totalAmount;
     }
+    if (data.client !== undefined) {
+      if (!data.client) {
+        data.client = undefined;
+      } else {
+        const client = await Client.findOne({
+          _id: data.client,
+          company: req.employee.company,
+          isDeleted: { $ne: true },
+        })
+          .select("_id")
+          .lean();
+        if (!client) return res.status(400).json({ error: "Invalid client" });
+        data.client = client._id;
+      }
+    }
+    if (data.project === "") data.project = undefined;
+    if (data.project) {
+      const project = await Project.findOne({
+        _id: data.project,
+        company: req.employee.company,
+      })
+        .select("_id")
+        .lean();
+      if (!project) return res.status(400).json({ error: "Invalid project" });
+    }
     const inv = await Invoice.findOneAndUpdate(
       { _id: req.params.id, company: req.employee.company },
       { $set: data },
       { new: true }
     );
     if (!inv) return res.status(404).json({ error: "Not found" });
-    res.json({ invoice: inv });
+    sendSuccess(res, "Invoice updated", { invoice: inv });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to update invoice" });
@@ -487,30 +547,33 @@ router.put("/:id", auth, allowAdminOrHR, async (req, res) => {
 
 // Delete invoice
 router.delete("/:id", auth, allowAdminOrHR, async (req, res) => {
-  const inv = await Invoice.findOneAndDelete({
-    _id: req.params.id,
-    company: req.employee.company,
-  });
+  const inv = await Invoice.findOneAndUpdate(
+    { _id: req.params.id, company: req.employee.company },
+    { $set: { isDeleted: true, isActive: false } },
+    { new: true }
+  );
   if (!inv) return res.status(404).json({ error: "Not found" });
-  res.json({ ok: true });
+  sendSuccess(res, "Invoice deleted", { ok: true });
 });
 
 // Upload attachments (for payable or general docs)
 router.post(
   "/:id/attachments",
   auth,
-  allowAdminOrHR,
+      allowAdminOrHR,
   upload.array("files"),
   async (req, res) => {
     try {
-      const files = (req.files || []).map((f) => f.filename);
+      const files = (req.files || [])
+        .map((f) => getStoredFileId(f))
+        .filter(Boolean);
       const inv = await Invoice.findOneAndUpdate(
         { _id: req.params.id, company: req.employee.company },
         { $push: { attachments: { $each: files } } },
         { new: true }
       );
       if (!inv) return res.status(404).json({ error: "Not found" });
-      res.json({ invoice: inv });
+      sendSuccess(res, "Attachments uploaded", { invoice: inv });
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: "Failed to upload attachments" });
@@ -527,13 +590,15 @@ router.post(
   async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file" });
+      const logoId = getStoredFileId(req.file);
+      if (!logoId) return res.status(500).json({ error: "Failed to store logo" });
       const inv = await Invoice.findOneAndUpdate(
         { _id: req.params.id, company: req.employee.company },
-        { $set: { partyLogo: req.file.filename } },
+        { $set: { partyLogo: logoId } },
         { new: true }
       );
       if (!inv) return res.status(404).json({ error: "Not found" });
-      res.json({ invoice: inv });
+      sendSuccess(res, "Logo uploaded", { invoice: inv });
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: "Failed to upload logo" });
@@ -552,6 +617,7 @@ router.get("/:id/pdf", auth, allowAdminOrHR, async (req, res) => {
     .lean();
   if (!inv) return res.status(404).json({ error: "Not found" });
 
+  const assets = await loadInvoiceAssets(inv);
   const filename = `Invoice-${safeName(inv.invoiceNumber)}.pdf`;
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -560,7 +626,7 @@ router.get("/:id/pdf", auth, allowAdminOrHR, async (req, res) => {
     margins: { top: 36, bottom: 40, left: 36, right: 36 },
   });
   doc.pipe(res);
-  drawInvoice(doc, inv);
+  drawInvoice(doc, inv, assets);
   doc.end();
 });
 
@@ -578,6 +644,7 @@ router.post("/:id/email", auth, allowAdminOrHR, async (req, res) => {
     if (!to) return res.status(400).json({ error: "Missing recipient email" });
 
     // Render PDF to buffer using drawInvoice
+    const assets = await loadInvoiceAssets(inv);
     const pdfChunks = [];
     const pdfDoc = new PDFDocument({
       size: "A4",
@@ -585,35 +652,28 @@ router.post("/:id/email", auth, allowAdminOrHR, async (req, res) => {
     });
     pdfDoc.on("data", (c) => pdfChunks.push(c));
     const pdfDone = new Promise((resolve) => pdfDoc.on("end", resolve));
-    drawInvoice(pdfDoc, inv);
+    drawInvoice(pdfDoc, inv, assets);
     pdfDoc.end();
     await pdfDone;
     const pdfBuffer = Buffer.concat(pdfChunks);
 
     // Build HTML invoice with logo (CID)
-    const logoFile =
-      inv.company?.logoHorizontal ||
-      inv.company?.logo ||
-      inv.company?.logoSquare;
-    const clientLogoFile = inv.partyLogo
-      ? path.join(uploadsDir, String(inv.partyLogo))
-      : null;
+    const hasBrandLogo = !!assets.companyLogoBuffer;
+    const hasClientLogo = !!assets.partyLogoBuffer;
     const attachments = [
       { filename: `${inv.invoiceNumber}.pdf`, content: pdfBuffer },
     ];
-    if (logoFile) {
-      const logoPath = path.join(uploadsDir, String(logoFile));
-      if (fs.existsSync(logoPath))
-        attachments.push({
-          filename: "logo.png",
-          path: logoPath,
-          cid: "brandlogo",
-        });
+    if (assets.companyLogoBuffer) {
+      attachments.push({
+        filename: "logo.png",
+        content: assets.companyLogoBuffer,
+        cid: "brandlogo",
+      });
     }
-    if (clientLogoFile && fs.existsSync(clientLogoFile)) {
+    if (assets.partyLogoBuffer) {
       attachments.push({
         filename: "clientlogo.png",
-        path: clientLogoFile,
+        content: assets.partyLogoBuffer,
         cid: "clientlogo",
       });
     }
@@ -626,7 +686,7 @@ router.post("/:id/email", auth, allowAdminOrHR, async (req, res) => {
       <div style="font-family: -apple-system, Segoe UI, Roboto, Arial; color:#111827;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #e5e7eb;">
           <div>${
-            logoFile
+            hasBrandLogo
               ? '<img src="cid:brandlogo" alt="logo" style="max-height:40px;" />'
               : ""
           }</div>
@@ -643,7 +703,7 @@ router.post("/:id/email", auth, allowAdminOrHR, async (req, res) => {
           <div>
             <div style="font-weight:600;">Bill To</div>
             ${
-              clientLogoFile
+              hasClientLogo
                 ? '<div><img src="cid:clientlogo" alt="client logo" style="max-height:28px; margin:4px 0;" /></div>'
                 : ""
             }
@@ -749,15 +809,14 @@ router.post("/:id/email", auth, allowAdminOrHR, async (req, res) => {
     }`;
     const companyId = req.employee.company;
     if (!(await isEmailEnabled(companyId)))
-      return res
-        .status(200)
-        .json({ skipped: true, message: "Email not configured" });
+      res.status(200);
+      return sendSuccess(res, "Email not configured", { skipped: true });
     await sendMail({ companyId, to, subject, html, attachments });
     if (inv.status === "draft") {
       inv.status = "sent";
       await inv.save();
     }
-    res.json({ ok: true });
+    sendSuccess(res, "Invoice emailed", { ok: true });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to email invoice" });
@@ -1117,21 +1176,17 @@ router.get("/reports/export-pdf", auth, allowAdminOrHR, async (req, res) => {
     try {
       const logoFile =
         company?.logoHorizontal || company?.logo || company?.logoSquare;
-      if (logoFile) {
-        const logoPath = path.join(uploadsDir,
-          String(logoFile)
-        );
-        if (fs.existsSync(logoPath)) {
-          const LOGO_MAX_W = 140;
-          const LOGO_MAX_H = 36;
-          const logoX = PAGE_W - M - LOGO_MAX_W;
-          const logoY = M - 4; // slightly above text baseline
-          doc.image(logoPath, logoX, logoY, {
-            fit: [LOGO_MAX_W, LOGO_MAX_H],
-            align: "right",
-          });
-          logoSpace = LOGO_MAX_W + 8; // reserve space to avoid overlap
-        }
+      const logoBuffer = await loadFileBuffer(logoFile);
+      if (logoBuffer) {
+        const LOGO_MAX_W = 140;
+        const LOGO_MAX_H = 36;
+        const logoX = PAGE_W - M - LOGO_MAX_W;
+        const logoY = M - 4; // slightly above text baseline
+        doc.image(logoBuffer, logoX, logoY, {
+          fit: [LOGO_MAX_W, LOGO_MAX_H],
+          align: "right",
+        });
+        logoSpace = LOGO_MAX_W + 8; // reserve space to avoid overlap
       }
     } catch (_) {}
 

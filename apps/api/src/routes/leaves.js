@@ -9,6 +9,11 @@ const { requirePrimary } = require("../middleware/roles");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
 const { accrueTotalIfNeeded } = require("../utils/leaveBalances");
+const { computeDerivedBalances } = require("../utils/leaveMath");
+const {
+  DEFAULT_SANDWICH_MIN_DAYS,
+  normalizeSandwichMinDays,
+} = require("../utils/sandwich");
 
 /* ------------------------------ Utils ----------------------------------- */
 
@@ -26,29 +31,47 @@ function ymKey(date) {
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${y}-${m}`;
 }
-function computeChargeableDays(start, end, bankHolidayKeys) {
+function computeChargeableDays(start, end, bankHolidayKeys, options = {}) {
+  const sandwichEnabled = !!options.sandwichEnabled;
+  const sandwichMinDays = normalizeSandwichMinDays(
+    options.sandwichMinDays,
+    DEFAULT_SANDWICH_MIN_DAYS
+  );
+  const halfDayKeys = options.halfDayKeys || new Set();
+  const workingOverrideKeys = options.workingOverrideKeys || new Set();
   const s = startOfDay(start),
     e = startOfDay(end);
-  let n = 0,
-    c = new Date(s);
+  const calendar = [];
+  let hasExcludedDay = false;
+  let c = new Date(s);
   while (c <= e) {
     const dow = c.getUTCDay();
     const iso = toIsoDay(c);
-    if (dow !== 0 && dow !== 6 && !bankHolidayKeys.has(iso)) n++;
+    let isWeekend = dow === 0 || dow === 6;
+    let isHoliday = bankHolidayKeys.has(iso);
+    if (workingOverrideKeys.has(iso)) {
+      isWeekend = false;
+      isHoliday = false;
+    }
+    const excluded = isWeekend || isHoliday;
+    if (excluded) hasExcludedDay = true;
+    const isHalfDay = halfDayKeys.has(iso);
+    calendar.push({ excluded, isHalfDay });
     c.setUTCDate(c.getUTCDate() + 1);
   }
-  return n;
-}
 
-function computeDerivedBalances(caps, used) {
-  const c = caps || {};
-  const u = used || { paid: 0, casual: 0, sick: 0, unpaid: 0 };
-  return {
-    paid: Math.max(0, (Number(c.paid) || 0) - (Number(u.paid) || 0)),
-    casual: Math.max(0, (Number(c.casual) || 0) - (Number(u.casual) || 0)),
-    sick: Math.max(0, (Number(c.sick) || 0) - (Number(u.sick) || 0)),
-    unpaid: Number(u.unpaid) || 0,
-  };
+  const applySandwich =
+    sandwichEnabled &&
+    calendar.length > sandwichMinDays &&
+    hasExcludedDay;
+
+  let n = 0;
+  for (const day of calendar) {
+    if (!day.excluded || applySandwich) {
+      n += day.isHalfDay ? 0.5 : 1;
+    }
+  }
+  return n;
 }
 
 /* ----------------------- Accrual (with strong logs) ---------------------- */
@@ -73,21 +96,10 @@ router.post("/", auth, async (req, res) => {
     )
       return res.status(400).json({ error: "Invalid fallback type" });
 
-    const reportingIds = Array.from(
-      new Set(
-        [
-          ...(Array.isArray(emp.reportingPersons)
-            ? emp.reportingPersons.map((id) => String(id))
-            : []),
-          emp.reportingPerson ? String(emp.reportingPerson) : null,
-        ].filter(Boolean)
-      )
-    );
-
     const leave = await Leave.create({
       employee: emp._id,
       company: emp.company,
-      approver: reportingIds[0] || null,
+      approver: emp.reportingPerson,
       type,
       fallbackType: fallbackType || null,
       startDate,
@@ -95,24 +107,40 @@ router.post("/", auth, async (req, res) => {
       reason,
       status: "PENDING",
     });
-    res.json({ leave });
+    const message = "Leave request submitted";
+    res.set("X-Success-Message", message);
+    res.json({ message, leave });
 
     // async emails (unchanged, trimmed)
     (async () => {
       const companyId = emp.company;
       if (!(await isEmailEnabled(companyId))) return;
       try {
-        const [reportingMembers, company] = await Promise.all([
-          reportingIds.length
-            ? Employee.find({ _id: { $in: reportingIds } }).select(
-                "name email"
-              )
-            : [],
+        const reportingCandidates = [];
+        if (emp.reportingPerson) reportingCandidates.push(emp.reportingPerson);
+        if (Array.isArray(emp.reportingPersons)) {
+          for (const rp of emp.reportingPersons) if (rp) reportingCandidates.push(rp);
+        }
+        const reportingIds = [];
+        const seenReporting = new Set();
+        for (const candidate of reportingCandidates) {
+          const key = String(candidate);
+          if (!key || seenReporting.has(key)) continue;
+          seenReporting.add(key);
+          reportingIds.push(candidate);
+        }
+
+        const reportingPromise = reportingIds.length
+          ? Employee.find({ _id: { $in: reportingIds } }).select("email")
+          : Promise.resolve([]);
+
+        const [company, reportingDocs] = await Promise.all([
           Company.findById(emp.company).populate("admin", "name email"),
+          reportingPromise,
         ]);
         const recipients = new Set();
-        for (const member of reportingMembers) {
-          if (member?.email) recipients.add(member.email);
+        for (const doc of reportingDocs) {
+          if (doc?.email) recipients.add(doc.email);
         }
         if (company?.admin?.email) recipients.add(company.admin.email);
         if (Array.isArray(notify)) {
@@ -155,6 +183,13 @@ router.post("/", auth, async (req, res) => {
                   }
                   <p style="color:#666;font-size:12px">Automated email from HRMS</p>
                  </div>`,
+          notify: {
+            type: "LEAVE_REQUEST",
+            title: "New leave request",
+            message: `${emp.name} • ${fmt(startDate)} → ${fmt(endDate)} (${type})`,
+            link: `/leaves`,
+            meta: { leaveId: String(leave._id) },
+          },
         });
       } catch (e) {
         console.warn("[leaves] mail fail:", e?.message || e);
@@ -168,15 +203,25 @@ router.post("/", auth, async (req, res) => {
 /* ------------------------------- Lists ---------------------------------- */
 
 router.get("/", auth, async (req, res) => {
-  const leaves = await Leave.find({ employee: req.employee.id })
+  const leaves = await Leave.find({
+    employee: req.employee.id,
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
+  })
+    .populate("approver", "name email")
     .sort({ createdAt: -1 })
     .lean();
   res.json({ leaves });
 });
 
 router.get("/assigned", auth, async (req, res) => {
-  const leaves = await Leave.find({ approver: req.employee.id })
+  const leaves = await Leave.find({
+    approver: req.employee.id,
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
+  })
     .populate("employee", "name")
+    .populate("approver", "name email")
     .sort({ createdAt: -1 })
     .lean();
   res.json({ leaves });
@@ -187,8 +232,13 @@ router.get(
   auth,
   requirePrimary(["ADMIN", "SUPERADMIN"]),
   async (req, res) => {
-    const leaves = await Leave.find({ company: req.employee.company })
+    const leaves = await Leave.find({
+      company: req.employee.company,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+    })
       .populate("employee", "name")
+      .populate("approver", "name email")
       .sort({ createdAt: -1 })
       .lean();
     res.json({ leaves });
@@ -204,6 +254,8 @@ router.get("/company/today", auth, async (req, res) => {
   const today = startOfDay(new Date());
   const leaves = await Leave.find({
     company: req.employee.company,
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
     status: "APPROVED",
     startDate: { $lte: today },
     endDate: { $gte: today },
@@ -261,16 +313,41 @@ router.post("/:id/approve", auth, async (req, res) => {
   const overrides = await CompanyDayOverride.find({
     company: leave.company,
     date: { $gte: start, $lte: end },
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
   })
     .select("date type")
     .lean();
+  const halfDayOverrideKeys = new Set();
+  const workingOverrideKeys = new Set();
   for (const o of overrides) {
     const k = toIsoDay(o.date);
-    if (o.type === "WORKING") bankHolidayKeys.delete(k);
-    if (o.type === "HOLIDAY") bankHolidayKeys.add(k);
+    if (o.type === "WORKING") {
+      bankHolidayKeys.delete(k);
+      workingOverrideKeys.add(k);
+    } else if (o.type === "HOLIDAY") {
+      bankHolidayKeys.add(k);
+    } else if (o.type === "HALF_DAY") {
+      halfDayOverrideKeys.add(k);
+      workingOverrideKeys.add(k);
+      bankHolidayKeys.delete(k);
+    }
   }
-  const days = Math.max(computeChargeableDays(start, end, bankHolidayKeys), 0);
-  console.log(`LEAVES: 🧮 Chargeable days (excl weekends/holidays): ${days}`);
+  const sandwichCfg = company?.leavePolicy?.sandwich || {};
+  const sandwichMinDays = normalizeSandwichMinDays(
+    sandwichCfg.minDays,
+    DEFAULT_SANDWICH_MIN_DAYS
+  );
+  const days = Math.max(
+    computeChargeableDays(start, end, bankHolidayKeys, {
+      sandwichEnabled: !!sandwichCfg.enabled,
+      sandwichMinDays,
+      halfDayKeys: halfDayOverrideKeys,
+      workingOverrideKeys,
+    }),
+    0
+  );
+  console.log(`LEAVES: 🧮 Chargeable days (with sandwich policy): ${days}`);
 
   // 3) Allocate against caps and pool
   const caps = company?.leavePolicy?.typeCaps || {};
@@ -299,12 +376,10 @@ router.post("/:id/approve", auth, async (req, res) => {
 
     let remaining = Math.max(0, days - firstPart);
     if (remaining > 0) {
-      const fb = String(leave.fallbackType || "").toLowerCase();
-      if (!fb) {
-        return res.status(400).json({
-          error: `Insufficient ${typeKey} leaves. Choose fallback (Paid/Sick/Unpaid/Casual).`,
-        });
-      }
+      // Default fallback is unpaid to avoid blocking approvals when the requested pool is short.
+      let fb = String(
+        leave.fallbackType || req.body?.fallbackType || req.query?.fallbackType || "unpaid"
+      ).toLowerCase();
 
       if (fb === "unpaid") {
         allocations.unpaid += remaining;
@@ -327,7 +402,19 @@ router.post("/:id/approve", auth, async (req, res) => {
           remaining = 0;
         }
       } else {
-        return res.status(400).json({ error: "Invalid fallback type" });
+        fb = "unpaid";
+        allocations.unpaid += remaining;
+        remaining = 0;
+      }
+
+      // Persist chosen fallback for transparency
+      const allowedFallbackPersist = ["paid", "sick", "unpaid"];
+      if (
+        fb &&
+        allowedFallbackPersist.includes(fb) &&
+        fb !== String(leave.fallbackType || "").toLowerCase()
+      ) {
+        leave.fallbackType = fb.toUpperCase();
       }
     }
   }
@@ -383,12 +470,17 @@ router.post("/:id/approve", auth, async (req, res) => {
     })
   );
 
+  // Stamp the actual approver (could differ from the pre-assigned approver)
+  leave.approver = req.employee.id;
   leave.status = "APPROVED";
   leave.adminMessage = req.body.message;
   leave.allocations = allocations;
   await leave.save();
 
+  const message = "Leave approved";
+  res.set("X-Success-Message", message);
   res.json({
+    message,
     leave,
     employee: updatedEmp,
     debug: {
@@ -422,6 +514,13 @@ router.post("/:id/approve", auth, async (req, res) => {
           leave.endDate
         )}</p>
                <p style="color:#666;font-size:12px">Automated email from HRMS</p>`,
+        notify: {
+          type: "LEAVE_APPROVED",
+          title: "Leave approved",
+          message: `${fmt(leave.startDate)} → ${fmt(leave.endDate)} (${leave.type})`,
+          link: `/leave?leaves`,
+          meta: { leaveId: String(leave._id) },
+        },
       });
     } catch (e) {
       console.warn("[approve mail] fail:", e?.message || e);
@@ -445,7 +544,9 @@ router.post("/:id/reject", auth, async (req, res) => {
   leave.status = "REJECTED";
   leave.adminMessage = req.body.message;
   await leave.save();
-  res.json({ leave });
+  const message = "Leave rejected";
+  res.set("X-Success-Message", message);
+  res.json({ message, leave });
 
   (async () => {
     try {
@@ -479,6 +580,13 @@ router.post("/:id/reject", auth, async (req, res) => {
                    : ""
                }
                <p style="color:#666;font-size:12px">Automated email from HRMS</p>`,
+        notify: {
+          type: "LEAVE_REJECTED",
+          title: "Leave rejected",
+          message: `${fmt(leave.startDate)} → ${fmt(leave.endDate)} (${leave.type})`,
+          link: `/leaves`,
+          meta: { leaveId: String(leave._id) },
+        },
       });
     } catch (e) {
       console.warn("[reject mail] fail:", e?.message || e);
@@ -555,17 +663,39 @@ router.post(
             const overrides = await CompanyDayOverride.find({
               company: leave.company,
               date: { $gte: start, $lte: end },
+              isDeleted: { $ne: true },
+              isActive: { $ne: false },
             })
               .select("date type")
               .lean();
 
+            const halfDayOverrideKeys = new Set();
+            const workingOverrideKeys = new Set();
             for (const o of overrides) {
               const k = toIsoDay(o.date);
-              if (o.type === "WORKING") bankHolidayKeys.delete(k);
-              if (o.type === "HOLIDAY") bankHolidayKeys.add(k);
+              if (o.type === "WORKING") {
+                bankHolidayKeys.delete(k);
+                workingOverrideKeys.add(k);
+              } else if (o.type === "HOLIDAY") {
+                bankHolidayKeys.add(k);
+              } else if (o.type === "HALF_DAY") {
+                halfDayOverrideKeys.add(k);
+                workingOverrideKeys.add(k);
+                bankHolidayKeys.delete(k);
+              }
             }
+            const sandwichCfg = company?.leavePolicy?.sandwich || {};
+            const sandwichMinDays = normalizeSandwichMinDays(
+              sandwichCfg.minDays,
+              DEFAULT_SANDWICH_MIN_DAYS
+            );
             const days = Math.max(
-              computeChargeableDays(start, end, bankHolidayKeys),
+              computeChargeableDays(start, end, bankHolidayKeys, {
+                sandwichEnabled: !!sandwichCfg.enabled,
+                sandwichMinDays,
+                halfDayKeys: halfDayOverrideKeys,
+                workingOverrideKeys,
+              }),
               0
             );
 

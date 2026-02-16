@@ -13,6 +13,8 @@ const CompanyDayOverrideSchema = new mongoose.Schema(
     },
     note: { type: String },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
@@ -20,4 +22,3 @@ const CompanyDayOverrideSchema = new mongoose.Schema(
 CompanyDayOverrideSchema.index({ company: 1, date: 1 }, { unique: true });
 
 module.exports = mongoose.model('CompanyDayOverride', CompanyDayOverrideSchema);
-

@@ -17,6 +17,8 @@ export const projectSchema = z.object({
   startTime: date.optional(),
   isPersonal: z.boolean().optional(),
   active: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+  isDeleted: z.boolean().optional(),
   estimatedTimeMinutes: nonNegativeNumber.optional(),
 });
 

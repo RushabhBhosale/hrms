@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
+import { resolveMediaUrl } from "../../lib/utils";
 
 export default function Documents() {
   const [docs, setDocs] = useState<string[]>([]);
@@ -44,13 +45,13 @@ export default function Documents() {
     }
   }
 
-  const base = import.meta.env.VITE_API_URL || "http://localhost:4000";
-
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold">Documents</h2>
-        <p className="text-sm text-muted">Upload and view your documents.</p>
+        <p className="text-sm text-muted-foreground">
+          Upload and view your documents.
+        </p>
       </div>
 
       {err && (
@@ -88,17 +89,20 @@ export default function Documents() {
       <section>
         <h3 className="font-semibold mb-2">Uploaded</h3>
         {loading ? (
-          <div className="text-sm text-muted">Loading…</div>
+          <div className="text-sm text-muted-foreground">Loading…</div>
         ) : docs.length === 0 ? (
-          <div className="text-sm text-muted">No documents uploaded.</div>
+          <div className="text-sm text-muted-foreground">
+            No documents uploaded.
+          </div>
         ) : (
           <ul className="list-disc pl-6 space-y-1">
             {docs.map((d) => (
               <li key={d}>
                 <a
-                  href={`${base}/uploads/${d}`}
+                  href={resolveMediaUrl(d) || "#"}
                   target="_blank"
                   className="text-primary underline"
+                  rel="noreferrer"
                 >
                   {d}
                 </a>

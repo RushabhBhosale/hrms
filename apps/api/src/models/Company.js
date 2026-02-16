@@ -4,7 +4,7 @@ const CompanySchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     admin: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
-    // Optional company logo (stored as filename under /uploads)
+    // Optional company logo (stored as file key)
     logo: { type: String },
     // Optional separate logos for different layouts
     logoSquare: { type: String },       // compact sidebar / favicon-like
@@ -43,6 +43,11 @@ const CompanySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    // Company-wide KRA self-review window (applies to all KRAs)
+    kraWindow: {
+      openFrom: { type: Date },
+      openTo: { type: Date },
+    },
     // Leave policy (simplified): total annual leaves, monthly accrual, and per-type caps from the total
     leavePolicy: {
       totalAnnual: { type: Number, default: 0 },
@@ -59,12 +64,18 @@ const CompanySchema = new mongoose.Schema(
         casual: { type: Number, default: 0 },
         sick: { type: Number, default: 0 },
       },
+      sandwich: {
+        enabled: { type: Boolean, default: false },
+        minDays: { type: Number, default: 5 },
+      },
     },
     // Optional company-wide working hours configuration
     workHours: {
       start: { type: String, default: '' }, // "HH:mm" (server-local time)
       end: { type: String, default: '' },   // "HH:mm"
       graceMinutes: { type: Number, default: 0 }, // minutes allowed before counting late
+      minFullDayHours: { type: Number, default: 6 }, // minimum hours counted as a full day
+      minHalfDayHours: { type: Number, default: 3 }, // minimum hours counted as a half day
     },
     bankHolidays: [
       {
@@ -72,6 +83,7 @@ const CompanySchema = new mongoose.Schema(
         name: { type: String }
       }
     ],
+    inventoryCategories: [{ type: String, trim: true }],
     // Optional company-wide color theme (hex codes)
     theme: {
       primary: { type: String },
@@ -90,7 +102,9 @@ const CompanySchema = new mongoose.Schema(
       pass: { type: String },
       from: { type: String },
       replyTo: { type: String },
-    }
+    },
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

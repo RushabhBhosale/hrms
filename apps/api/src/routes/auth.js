@@ -20,6 +20,12 @@ const {
   normalizePan,
   isValidPan,
 } = require("../utils/validate");
+const {
+  avatarUpload,
+  persistImageFromFile,
+  getEmployeeStorageId,
+} = require("../utils/fileStorage");
+const { normalizeSingleMediaUrl } = require("../utils/mediaUrl");
 const ms = (n) => n; // clarity helper
 
 function generateOtp() {
@@ -35,6 +41,9 @@ router.post("/login", async (req, res) => {
   }
   const employee = await Employee.findOne({ email });
   if (!employee) return res.status(400).json({ error: "Invalid credentials" });
+  if (employee.isDeleted === true || employee.isActive === false) {
+    return res.status(403).json({ error: "Your account is disabled." });
+  }
   const ok = await bcrypt.compare(password, employee.passwordHash);
   if (!ok) return res.status(400).json({ error: "Invalid credentials" });
 
@@ -80,6 +89,8 @@ router.post("/login", async (req, res) => {
     phone: employee.phone,
     address: employee.address,
     dob: employee.dob,
+    joiningDate: employee.joiningDate,
+    attendanceStartDate: employee.attendanceStartDate || employee.joiningDate,
     primaryRole: employee.primaryRole,
     subRoles: employee.subRoles,
     company: employee.company,
@@ -89,10 +100,65 @@ router.post("/login", async (req, res) => {
     aadharNumber: employee.aadharNumber,
     panNumber: employee.panNumber,
     bankDetails: employee.bankDetails,
+    uan: employee.uan,
+    profileImage: employee.profileImage || null,
     permissions,
   };
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "30d" });
   res.json({ token, employee: payload });
+});
+
+// Return current employee with refreshed permissions/profile
+router.get("/me", auth, async (req, res) => {
+  const employee = await Employee.findById(req.employee.id);
+  if (!employee) return res.status(404).json({ error: "Not found" });
+
+  let companyDoc = null;
+  if (employee.primaryRole === "ADMIN") {
+    companyDoc = await Company.findOne({ admin: employee._id });
+    if (!companyDoc && employee.company) {
+      companyDoc = await Company.findById(employee.company);
+    }
+  } else if (employee.company) {
+    companyDoc = await Company.findById(employee.company);
+  }
+
+  if (companyDoc) {
+    const ensured = ensureCompanyRoleDefaults(companyDoc);
+    if (ensured) await companyDoc.save();
+  }
+
+  const permissions = computeEmployeePermissions(companyDoc, employee);
+
+  try {
+    employee.decryptFieldsSync?.();
+  } catch (_) {}
+
+  const payload = {
+    id: employee._id.toString(),
+    name: employee.name,
+    email: employee.email,
+    personalEmail: employee.personalEmail,
+    phone: employee.phone,
+    address: employee.address,
+    dob: employee.dob,
+    joiningDate: employee.joiningDate,
+    attendanceStartDate: employee.attendanceStartDate || employee.joiningDate,
+    primaryRole: employee.primaryRole,
+    subRoles: employee.subRoles,
+    company: employee.company,
+    leaveBalances: employee.leaveBalances,
+    totalLeaveAvailable: employee.totalLeaveAvailable || 0,
+    employeeId: employee.employeeId,
+    aadharNumber: employee.aadharNumber,
+    panNumber: employee.panNumber,
+    bankDetails: employee.bankDetails,
+    uan: employee.uan,
+    profileImage: employee.profileImage || null,
+    permissions,
+  };
+
+  res.json({ employee: payload });
 });
 
 // Change password for logged-in users
@@ -294,7 +360,7 @@ router.post("/reset-password", async (req, res) => {
 
 router.get("/me", auth, async (req, res) => {
   const PLUS =
-    "+phone +address +personalEmail +aadharNumber +panNumber +bankDetails.accountNumber +bankDetails.ifsc +dob +ctc +joiningDate";
+    "+phone +address +personalEmail +aadharNumber +panNumber +bankDetails.accountNumber +bankDetails.ifsc +dob +ctc +joiningDate +uan";
 
   let employee = await Employee.findById(req.employee.id).select(PLUS);
   if (!employee) return res.status(404).json({ error: "Not found" });
@@ -349,6 +415,8 @@ router.get("/me", auth, async (req, res) => {
     aadharNumber: employee.aadharNumber,
     panNumber: employee.panNumber,
     bankDetails: employee.bankDetails,
+    uan: employee.uan,
+    profileImage: employee.profileImage || null,
     permissions,
   };
 
@@ -472,7 +540,37 @@ router.put("/me", auth, async (req, res) => {
     ifsc: bankIfsc || employee.bankDetails?.ifsc,
   };
   await employee.save();
+  res.set("X-Success-Message", "Profile updated");
   res.json({ message: "Profile updated" });
 });
+
+// Employee: upload/replace own profile image
+router.post(
+  "/me/photo",
+  auth,
+  avatarUpload.single("photo"),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No photo uploaded" });
+      if (!/^image\//i.test(req.file.mimetype || "")) {
+        return res.status(400).json({ error: "Photo must be an image" });
+      }
+      const employee = await Employee.findById(req.employee.id);
+      if (!employee) return res.status(404).json({ error: "Not found" });
+      const employeeStorageId = getEmployeeStorageId(employee);
+      const stored = await persistImageFromFile(req.file, {
+        publicId: `employee-${employeeStorageId}-profile`,
+        folder: `employees/${employeeStorageId}/profile`,
+      });
+      employee.profileImage = stored;
+      await employee.save();
+      res.set("X-Success-Message", "Profile photo updated");
+      return res.json({ profileImage: normalizeSingleMediaUrl(stored) });
+    } catch (err) {
+      console.error("[auth/me/photo]", err);
+      return res.status(500).json({ error: "Failed to upload profile photo" });
+    }
+  }
+);
 
 module.exports = router;

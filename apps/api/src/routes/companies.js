@@ -5,23 +5,23 @@ const { auth } = require("../middleware/auth");
 const Company = require("../models/Company");
 const Employee = require("../models/Employee");
 const Project = require("../models/Project");
-const Task = require("../models/Task");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
-const SalarySlip = require("../models/SalarySlip");
 const MasterCountry = require("../models/MasterCountry");
 const MasterState = require("../models/MasterState");
 const MasterCity = require("../models/MasterCity");
+const InventoryItem = require("../models/InventoryItem");
 const CompanyTypeMaster = require("../models/CompanyTypeMaster");
-const { upload } = require("../utils/uploads");
 const {
-  syncLeaveBalances,
-  accrueTotalIfNeeded,
-} = require("../utils/leaveBalances");
-const {
-  sendMail,
-  isEmailEnabled,
-  invalidateCompanyTransporter,
-} = require("../utils/mailer");
+  upload,
+  logoUpload,
+  avatarUpload,
+  persistImageFromFile,
+  getStoredFileId,
+  getEmployeeStorageId,
+} = require("../utils/fileStorage");
+const { normalizeSingleMediaUrl } = require("../utils/mediaUrl");
+const { syncLeaveBalances, accrueTotalIfNeeded } = require("../utils/leaveBalances");
+const { sendMail, isEmailEnabled, invalidateCompanyTransporter } = require("../utils/mailer");
 const {
   isValidEmail,
   isValidPassword,
@@ -41,12 +41,19 @@ const {
   formatRoleLabel,
   DEFAULT_ROLE_CONFIGS,
 } = require("../utils/permissions");
+const {
+  DEFAULT_SANDWICH_MIN_DAYS,
+  normalizeSandwichMinDays,
+} = require("../utils/sandwich");
+
+function sendSuccess(res, message, payload = {}) {
+  if (message) res.set("X-Success-Message", message);
+  return res.json({ message, ...payload });
+}
 
 // Utility: simple hex validation
 function isHexColor(v) {
-  return (
-    typeof v === "string" && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim())
-  );
+  return typeof v === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim());
 }
 
 function startOfDay(d) {
@@ -55,12 +62,28 @@ function startOfDay(d) {
   return x;
 }
 
+function parseDateOnly(value) {
+  if (value === undefined || value === null) return null;
+  const str = String(value).trim();
+  const parts = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!parts) {
+    const d = new Date(str);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const year = Number(parts[1]);
+  const monthIdx = Number(parts[2]) - 1;
+  const day = Number(parts[3]);
+  const dt = new Date(Date.UTC(year, monthIdx, day));
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+
 function parseApplicableMonth(value) {
   if (!value) return undefined;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), 1));
   }
-  if (typeof value === "string") {
+  if (typeof value === 'string') {
     const trimmed = value.trim();
     if (!trimmed) return undefined;
     const match = trimmed.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
@@ -77,95 +100,73 @@ function formatApplicableMonth(date) {
   const d = new Date(date);
   if (Number.isNaN(d.getTime())) return "";
   const year = d.getUTCFullYear();
-  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
   return `${year}-${month}`;
 }
 
-function normalizeReportingIds(value) {
-  if (value === undefined || value === null) return [];
-  if (Array.isArray(value)) {
-    return value
-      .flatMap((item) => normalizeReportingIds(item))
-      .map((id) => String(id).trim())
-      .filter(Boolean);
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return [];
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-          return normalizeReportingIds(parsed);
-        }
-      } catch (_) {
-        // fall back to comma split below
-      }
-    }
-    if (trimmed.includes(",")) {
-      return trimmed
-        .split(",")
-        .map((part) => part.trim())
-        .filter(Boolean);
-    }
-    return [trimmed];
-  }
-  return [String(value).trim()].filter(Boolean);
-}
-
-async function resolveReportingEmployees(companyId, value) {
-  const normalized = normalizeReportingIds(value);
-  const orderedUnique = Array.from(new Set(normalized));
-  if (!orderedUnique.length) return [];
-  const invalid = orderedUnique.find(
-    (id) => !mongoose.Types.ObjectId.isValid(String(id))
-  );
-  if (invalid) {
-    const err = new Error("Reporting person not found");
-    err.statusCode = 400;
-    throw err;
-  }
-  const matches = await Employee.find({
-    _id: { $in: orderedUnique },
-    company: companyId,
-  });
-  if (matches.length !== orderedUnique.length) {
-    const err = new Error("Reporting person not found");
-    err.statusCode = 400;
-    throw err;
-  }
-  const map = new Map(matches.map((doc) => [String(doc._id), doc]));
-  return orderedUnique.map((id) => map.get(String(id))).filter(Boolean);
-}
-
-function formatReportingResponse(reportingDocs = []) {
-  return reportingDocs.map((doc) => ({
-    id: doc._id,
-    name: doc.name,
-  }));
-}
-
 function parseBooleanInput(value, fallback = false) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
-    if (["true", "1", "yes", "y", "on"].includes(normalized)) return true;
-    if (["false", "0", "no", "n", "off"].includes(normalized)) return false;
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
   }
   return fallback;
 }
 
-const BLOOD_GROUPS = new Set([
-  "A+",
-  "A-",
-  "B+",
-  "B-",
-  "AB+",
-  "AB-",
-  "O+",
-  "O-",
-]);
+const INVENTORY_STATUSES = ['AVAILABLE', 'ASSIGNED', 'REPAIR', 'RETIRED'];
+function normalizeInventoryStatus(value, fallback = 'AVAILABLE') {
+  if (typeof value !== 'string') return fallback;
+  const v = value.trim().toUpperCase();
+  return INVENTORY_STATUSES.includes(v) ? v : fallback;
+}
+
+function normalizeDateOnly(value) {
+  if (!value) return null;
+  const d = startOfDay(new Date(value));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function normalizeCategoryName(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  return trimmed.slice(0, 100);
+}
+
+function normalizeReportingIdStrings(body) {
+  const raw = [];
+  const pushValue = (value) => {
+    if (value === undefined || value === null) return;
+    if (Array.isArray(value)) {
+      value.forEach(pushValue);
+    } else {
+      raw.push(String(value));
+    }
+  };
+  if (body) {
+    pushValue(body.reportingPersons);
+    pushValue(body.reportingPerson);
+  }
+  const unique = new Set(
+    raw
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0)
+  );
+  return Array.from(unique);
+}
+
+function filterValidObjectIds(strings) {
+  const valid = [];
+  for (const id of strings) {
+    if (!mongoose.Types.ObjectId.isValid(id)) return null;
+    valid.push(id);
+  }
+  return valid;
+}
+
+const BLOOD_GROUPS = new Set(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
 
 function normalizeBloodGroup(v) {
   if (typeof v !== "string") return undefined;
@@ -176,11 +177,10 @@ function normalizeBloodGroup(v) {
 
 function scheduleApprovalEmail(companyOrName, email, passwordPlain) {
   if (!email) return;
-  const companyId =
-    companyOrName && companyOrName._id ? companyOrName._id : null;
+  const companyId = companyOrName && companyOrName._id ? companyOrName._id : null;
   const companyName =
     (companyOrName && companyOrName.name) ||
-    (typeof companyOrName === "string" ? companyOrName : "Company");
+    (typeof companyOrName === 'string' ? companyOrName : 'Company');
   const loginLink = process.env.CLIENT_ORIGIN
     ? `${process.env.CLIENT_ORIGIN}/login`
     : null;
@@ -193,17 +193,17 @@ function scheduleApprovalEmail(companyOrName, email, passwordPlain) {
       "Password: (use the password you set during registration or reset it from the login page)"
     );
   }
-  const credentialsText = credentialLines.join("\n");
+  const credentialsText = credentialLines.join('\n');
   const text = `Good news! Your company "${companyName}" has been approved. You can now log in.${
-    loginLink ? `\n\nLogin: ${loginLink}` : ""
+    loginLink ? `\n\nLogin: ${loginLink}` : ''
   }\n\n${credentialsText}`;
   const htmlLogin = loginLink
     ? `<p><a href="${loginLink}">Log in</a> to get started.</p>`
-    : "";
+    : '';
   const htmlCredentials = `<p><strong>Administrator credentials</strong><br>Email: ${email}${
     passwordPlain
       ? `<br>Password: ${passwordPlain}`
-      : "<br>Password: Use the password you set during registration or reset it from the login page."
+      : '<br>Password: Use the password you set during registration or reset it from the login page.'
   }</p>`;
   (async () => {
     try {
@@ -216,21 +216,17 @@ function scheduleApprovalEmail(companyOrName, email, passwordPlain) {
         html: `<p>Good news! Your company <strong>${companyName}</strong> has been approved.</p>${htmlLogin}${htmlCredentials}<p style="color:#666;font-size:12px;">Automated email from HRMS</p>`,
       });
     } catch (err) {
-      console.warn(
-        "[companies] failed to send approval email:",
-        err?.message || err
-      );
+      console.warn('[companies] failed to send approval email:', err?.message || err);
     }
   })();
 }
 
 function scheduleRejectionEmail(companyOrName, email) {
   if (!email) return;
-  const companyId =
-    companyOrName && companyOrName._id ? companyOrName._id : null;
+  const companyId = companyOrName && companyOrName._id ? companyOrName._id : null;
   const companyName =
     (companyOrName && companyOrName.name) ||
-    (typeof companyOrName === "string" ? companyOrName : "Company");
+    (typeof companyOrName === 'string' ? companyOrName : 'Company');
   const subject = `Your company registration was rejected: ${companyName}`;
   const text = `We’re sorry, but your company "${companyName}" was not approved at this time.`;
   const html = `<p>We’re sorry, but your company <strong>${companyName}</strong> was not approved at this time.</p><p>If you believe this is an error, please contact support.</p>`;
@@ -239,10 +235,7 @@ function scheduleRejectionEmail(companyOrName, email) {
       if (!(await isEmailEnabled(companyId))) return;
       await sendMail({ companyId, to: email, subject, text, html });
     } catch (err) {
-      console.warn(
-        "[companies] failed to send rejection email:",
-        err?.message || err
-      );
+      console.warn('[companies] failed to send rejection email:', err?.message || err);
     }
   })();
 }
@@ -251,6 +244,38 @@ function httpError(statusCode, message) {
   const err = new Error(message);
   err.statusCode = statusCode;
   return err;
+}
+
+async function persistEmployeePhoto(employee, file) {
+  if (!file) throw httpError(400, "No photo uploaded");
+  if (!/^image\//i.test(file.mimetype || "")) {
+    throw httpError(400, "Profile image must be an image");
+  }
+  const employeeStorageId = getEmployeeStorageId(employee);
+  const stored = normalizeSingleMediaUrl(
+    await persistImageFromFile(file, {
+      publicId: `employee-${employeeStorageId}-profile`,
+      folder: `employees/${employeeStorageId}/profile`,
+    })
+  );
+  employee.profileImage = stored;
+  await employee.save();
+  return stored;
+}
+
+async function persistCompanyLogo(company, file, variantKey) {
+  if (!file) throw httpError(400, "No logo file uploaded");
+  if (!/^image\//i.test(file.mimetype || "")) {
+    throw httpError(400, "Logo must be an image");
+  }
+  const stored = normalizeSingleMediaUrl(
+    await persistImageFromFile(file, {
+      publicId: `company-${company._id}-${variantKey}`,
+    })
+  );
+  company[variantKey] = stored;
+  await company.save();
+  return stored;
 }
 
 async function resolveLocationAndType({
@@ -273,14 +298,16 @@ async function resolveLocationAndType({
 
   if (!country) throw httpError(400, "Selected country not found");
   if (!state || !state.country.equals(country._id)) {
-    throw httpError(400, "Selected state is not valid for the chosen country");
+    throw httpError(
+      400,
+      "Selected state is not valid for the chosen country"
+    );
   }
-  if (
-    !city ||
-    !city.state.equals(state._id) ||
-    !city.country.equals(country._id)
-  ) {
-    throw httpError(400, "Selected city is not valid for the chosen state");
+  if (!city || !city.state.equals(state._id) || !city.country.equals(country._id)) {
+    throw httpError(
+      400,
+      "Selected city is not valid for the chosen state"
+    );
   }
   if (!companyType) throw httpError(400, "Selected company type not found");
 
@@ -317,11 +344,7 @@ async function approvePendingCompany(company) {
   await company.save();
 
   const populated = await company.populate("admin", "name email");
-  scheduleApprovalEmail(
-    company,
-    pendingAdmin.email,
-    pendingAdmin.passwordPlain
-  );
+  scheduleApprovalEmail(company, pendingAdmin.email, pendingAdmin.passwordPlain);
   return populated;
 }
 
@@ -329,9 +352,7 @@ async function rejectPendingCompany(company) {
   if (company.status !== "pending") {
     throw httpError(400, "Company is not pending");
   }
-  const pendingAdmin = company.requestedAdmin
-    ? { ...company.requestedAdmin }
-    : null;
+  const pendingAdmin = company.requestedAdmin ? { ...company.requestedAdmin } : null;
   company.status = "rejected";
   if (company.requestedAdmin) {
     company.requestedAdmin.passwordPlain = undefined;
@@ -412,23 +433,17 @@ router.get("/branding", auth, async (req, res) => {
   try {
     let company = null;
     if (["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole)) {
-      company = await Company.findOne({ admin: req.employee.id }).select(
-        "name logo logoSquare logoHorizontal"
-      );
+      company = await Company.findOne({ admin: req.employee.id }).select("name logo logoSquare logoHorizontal");
     } else if (req.employee.primaryRole === "EMPLOYEE") {
-      company = await Company.findById(req.employee.company).select(
-        "name logo logoSquare logoHorizontal"
-      );
+      company = await Company.findById(req.employee.company).select("name logo logoSquare logoHorizontal");
     }
     if (!company) return res.status(200).json({ branding: null });
-    return res.json({
-      branding: {
-        name: company.name,
-        logo: company.logo || null,
-        logoSquare: company.logoSquare || null,
-        logoHorizontal: company.logoHorizontal || null,
-      },
-    });
+    return res.json({ branding: {
+      name: company.name,
+      logo: company.logo || null,
+      logoSquare: company.logoSquare || null,
+      logoHorizontal: company.logoHorizontal || null,
+    } });
   } catch (e) {
     return res.status(500).json({ error: "Failed to get branding" });
   }
@@ -442,26 +457,18 @@ router.put("/theme", auth, async (req, res) => {
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
 
-  const allowed = [
-    "primary",
-    "secondary",
-    "accent",
-    "success",
-    "warning",
-    "error",
-  ];
+  const allowed = ["primary", "secondary", "accent", "success", "warning", "error"];
   const patch = {};
   for (const k of allowed) {
     const v = req.body?.[k];
     if (v === undefined) continue;
     if (v === null || v === "") continue; // ignore empty
-    if (!isHexColor(v))
-      return res.status(400).json({ error: `Invalid color for ${k}` });
+    if (!isHexColor(v)) return res.status(400).json({ error: `Invalid color for ${k}` });
     patch[k] = v.trim();
   }
   company.theme = { ...(company.theme || {}), ...patch };
   await company.save();
-  return res.json({ theme: company.theme });
+  return sendSuccess(res, "Theme updated", { theme: company.theme });
 });
 
 // Admin: reset company theme to defaults
@@ -475,26 +482,22 @@ router.delete("/theme", auth, async (req, res) => {
   // Remove custom theme so the app falls back to CSS defaults
   company.theme = undefined;
   await company.save();
-  return res.json({ theme: null });
+  return sendSuccess(res, "Theme reset", { theme: null });
 });
 
 // Admin: get basic company profile (name)
 router.get("/profile", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "name logo logoSquare logoHorizontal"
-  );
+  const company = await Company.findOne({ admin: req.employee.id }).select("name logo logoSquare logoHorizontal");
   if (!company) return res.status(400).json({ error: "Company not found" });
-  res.json({
-    company: {
-      id: company._id,
-      name: company.name,
-      logo: company.logo || null,
-      logoSquare: company.logoSquare || null,
-      logoHorizontal: company.logoHorizontal || null,
-    },
-  });
+  res.json({ company: {
+    id: company._id,
+    name: company.name,
+    logo: company.logo || null,
+    logoSquare: company.logoSquare || null,
+    logoHorizontal: company.logoHorizontal || null,
+  } });
 });
 
 // Admin: update company name
@@ -508,23 +511,19 @@ router.put("/profile", auth, async (req, res) => {
 
   const trimmed = name.trim();
   if (trimmed.length < 2 || trimmed.length > 120)
-    return res
-      .status(400)
-      .json({ error: "Company name must be 2-120 characters" });
+    return res.status(400).json({ error: "Company name must be 2-120 characters" });
 
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   company.name = trimmed;
   await company.save();
-  res.json({
-    company: {
-      id: company._id,
-      name: company.name,
-      logo: company.logo || null,
-      logoSquare: company.logoSquare || null,
-      logoHorizontal: company.logoHorizontal || null,
-    },
-  });
+  sendSuccess(res, "Company profile updated", { company: {
+    id: company._id,
+    name: company.name,
+    logo: company.logo || null,
+    logoSquare: company.logoSquare || null,
+    logoHorizontal: company.logoHorizontal || null,
+  } });
 });
 
 // Admin: get SMTP configuration
@@ -532,20 +531,18 @@ router.get("/smtp", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
 
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "smtp"
-  );
+  const company = await Company.findOne({ admin: req.employee.id }).select('smtp');
   if (!company) return res.status(400).json({ error: "Company not found" });
   const smtp = company.smtp || {};
   res.json({
     smtp: {
       enabled: !!smtp.enabled,
-      host: smtp.host || "",
-      port: typeof smtp.port === "number" ? smtp.port : 587,
+      host: smtp.host || '',
+      port: typeof smtp.port === 'number' ? smtp.port : 587,
       secure: !!smtp.secure,
-      user: smtp.user || "",
-      from: smtp.from || "",
-      replyTo: smtp.replyTo || "",
+      user: smtp.user || '',
+      from: smtp.from || '',
+      replyTo: smtp.replyTo || '',
       passwordSet: !!smtp.pass,
     },
   });
@@ -556,9 +553,7 @@ router.put("/smtp", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
 
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "smtp"
-  );
+  const company = await Company.findOne({ admin: req.employee.id }).select('smtp');
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const body = req.body || {};
@@ -568,45 +563,43 @@ router.put("/smtp", auth, async (req, res) => {
     company.smtp = { enabled: false };
     await company.save();
     invalidateCompanyTransporter(company._id);
-    return res.json({
+    return sendSuccess(res, "SMTP disabled", {
       smtp: {
         enabled: false,
-        host: "",
+        host: '',
         port: 587,
         secure: false,
-        user: "",
-        from: "",
-        replyTo: "",
+        user: '',
+        from: '',
+        replyTo: '',
         passwordSet: false,
       },
     });
   }
 
-  const host = typeof body.host === "string" ? body.host.trim() : "";
-  if (!host) return res.status(400).json({ error: "SMTP host is required" });
+  const host = typeof body.host === 'string' ? body.host.trim() : '';
+  if (!host) return res.status(400).json({ error: 'SMTP host is required' });
 
   const portRaw = body.port !== undefined ? body.port : 587;
   const portNum = parseInt(portRaw, 10);
   if (!Number.isFinite(portNum) || portNum <= 0 || portNum > 65535) {
-    return res
-      .status(400)
-      .json({ error: "SMTP port must be between 1 and 65535" });
+    return res.status(400).json({ error: 'SMTP port must be between 1 and 65535' });
   }
 
   const secure = parseBooleanInput(body.secure, portNum === 465);
-  const user = typeof body.user === "string" ? body.user.trim() : "";
-  const from = typeof body.from === "string" ? body.from.trim() : "";
-  const replyTo = typeof body.replyTo === "string" ? body.replyTo.trim() : "";
+  const user = typeof body.user === 'string' ? body.user.trim() : '';
+  const from = typeof body.from === 'string' ? body.from.trim() : '';
+  const replyTo = typeof body.replyTo === 'string' ? body.replyTo.trim() : '';
 
   let nextPass = (company.smtp && company.smtp.pass) || undefined;
-  if (Object.prototype.hasOwnProperty.call(body, "password")) {
+  if (Object.prototype.hasOwnProperty.call(body, 'password')) {
     const raw = body.password;
-    if (raw === null || (typeof raw === "string" && raw.trim() === "")) {
+    if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
       nextPass = undefined;
-    } else if (typeof raw === "string") {
+    } else if (typeof raw === 'string') {
       nextPass = raw;
     } else {
-      return res.status(400).json({ error: "Invalid password value" });
+      return res.status(400).json({ error: 'Invalid password value' });
     }
   }
 
@@ -623,77 +616,72 @@ router.put("/smtp", auth, async (req, res) => {
   await company.save();
   invalidateCompanyTransporter(company._id);
 
-  res.json({
+  sendSuccess(res, "SMTP settings updated", {
     smtp: {
       enabled: true,
       host,
       port: portNum,
       secure,
-      user: user || "",
-      from: from || "",
-      replyTo: replyTo || "",
+      user: user || '',
+      from: from || '',
+      replyTo: replyTo || '',
       passwordSet: !!nextPass,
     },
   });
 });
 
 // Admin: upload or replace company logo
-router.post("/logo", auth, upload.single("logo"), async (req, res) => {
+router.post("/logo", auth, logoUpload.single("logo"), async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   try {
-    if (!req.file)
-      return res.status(400).json({ error: "No logo file uploaded" });
+    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
     const company = await Company.findOne({ admin: req.employee.id });
     if (!company) return res.status(400).json({ error: "Company not found" });
-    company.logo = req.file.filename;
-    await company.save();
-    return res.json({ logo: company.logo });
+    const logo = await persistCompanyLogo(company, req.file, "logo");
+    return sendSuccess(res, "Logo uploaded", { logo });
   } catch (e) {
-    return res.status(500).json({ error: "Failed to upload logo" });
+    const status = e?.statusCode || 500;
+    const message = e?.statusCode ? e.message : "Failed to upload logo";
+    return res.status(status).json({ error: message });
   }
 });
 
 // Admin: upload/replace square logo
-router.post("/logo-square", auth, upload.single("logo"), async (req, res) => {
+router.post("/logo-square", auth, logoUpload.single("logo"), async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   try {
-    if (!req.file)
-      return res.status(400).json({ error: "No logo file uploaded" });
+    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
     const company = await Company.findOne({ admin: req.employee.id });
     if (!company) return res.status(400).json({ error: "Company not found" });
-    company.logoSquare = req.file.filename;
-    await company.save();
-    return res.json({ logoSquare: company.logoSquare });
+    const logoSquare = await persistCompanyLogo(company, req.file, "logoSquare");
+    return sendSuccess(res, "Square logo uploaded", { logoSquare });
   } catch (e) {
-    return res.status(500).json({ error: "Failed to upload square logo" });
+    const status = e?.statusCode || 500;
+    const message = e?.statusCode ? e.message : "Failed to upload square logo";
+    return res.status(status).json({ error: message });
   }
 });
 
 // Admin: upload/replace horizontal logo
-router.post(
-  "/logo-horizontal",
-  auth,
-  upload.single("logo"),
-  async (req, res) => {
-    if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
-      return res.status(403).json({ error: "Forbidden" });
-    try {
-      if (!req.file)
-        return res.status(400).json({ error: "No logo file uploaded" });
-      const company = await Company.findOne({ admin: req.employee.id });
-      if (!company) return res.status(400).json({ error: "Company not found" });
-      company.logoHorizontal = req.file.filename;
-      await company.save();
-      return res.json({ logoHorizontal: company.logoHorizontal });
-    } catch (e) {
-      return res
-        .status(500)
-        .json({ error: "Failed to upload horizontal logo" });
-    }
+router.post("/logo-horizontal", auth, logoUpload.single("logo"), async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  try {
+    if (!req.file) return res.status(400).json({ error: "No logo file uploaded" });
+    const company = await Company.findOne({ admin: req.employee.id });
+    if (!company) return res.status(400).json({ error: "Company not found" });
+    const logoHorizontal = await persistCompanyLogo(company, req.file, "logoHorizontal");
+    return sendSuccess(res, "Horizontal logo uploaded", { logoHorizontal });
+  } catch (e) {
+    const status = e?.statusCode || 500;
+    const message = e?.statusCode
+      ? e.message
+      : "Failed to upload horizontal logo";
+    return res.status(status).json({ error: message });
   }
-);
+});
 
 // Public: company self-registration (landing page submission)
 router.post("/register", async (req, res) => {
@@ -725,9 +713,7 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Invalid admin email" });
     }
     if (!isValidPassword(adminPassword)) {
-      return res
-        .status(400)
-        .json({ error: "Password must be more than 5 characters" });
+      return res.status(400).json({ error: "Password must be more than 5 characters" });
     }
 
     let country, state, city, companyType;
@@ -740,10 +726,10 @@ router.post("/register", async (req, res) => {
       }));
     } catch (err) {
       const statusCode = err.statusCode || 500;
-      if (statusCode >= 500) console.error("[companies/register]", err);
+      if (statusCode >= 500) console.error('[companies/register]', err);
       return res
         .status(statusCode)
-        .json({ error: err.message || "Invalid master selections" });
+        .json({ error: err.message || 'Invalid master selections' });
     }
 
     const existingAdmin = await Employee.findOne({ email: adminEmail });
@@ -794,24 +780,20 @@ router.post("/register", async (req, res) => {
     if (seededDefaults) await company.save();
 
     // Async notifications (non-blocking)
-    (async () => {
+    ;(async () => {
       try {
         if (await isEmailEnabled()) {
           // Notify platform superadmins
-          const supers = await Employee.find({
-            primaryRole: "SUPERADMIN",
-          }).select("email name");
+          const supers = await Employee.find({ primaryRole: 'SUPERADMIN' }).select('email name');
           const to = (supers || []).map((u) => u.email).filter(Boolean);
           if (to.length) {
             const subject = `New company registration pending: ${company.name}`;
             const text = `A new company has requested approval.\n\nCompany: ${company.name}\nAdmin: ${adminName} <${adminEmail}>\n\nReview in the dashboard.`;
-            const link = process.env.CLIENT_ORIGIN
-              ? `${process.env.CLIENT_ORIGIN}/superadmin/companies`
-              : null;
+            const link = process.env.CLIENT_ORIGIN ? `${process.env.CLIENT_ORIGIN}/superadmin/companies` : null;
             const html = `<p>A new company has requested approval.</p>
               <p><strong>Company:</strong> ${company.name}</p>
               <p><strong>Admin:</strong> ${adminName} &lt;${adminEmail}&gt;</p>
-              ${link ? `<p><a href="${link}">Review in dashboard</a></p>` : ""}
+              ${link ? `<p><a href="${link}">Review in dashboard</a></p>` : ''}
               <p style="color:#666;font-size:12px;">Automated email from HRMS</p>`;
             await sendMail({ to, subject, text, html });
           }
@@ -819,24 +801,14 @@ router.post("/register", async (req, res) => {
           const subject2 = `Registration received: ${company.name}`;
           const text2 = `Thanks for registering ${company.name}. Your request is pending approval. We will notify you once reviewed.`;
           const html2 = `<p>Thanks for registering <strong>${company.name}</strong>.</p><p>Your request is pending approval. We will notify you once reviewed.</p>`;
-          await sendMail({
-            companyId: company._id,
-            to: adminEmail.trim(),
-            subject: subject2,
-            text: text2,
-            html: html2,
-          });
+          await sendMail({ companyId: company._id, to: adminEmail.trim(), subject: subject2, text: text2, html: html2 });
         }
       } catch (e) {
-        console.warn(
-          "[companies/register] failed to send email:",
-          e?.message || e
-        );
+        console.warn('[companies/register] failed to send email:', e?.message || e);
       }
     })();
 
-    return res.json({
-      message: "Registration submitted. Awaiting superadmin approval.",
+    return sendSuccess(res, "Registration submitted. Awaiting superadmin approval.", {
       companyId: company._id,
     });
   } catch (e) {
@@ -875,9 +847,7 @@ router.post("/", auth, async (req, res) => {
     return res.status(400).json({ error: "Invalid admin email" });
   }
   if (!isValidPassword(adminPassword)) {
-    return res
-      .status(400)
-      .json({ error: "Password must be more than 5 characters" });
+    return res.status(400).json({ error: "Password must be more than 5 characters" });
   }
   let admin = await Employee.findOne({ email: adminEmail });
   if (admin) return res.status(400).json({ error: "Admin already exists" });
@@ -894,10 +864,8 @@ router.post("/", auth, async (req, res) => {
     }));
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    if (statusCode >= 500) console.error("[companies/create]", err);
-    return res
-      .status(statusCode)
-      .json({ error: err.message || "Invalid master selections" });
+    if (statusCode >= 500) console.error('[companies/create]', err);
+    return res.status(statusCode).json({ error: err.message || 'Invalid master selections' });
   }
 
   admin = await Employee.create({
@@ -931,7 +899,7 @@ router.post("/", auth, async (req, res) => {
   const seededDefaults = ensureCompanyRoleDefaults(company);
   if (seededDefaults) await company.save();
 
-  res.json({ company });
+  sendSuccess(res, "Company created", { company });
 });
 
 // List companies with admins
@@ -963,9 +931,7 @@ router.post("/:companyId/admin", auth, async (req, res) => {
     return res.status(400).json({ error: "Invalid admin email" });
   }
   if (!isValidPassword(adminPassword)) {
-    return res
-      .status(400)
-      .json({ error: "Password must be more than 5 characters" });
+    return res.status(400).json({ error: "Password must be more than 5 characters" });
   }
   const company = await Company.findById(req.params.companyId);
   if (!company) return res.status(404).json({ error: "Company not found" });
@@ -986,7 +952,7 @@ router.post("/:companyId/admin", auth, async (req, res) => {
   company.admin = admin._id;
   await company.save();
   const populated = await company.populate("admin", "name email");
-  res.json({ company: populated });
+  sendSuccess(res, "Admin assigned", { company: populated });
 });
 
 // Superadmin: approve a pending company registration
@@ -997,13 +963,11 @@ router.post("/:companyId/approve", auth, async (req, res) => {
   if (!company) return res.status(404).json({ error: "Company not found" });
   try {
     const populated = await approvePendingCompany(company);
-    return res.json({ company: populated });
+    return sendSuccess(res, "Company approved", { company: populated });
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    if (statusCode >= 500) console.error("[companies/approve]", err);
-    return res
-      .status(statusCode)
-      .json({ error: err.message || "Failed to approve company" });
+    if (statusCode >= 500) console.error('[companies/approve]', err);
+    return res.status(statusCode).json({ error: err.message || 'Failed to approve company' });
   }
 });
 
@@ -1015,13 +979,11 @@ router.post("/:companyId/reject", auth, async (req, res) => {
   if (!company) return res.status(404).json({ error: "Company not found" });
   try {
     const populated = await rejectPendingCompany(company);
-    return res.json({ company: populated });
+    return sendSuccess(res, "Company rejected", { company: populated });
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    if (statusCode >= 500) console.error("[companies/reject]", err);
-    return res
-      .status(statusCode)
-      .json({ error: err.message || "Failed to reject company" });
+    if (statusCode >= 500) console.error('[companies/reject]', err);
+    return res.status(statusCode).json({ error: err.message || 'Failed to reject company' });
   }
 });
 
@@ -1030,22 +992,18 @@ router.patch("/:companyId/status", auth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   const { status } = req.body || {};
   if (!status || !["approved", "rejected"].includes(status)) {
-    return res
-      .status(400)
-      .json({ error: "Status must be approved or rejected" });
+    return res.status(400).json({ error: "Status must be approved or rejected" });
   }
   const company = await Company.findById(req.params.companyId);
   if (!company) return res.status(404).json({ error: "Company not found" });
 
   try {
     const populated = await transitionCompanyStatus(company, status);
-    return res.json({ company: populated });
+    return sendSuccess(res, "Company status updated", { company: populated });
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    if (statusCode >= 500) console.error("[companies/status]", err);
-    return res
-      .status(statusCode)
-      .json({ error: err.message || "Failed to update company status" });
+    if (statusCode >= 500) console.error('[companies/status]', err);
+    return res.status(statusCode).json({ error: err.message || 'Failed to update company status' });
   }
 });
 
@@ -1089,11 +1047,9 @@ router.post("/roles", auth, async (req, res) => {
 
   company.roles.push(rawName);
   company.roleSettings[rawName] = {
-    label:
-      typeof label === "string" && label.trim()
-        ? label.trim()
-        : formatRoleLabel(rawName),
-    description: typeof description === "string" ? description.trim() : "",
+    label: typeof label === "string" && label.trim() ? label.trim() : formatRoleLabel(rawName),
+    description:
+      typeof description === "string" ? description.trim() : "",
     modules: sanitizedPermissions,
     system: false,
     canDelete: true,
@@ -1104,8 +1060,23 @@ router.post("/roles", auth, async (req, res) => {
   company.markModified("roleSettings");
   await company.save();
 
-  res.json({ roles: mapRolesForResponse(company) });
+  sendSuccess(res, "Role added", { roles: mapRolesForResponse(company) });
 });
+
+function resolveRoleKey(company, incomingKey) {
+  if (!company || !incomingKey) return null;
+  const settings = company.roleSettings || {};
+  if (settings[incomingKey]) return incomingKey;
+
+  const normalizedParam = slugifyRoleName(incomingKey);
+  if (!normalizedParam) return null;
+  if (settings[normalizedParam]) return normalizedParam;
+
+  const relaxedMatch = Object.keys(settings).find(
+    (key) => slugifyRoleName(key) === normalizedParam
+  );
+  return relaxedMatch || null;
+}
 
 // Admin: update role metadata or rename
 router.put("/roles/:role", auth, async (req, res) => {
@@ -1120,31 +1091,31 @@ router.put("/roles/:role", auth, async (req, res) => {
 
   ensureCompanyRoleDefaults(company);
 
-  if (!company.roleSettings[role])
+  let targetKey = resolveRoleKey(company, role);
+  if (!targetKey)
     return res.status(404).json({ error: "Role not found" });
 
-  let targetKey = role;
-  let targetMeta = company.roleSettings[role];
+  let targetMeta = company.roleSettings[targetKey];
 
   if (newRole) {
     const slug = slugifyRoleName(newRole);
     if (!slug) return res.status(400).json({ error: "Invalid role name" });
-    if (slug !== role && company.roles.includes(slug))
+    if (slug !== targetKey && company.roles.includes(slug))
       return res.status(400).json({ error: "Role already exists" });
     if (targetMeta.system && !targetMeta.allowRename)
       return res.status(400).json({ error: "Cannot rename protected role" });
 
-    const idx = company.roles.indexOf(role);
+    const idx = company.roles.indexOf(targetKey);
     if (idx === -1) return res.status(404).json({ error: "Role not found" });
 
     company.roles[idx] = slug;
     company.roleSettings[slug] = { ...targetMeta };
-    delete company.roleSettings[role];
+    delete company.roleSettings[targetKey];
     targetKey = slug;
     targetMeta = company.roleSettings[slug];
 
     await Employee.updateMany(
-      { company: company._id, subRoles: role },
+      { company: company._id, subRoles: targetKey },
       { $set: { "subRoles.$": slug } }
     );
   }
@@ -1168,7 +1139,48 @@ router.put("/roles/:role", auth, async (req, res) => {
   company.markModified("roleSettings");
   await company.save();
 
-  res.json({ roles: mapRolesForResponse(company) });
+  sendSuccess(res, "Role updated", { roles: mapRolesForResponse(company) });
+});
+
+// Admin: delete a custom role
+router.delete("/roles/:role", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const { role } = req.params;
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  ensureCompanyRoleDefaults(company);
+
+  const settings = company.roleSettings || {};
+  const targetKey = resolveRoleKey(company, role);
+  const meta = targetKey ? settings[targetKey] : null;
+  if (!meta) return res.status(404).json({ error: "Role not found" });
+  if (meta.system || meta.canDelete === false)
+    return res.status(400).json({ error: "Cannot delete protected role" });
+
+  company.roles = company.roles.filter((r) => r !== targetKey);
+  delete settings[targetKey];
+
+  const removedCount = await Employee.updateMany(
+    {
+      company: company._id,
+      subRoles: targetKey,
+    },
+    { $pull: { subRoles: targetKey } }
+  );
+  if (removedCount.modifiedCount > 0) {
+    console.log(
+      `[companies] role ${role} removed from ${removedCount.modifiedCount} employees`
+    );
+  }
+
+  company.markModified("roles");
+  company.markModified("roleSettings");
+  await company.save();
+
+  sendSuccess(res, "Role deleted", { roles: mapRolesForResponse(company) });
 });
 
 // Admin: create employee in their company
@@ -1191,25 +1203,18 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     joiningDate,
     aadharNumber,
     panNumber,
+    attendanceStartDate,
+    uan,
   } = req.body;
   if (!name || !email || !password || !role || !employeeId)
     return res.status(400).json({ error: "Missing fields" });
-  if (!isValidEmail(email))
-    return res.status(400).json({ error: "Invalid email" });
-  if (!isValidPassword(password))
-    return res
-      .status(400)
-      .json({ error: "Password must be more than 5 characters" });
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Invalid email" });
+  if (!isValidPassword(password)) return res.status(400).json({ error: "Password must be more than 5 characters" });
   if (phone !== undefined && phone !== null && String(phone).trim() !== "") {
-    if (!isValidPhone(phone))
-      return res.status(400).json({ error: "Phone must be exactly 10 digits" });
+    if (!isValidPhone(phone)) return res.status(400).json({ error: "Phone must be exactly 10 digits" });
   }
   let personalEmailNormalized;
-  if (
-    personalEmail !== undefined &&
-    personalEmail !== null &&
-    String(personalEmail).trim() !== ""
-  ) {
+  if (personalEmail !== undefined && personalEmail !== null && String(personalEmail).trim() !== "") {
     personalEmailNormalized = String(personalEmail).trim();
     if (!isValidEmail(personalEmailNormalized)) {
       return res.status(400).json({ error: "Invalid personal email" });
@@ -1226,17 +1231,29 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     return res.status(400).json({ error: "Invalid blood group" });
   }
   let parsedJoiningDate;
-  if (
-    joiningDate !== undefined &&
-    joiningDate !== null &&
-    String(joiningDate).trim() !== ""
-  ) {
-    const jd = new Date(joiningDate);
-    if (Number.isNaN(jd.getTime())) {
+  if (joiningDate !== undefined && joiningDate !== null && String(joiningDate).trim() !== "") {
+     const jd = parseDateOnly(joiningDate);
+    if (!jd) {
       return res.status(400).json({ error: "Invalid joining date" });
     }
     parsedJoiningDate = jd;
   }
+  let parsedAttendanceStart;
+  if (
+    attendanceStartDate !== undefined &&
+    attendanceStartDate !== null &&
+    String(attendanceStartDate).trim() !== ""
+  ) {
+    const asd = parseDateOnly(attendanceStartDate);
+    if (!asd) {
+      return res.status(400).json({ error: "Invalid attendance start date" });
+    }
+    parsedAttendanceStart = asd;
+  }
+  const normalizedAttendanceStart =
+    parsedJoiningDate && parsedAttendanceStart && parsedAttendanceStart < parsedJoiningDate
+      ? parsedJoiningDate
+      : parsedAttendanceStart || parsedJoiningDate || undefined;
   let normalizedAadhaar;
   if (aadharNumber !== undefined && aadharNumber !== null) {
     const rawAadhaar = String(aadharNumber).trim();
@@ -1262,6 +1279,15 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
       normalizedPan = undefined;
     }
   }
+  let normalizedUan;
+  if (uan !== undefined && uan !== null) {
+    const rawUan = String(uan).trim();
+    const digits = rawUan.replace(/\D/g, "");
+    if (rawUan && digits.length !== 12) {
+      return res.status(400).json({ error: "UAN must be 12 digits" });
+    }
+    normalizedUan = digits || undefined;
+  }
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
 
@@ -1273,23 +1299,36 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
   if (existing)
     return res.status(400).json({ error: "Employee already exists" });
   const passwordHash = await bcrypt.hash(password, 10);
-  const documents = (req.files || []).map((f) => f.filename);
-  const reportingInput =
-    req.body.reportingPersons !== undefined
-      ? req.body.reportingPersons
-      : reportingPerson;
+  const documents = (req.files || [])
+    .map((f) => getStoredFileId(f))
+    .filter(Boolean);
+  const reportingIdStrings = normalizeReportingIdStrings(req.body);
+  const reportingIds = filterValidObjectIds(reportingIdStrings);
+  if (reportingIdStrings.length && reportingIds === null)
+    return res.status(400).json({ error: "Invalid reporting person" });
+
   let reportingDocs = [];
-  try {
-    reportingDocs = await resolveReportingEmployees(
-      company._id,
-      reportingInput
-    );
-  } catch (err) {
-    return res
-      .status(err?.statusCode || err?.status || 400)
-      .json({ error: err?.message || "Reporting person not found" });
+  if (reportingIds && reportingIds.length) {
+    const docs = await Employee.find({
+      _id: { $in: reportingIds },
+      company: company._id,
+    })
+      .select("name")
+      .lean();
+    if (docs.length !== reportingIds.length)
+      return res.status(400).json({ error: "Reporting person not found" });
+    const docMap = new Map(docs.map((d) => [String(d._id), d]));
+    reportingDocs = reportingIds
+      .map((id) => docMap.get(id))
+      .filter(Boolean);
   }
-  const reportingIds = reportingDocs.map((doc) => doc._id);
+  const reportingObjectIds = reportingDocs.map((d) => d._id);
+
+  const reportingResponse = reportingDocs.map((doc) => ({
+    id: doc._id,
+    name: doc.name,
+  }));
+
   const leaveBalances = {
     casual: company.leavePolicy?.casual || 0,
     paid: company.leavePolicy?.paid || 0,
@@ -1309,34 +1348,37 @@ router.post("/employees", auth, upload.array("documents"), async (req, res) => {
     bloodGroup: normalizedBloodGroup,
     dob: dob ? new Date(dob) : undefined,
     joiningDate: parsedJoiningDate,
+    attendanceStartDate: normalizedAttendanceStart,
     employeeId,
     ctc: Number.isFinite(Number(ctc)) ? Number(ctc) : 0,
     documents,
-    reportingPerson: reportingIds[0] || undefined,
-    reportingPersons: reportingIds,
+    reportingPerson: reportingObjectIds[0] || undefined,
+    reportingPersons: reportingObjectIds,
     leaveBalances,
     aadharNumber: normalizedAadhaar,
     panNumber: normalizedPan,
+    uan: normalizedUan,
     employmentStatus: "PROBATION",
     probationSince: parsedJoiningDate || new Date(),
   });
-  try {
-    employee.decryptFieldsSync();
-  } catch (_) {}
-  res.json({
+  try { employee.decryptFieldsSync(); } catch (_) {}
+  sendSuccess(res, "Employee created", {
     employee: {
       id: employee._id,
       name: employee.name,
       email: employee.email,
-      personalEmail: employee.personalEmail || "",
-      bloodGroup: employee.bloodGroup || "",
+      personalEmail: employee.personalEmail || '',
+      bloodGroup: employee.bloodGroup || '',
       joiningDate: employee.joiningDate,
+      attendanceStartDate: employee.attendanceStartDate || employee.joiningDate || null,
       subRoles: employee.subRoles,
-      aadharNumber: employee.aadharNumber || "",
-      panNumber: employee.panNumber || "",
-      employmentStatus: employee.employmentStatus || "PROBATION",
+      aadharNumber: employee.aadharNumber || '',
+      panNumber: employee.panNumber || '',
+      uan: employee.uan || '',
+      reportingPersons: reportingResponse,
+      reportingPerson: reportingResponse[0] || null,
+      employmentStatus: employee.employmentStatus || 'PROBATION',
       probationSince: employee.probationSince || null,
-      reportingPersons: formatReportingResponse(reportingDocs),
     },
   });
 });
@@ -1355,12 +1397,19 @@ router.get("/leave-policy", auth, async (req, res) => {
       totalAnnual: lp.totalAnnual || 0,
       ratePerMonth: lp.ratePerMonth || 0,
       probationRatePerMonth: lp.probationRatePerMonth || 0,
-      accrualStrategy: lp.accrualStrategy || "ACCRUAL",
+      accrualStrategy: lp.accrualStrategy || 'ACCRUAL',
       applicableFrom: formatApplicableMonth(lp.applicableFrom),
       typeCaps: {
         paid: lp.typeCaps?.paid || 0,
         casual: lp.typeCaps?.casual || 0,
         sick: lp.typeCaps?.sick || 0,
+      },
+      sandwich: {
+        enabled: !!lp.sandwich?.enabled,
+        minDays: normalizeSandwichMinDays(
+          lp.sandwich?.minDays,
+          DEFAULT_SANDWICH_MIN_DAYS
+        ),
       },
     },
   });
@@ -1374,12 +1423,20 @@ router.get("/work-hours", auth, async (req, res) => {
     "workHours"
   );
   if (!company) return res.status(400).json({ error: "Company not found" });
-  const wh = company.workHours || { start: "", end: "", graceMinutes: 0 };
+  const wh = company.workHours || {};
+  const minFull = Number.isFinite(wh.minFullDayHours)
+    ? wh.minFullDayHours
+    : 6;
+  const minHalf = Number.isFinite(wh.minHalfDayHours)
+    ? wh.minHalfDayHours
+    : 3;
   res.json({
     workHours: {
       start: wh.start || "",
       end: wh.end || "",
-      graceMinutes: wh.graceMinutes || 0,
+      graceMinutes: Number.isFinite(wh.graceMinutes) ? wh.graceMinutes : 0,
+      minFullDayHours: minFull,
+      minHalfDayHours: Math.min(minHalf, minFull),
     },
   });
 });
@@ -1388,35 +1445,41 @@ router.get("/work-hours", auth, async (req, res) => {
 router.put("/work-hours", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { start, end, graceMinutes } = req.body || {};
+  const { start, end, graceMinutes, minFullDayHours, minHalfDayHours } = req.body || {};
   // Basic validation: HH:mm format for times, non-negative grace
   function isHHmm(s) {
-    return typeof s === "string" && /^\d{2}:\d{2}$/.test(s);
+    return typeof s === 'string' && /^\d{2}:\d{2}$/.test(s);
   }
   if (!isHHmm(start) || !isHHmm(end))
     return res.status(400).json({ error: "Invalid time format. Use HH:mm" });
   const [sh, sm] = start.split(":").map((x) => parseInt(x, 10));
   const [eh, em] = end.split(":").map((x) => parseInt(x, 10));
-  if (
-    sh < 0 ||
-    sh > 23 ||
-    sm < 0 ||
-    sm > 59 ||
-    eh < 0 ||
-    eh > 23 ||
-    em < 0 ||
-    em > 59
-  )
+  if (sh < 0 || sh > 23 || sm < 0 || sm > 59 || eh < 0 || eh > 23 || em < 0 || em > 59)
     return res.status(400).json({ error: "Invalid time values" });
   const gm = parseInt(graceMinutes, 10);
   if (!Number.isFinite(gm) || gm < 0)
     return res.status(400).json({ error: "Invalid grace minutes" });
 
+  const fullHours = parseFloat(minFullDayHours);
+  const halfHours = parseFloat(minHalfDayHours);
+  if (!Number.isFinite(fullHours) || fullHours <= 0)
+    return res.status(400).json({ error: "Invalid minimum hours for full day" });
+  if (!Number.isFinite(halfHours) || halfHours < 0)
+    return res.status(400).json({ error: "Invalid minimum hours for half day" });
+  if (halfHours > fullHours)
+    return res.status(400).json({ error: "Half-day hours cannot exceed full-day hours" });
+
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
-  company.workHours = { start, end, graceMinutes: gm };
+  company.workHours = {
+    start,
+    end,
+    graceMinutes: gm,
+    minFullDayHours: fullHours,
+    minHalfDayHours: halfHours,
+  };
   await company.save();
-  res.json({ workHours: company.workHours });
+  sendSuccess(res, "Work hours updated", { workHours: company.workHours });
 });
 
 // Admin: update leave policy for their company
@@ -1430,41 +1493,41 @@ router.put("/leave-policy", auth, async (req, res) => {
     accrualStrategy,
     typeCaps,
     applicableFrom,
+    sandwich,
   } = req.body || {};
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   const total = Number(totalAnnual) || 0;
   const rpm = Number(ratePerMonth) || 0;
   const probationRpm = Number(probationRatePerMonth) || 0;
-  const strategy =
-    typeof accrualStrategy === "string"
-      ? accrualStrategy.toUpperCase()
-      : "ACCRUAL";
+  const strategy = typeof accrualStrategy === 'string'
+    ? accrualStrategy.toUpperCase()
+    : 'ACCRUAL';
   const caps = {
     paid: Number(typeCaps?.paid) || 0,
     casual: Number(typeCaps?.casual) || 0,
     sick: Number(typeCaps?.sick) || 0,
   };
-  if (!["ACCRUAL", "LUMP_SUM"].includes(strategy))
-    return res.status(400).json({ error: "Invalid accrual strategy" });
+  const sandwichEnabled = !!(
+    sandwich && (sandwich.enabled === true || sandwich.enabled === "true")
+  );
+  const sandwichMinDays = normalizeSandwichMinDays(
+    sandwich?.minDays,
+    DEFAULT_SANDWICH_MIN_DAYS
+  );
+  if (!['ACCRUAL', 'LUMP_SUM'].includes(strategy))
+    return res.status(400).json({ error: 'Invalid accrual strategy' });
   if (total < 0 || rpm < 0 || probationRpm < 0)
     return res.status(400).json({ error: "Invalid totals" });
   const sumCaps = caps.paid + caps.casual + caps.sick;
-  if (sumCaps > total)
-    return res
-      .status(400)
-      .json({ error: "Type caps cannot exceed total annual leaves" });
+  if (sumCaps > total) return res.status(400).json({ error: "Type caps cannot exceed total annual leaves" });
   const previousApplicable = company.leavePolicy?.applicableFrom || undefined;
   let applicableFromDate = previousApplicable;
   if (applicableFrom === null) {
     applicableFromDate = undefined;
-  } else if (typeof applicableFrom !== "undefined") {
+  } else if (typeof applicableFrom !== 'undefined') {
     const parsed = parseApplicableMonth(applicableFrom);
-    if (
-      !parsed &&
-      typeof applicableFrom === "string" &&
-      applicableFrom.trim()
-    ) {
+    if (!parsed && typeof applicableFrom === 'string' && applicableFrom.trim()) {
       return res.status(400).json({ error: "Invalid leave applicable date" });
     }
     applicableFromDate = parsed ?? previousApplicable;
@@ -1476,11 +1539,15 @@ router.put("/leave-policy", auth, async (req, res) => {
     accrualStrategy: strategy,
     applicableFrom: applicableFromDate,
     typeCaps: caps,
+    sandwich: {
+      enabled: sandwichEnabled,
+      minDays: sandwichMinDays,
+    },
   };
   await company.save();
   const updated = company.leavePolicy || {};
 
-  (async () => {
+  ;(async () => {
     try {
       const employees = await Employee.find({ company: company._id }).select(
         "company totalLeaveAvailable leaveUsage leaveAccrual joiningDate createdAt employmentStatus probationSince"
@@ -1490,44 +1557,49 @@ router.put("/leave-policy", auth, async (req, res) => {
           await accrueTotalIfNeeded(emp, company, new Date());
           await syncLeaveBalances(emp);
         } catch (err) {
-          console.warn(
-            "[companies/leave-policy] failed to sync employee",
-            String(emp._id),
-            err?.message || err
-          );
+          console.warn('[companies/leave-policy] failed to sync employee', String(emp._id), err?.message || err);
         }
       }
     } catch (err) {
-      console.warn(
-        "[companies/leave-policy] failed to refresh employees",
-        err?.message || err
-      );
+      console.warn('[companies/leave-policy] failed to refresh employees', err?.message || err);
     }
   })();
 
-  res.json({
+  sendSuccess(res, "Leave policy updated", {
     leavePolicy: {
       totalAnnual: updated.totalAnnual || 0,
       ratePerMonth: updated.ratePerMonth || 0,
       probationRatePerMonth: updated.probationRatePerMonth || 0,
-      accrualStrategy: updated.accrualStrategy || "ACCRUAL",
+      accrualStrategy: updated.accrualStrategy || 'ACCRUAL',
       applicableFrom: formatApplicableMonth(updated.applicableFrom),
       typeCaps: {
         paid: updated.typeCaps?.paid || 0,
         casual: updated.typeCaps?.casual || 0,
         sick: updated.typeCaps?.sick || 0,
       },
+      sandwich: {
+        enabled: !!updated.sandwich?.enabled,
+        minDays: normalizeSandwichMinDays(
+          updated.sandwich?.minDays,
+          DEFAULT_SANDWICH_MIN_DAYS
+        ),
+      },
     },
   });
 });
 
-// Admin: list bank holidays
+// List bank holidays (visible to all authenticated employees of the company)
 router.get("/bank-holidays", auth, async (req, res) => {
-  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
-    return res.status(403).json({ error: "Forbidden" });
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "bankHolidays"
-  );
+  let company = null;
+  if (["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole)) {
+    company = await Company.findOne({ admin: req.employee.id }).select(
+      "bankHolidays"
+    );
+  } else if (req.employee.company) {
+    company = await Company.findById(req.employee.company).select(
+      "bankHolidays"
+    );
+  }
   if (!company) return res.status(400).json({ error: "Company not found" });
   res.json({ bankHolidays: company.bankHolidays || [] });
 });
@@ -1538,32 +1610,108 @@ router.post("/bank-holidays", auth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   const { date, name } = req.body;
   if (!date) return res.status(400).json({ error: "Missing date" });
+  const normalizedDate = new Date(date);
+  if (Number.isNaN(normalizedDate.getTime()))
+    return res.status(400).json({ error: "Invalid date" });
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   const existing = company.bankHolidays?.some(
     (h) =>
       h.date.toISOString().slice(0, 10) ===
-      new Date(date).toISOString().slice(0, 10)
+      normalizedDate.toISOString().slice(0, 10)
   );
   if (!existing) {
-    company.bankHolidays.push({ date, name });
+    company.bankHolidays.push({ date: normalizedDate, name });
     await company.save();
   }
-  res.json({ bankHolidays: company.bankHolidays });
+  sendSuccess(res, "Bank holiday added", {
+    bankHolidays: company.bankHolidays,
+  });
+});
+
+// Admin: update a bank holiday
+router.put("/bank-holidays/:id", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { id } = req.params;
+  const { date, name } = req.body;
+  if (!date) return res.status(400).json({ error: "Missing date" });
+
+  const normalizedDate = new Date(date);
+  if (Number.isNaN(normalizedDate.getTime()))
+    return res.status(400).json({ error: "Invalid date" });
+
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const holiday = company.bankHolidays.id(id);
+  if (!holiday) return res.status(404).json({ error: "Holiday not found" });
+
+  const duplicate = company.bankHolidays.some(
+    (h) =>
+      h._id.toString() !== id &&
+      h.date.toISOString().slice(0, 10) ===
+        normalizedDate.toISOString().slice(0, 10)
+  );
+  if (duplicate)
+    return res
+      .status(409)
+      .json({ error: "A holiday already exists for this date" });
+
+  holiday.date = normalizedDate;
+  holiday.name = name;
+
+  await company.save();
+  sendSuccess(res, "Bank holiday updated", {
+    bankHolidays: company.bankHolidays,
+  });
+});
+
+// Admin: delete a bank holiday
+router.delete("/bank-holidays/:id", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { id } = req.params;
+
+  const company = await Company.findOne({ admin: req.employee.id });
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const holiday = company.bankHolidays.id(id);
+  if (!holiday) return res.status(404).json({ error: "Holiday not found" });
+
+  holiday.deleteOne();
+  await company.save();
+
+  sendSuccess(res, "Bank holiday deleted", {
+    bankHolidays: company.bankHolidays,
+  });
 });
 
 // Admin: list company day overrides for a month (or all upcoming)
 // GET /companies/day-overrides?month=yyyy-mm
+async function findCompanyForEmployee(emp) {
+  if (!emp) return null;
+  const adminMatch = await Company.findOne({ admin: emp.id || emp._id }).select("_id");
+  if (adminMatch) return adminMatch;
+  if (emp.company) return Company.findById(emp.company).select("_id");
+  return null;
+}
+
 router.get("/day-overrides", auth, async (req, res) => {
-  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+  const canEdit =
+    ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+  if (!canEdit)
     return res.status(403).json({ error: "Forbidden" });
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "_id"
-  );
+  const company = await findCompanyForEmployee(req.employee);
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const { month } = req.query || {};
-  let filter = { company: company._id };
+  let filter = {
+    company: company._id,
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
+  };
   if (month) {
     const start = startOfDay(new Date(month + "-01"));
     const end = new Date(start);
@@ -1571,83 +1719,420 @@ router.get("/day-overrides", auth, async (req, res) => {
     filter = { ...filter, date: { $gte: start, $lt: end } };
   }
 
-  const overrides = await CompanyDayOverride.find(filter)
-    .sort({ date: 1 })
-    .lean();
-  res.json({
-    overrides: overrides.map((o) => ({
-      date: new Date(o.date).toISOString().slice(0, 10),
-      type: o.type,
-      note: o.note || "",
-    })),
-  });
+  const overrides = await CompanyDayOverride.find(filter).sort({ date: 1 }).lean();
+  res.json({ overrides: overrides.map(o => ({
+    id: String(o._id),
+    date: new Date(o.date).toISOString().slice(0,10),
+    type: o.type,
+    note: o.note || "",
+  })) });
 });
 
 // Admin: upsert a company day override
 // Body: { date: 'yyyy-mm-dd', type: 'WORKING'|'HOLIDAY'|'HALF_DAY', note? }
 router.post("/day-overrides", auth, async (req, res) => {
-  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+  const canEdit =
+    ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+  if (!canEdit)
     return res.status(403).json({ error: "Forbidden" });
   const { date, type, note } = req.body || {};
-  if (!date || !type)
-    return res.status(400).json({ error: "Missing date or type" });
-  if (!["WORKING", "HOLIDAY", "HALF_DAY"].includes(type))
+  if (!date || !type) return res.status(400).json({ error: "Missing date or type" });
+  if (!['WORKING','HOLIDAY','HALF_DAY'].includes(type))
     return res.status(400).json({ error: "Invalid type" });
 
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "_id"
-  );
+  const company = await findCompanyForEmployee(req.employee);
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const day = startOfDay(new Date(date));
-  if (isNaN(day.getTime()))
-    return res.status(400).json({ error: "Invalid date" });
+  if (isNaN(day.getTime())) return res.status(400).json({ error: "Invalid date" });
 
   await CompanyDayOverride.findOneAndUpdate(
     { company: company._id, date: day },
     {
       $setOnInsert: { company: company._id, date: day },
-      $set: { type, note: note || "", updatedBy: req.employee.id },
+      $set: {
+        type,
+        note: note || "",
+        updatedBy: req.employee.id,
+        isDeleted: false,
+        isActive: true,
+      },
     },
     { upsert: true }
   );
 
-  const month = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(
-    2,
-    "0"
-  )}`;
+  const month = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}`;
   const start = startOfDay(new Date(month + "-01"));
-  const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
+  const end = new Date(start); end.setMonth(end.getMonth()+1);
   const overrides = await CompanyDayOverride.find({
     company: company._id,
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
     date: { $gte: start, $lt: end },
   })
     .sort({ date: 1 })
     .lean();
-  res.json({
-    overrides: overrides.map((o) => ({
-      date: new Date(o.date).toISOString().slice(0, 10),
-      type: o.type,
-      note: o.note || "",
-    })),
+  sendSuccess(res, "Override saved", {
+    overrides: overrides.map(o => ({ date: new Date(o.date).toISOString().slice(0,10), type: o.type, note: o.note || "" })),
   });
 });
 
 // Admin: delete a company day override by date
 router.delete("/day-overrides/:date", auth, async (req, res) => {
+  const canEdit =
+    ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+    (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+  if (!canEdit)
+    return res.status(403).json({ error: "Forbidden" });
+  const { date: dateOrId } = req.params;
+  const company = await findCompanyForEmployee(req.employee);
+  if (!company) return res.status(400).json({ error: "Company not found" });
+  let deleted = null;
+
+  // Allow deletion by id if provided
+  if (mongoose.Types.ObjectId.isValid(dateOrId)) {
+    deleted = await CompanyDayOverride.findOneAndUpdate(
+      {
+        _id: dateOrId,
+        company: company._id,
+        isDeleted: { $ne: true },
+      },
+      {
+        $set: {
+          isDeleted: true,
+          isActive: false,
+          updatedBy: req.employee.id,
+        },
+      }
+    );
+  }
+
+  if (!deleted) {
+    const day = startOfDay(parseDateOnly(dateOrId));
+    if (isNaN(day.getTime()))
+      return res.status(400).json({ error: "Invalid date" });
+    const next = new Date(day);
+    next.setDate(next.getDate() + 1);
+    deleted = await CompanyDayOverride.findOneAndUpdate(
+      {
+        company: company._id,
+        date: { $gte: day, $lt: next },
+        isDeleted: { $ne: true },
+      },
+      {
+        $set: {
+          isDeleted: true,
+          isActive: false,
+          updatedBy: req.employee.id,
+        },
+      }
+    );
+  }
+
+  if (!deleted) return res.status(404).json({ error: "Override not found" });
+  sendSuccess(res, "Override deleted", { ok: true });
+});
+
+// Helpers for inventory
+async function loadInventoryItems(companyId, filter = {}) {
+  return InventoryItem.find({
+    company: companyId,
+    isDeleted: { $ne: true },
+    ...filter,
+  })
+    .populate("assignedTo", "name email primaryRole")
+    .sort({ createdAt: -1 })
+    .lean();
+}
+
+async function ensureInventoryCategory(companyId, name) {
+  const normalized = normalizeCategoryName(name);
+  if (!normalized) return;
+  await Company.updateOne(
+    { _id: companyId },
+    {
+      $addToSet: {
+        inventoryCategories: normalized,
+      },
+    }
+  );
+}
+
+async function assertEmployeeInCompany(companyId, employeeId) {
+  if (!mongoose.Types.ObjectId.isValid(employeeId)) return null;
+  return Employee.findOne({ _id: employeeId, company: companyId }).select(
+    "_id name email"
+  );
+}
+
+// Admin: list inventory items (optional filter by employee)
+router.get("/inventory", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { date } = req.params;
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id inventoryCategories");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const { employeeId, status, category } = req.query || {};
+  const filter = {};
+  if (employeeId) {
+    const emp = await assertEmployeeInCompany(company._id, employeeId);
+    if (!emp) return res.status(404).json({ error: "Employee not found" });
+    filter.assignedTo = emp._id;
+  }
+  if (status) {
+    const normalized = normalizeInventoryStatus(status, null);
+    if (normalized) filter.status = normalized;
+  }
+  if (category && typeof category === "string") {
+    const normalizedCategory = normalizeCategoryName(category);
+    if (normalizedCategory) filter.category = normalizedCategory;
+  }
+
+  const items = await loadInventoryItems(company._id, filter);
+  res.json({ items, categories: company.inventoryCategories || [] });
+});
+
+// Admin: add inventory item
+router.post("/inventory", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { name, category, cost, status, assignedTo, purchaseDate, notes } =
+    req.body || {};
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: "Item name is required" });
+  }
+
+  const normalizedCategory = normalizeCategoryName(category);
+  let assigned = null;
+  if (assignedTo) {
+    assigned = await assertEmployeeInCompany(company._id, assignedTo);
+    if (!assigned) return res.status(404).json({ error: "Employee not found" });
+  }
+
+  const normalizedStatus = assigned
+    ? "ASSIGNED"
+    : normalizeInventoryStatus(status, "AVAILABLE");
+  const costValue =
+    cost === undefined || cost === null || cost === ""
+      ? 0
+      : Number(cost);
+  if (!Number.isFinite(costValue) || costValue < 0) {
+    return res.status(400).json({ error: "Cost must be a non-negative number" });
+  }
+  const purchase = normalizeDateOnly(purchaseDate);
+
+  await InventoryItem.create({
+    company: company._id,
+    name: String(name).trim(),
+    category: normalizedCategory,
+    cost: costValue,
+    status: normalizedStatus,
+    assignedTo: assigned ? assigned._id : null,
+    purchaseDate: purchase,
+    notes: notes ? String(notes) : "",
+    isDeleted: false,
+  });
+
+  if (normalizedCategory) {
+    await ensureInventoryCategory(company._id, normalizedCategory);
+  }
+
+  const items = await loadInventoryItems(company._id);
+  const companyRefreshed = await Company.findById(company._id).select(
+    "inventoryCategories"
+  );
+  sendSuccess(res, "Inventory item added", {
+    items,
+    categories: companyRefreshed?.inventoryCategories || [],
+  });
+});
+
+// Admin: update inventory item
+router.put("/inventory/:id", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { id } = req.params;
+  const {
+    name,
+    category,
+    cost,
+    status,
+    assignedTo,
+    purchaseDate,
+    notes,
+  } = req.body || {};
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const item = await InventoryItem.findOne({
+    _id: id,
+    company: company._id,
+    isDeleted: { $ne: true },
+  });
+  if (!item) return res.status(404).json({ error: "Item not found" });
+
+  if (name !== undefined) item.name = String(name || "").trim() || item.name;
+  if (category !== undefined) {
+    const normalizedCategory = normalizeCategoryName(category);
+    item.category = normalizedCategory;
+    if (normalizedCategory) {
+      await ensureInventoryCategory(company._id, normalizedCategory);
+    }
+  }
+  if (notes !== undefined) item.notes = notes ? String(notes) : "";
+  if (purchaseDate !== undefined) {
+    const purchase = normalizeDateOnly(purchaseDate);
+    item.purchaseDate = purchase;
+  }
+  if (cost !== undefined) {
+    const costValue =
+      cost === "" || cost === null || cost === undefined ? 0 : Number(cost);
+    if (!Number.isFinite(costValue) || costValue < 0) {
+      return res
+        .status(400)
+        .json({ error: "Cost must be a non-negative number" });
+    }
+    item.cost = costValue;
+  }
+
+  if (assignedTo !== undefined) {
+    if (assignedTo === null || assignedTo === "") {
+      item.assignedTo = null;
+    } else {
+      const assignee = await assertEmployeeInCompany(company._id, assignedTo);
+      if (!assignee)
+        return res.status(404).json({ error: "Employee not found" });
+      item.assignedTo = assignee._id;
+    }
+  }
+
+  if (status !== undefined) {
+    item.status = normalizeInventoryStatus(
+      status,
+      item.assignedTo ? "ASSIGNED" : item.status
+    );
+  } else if (assignedTo !== undefined && assignedTo !== null && assignedTo !== "") {
+    item.status = "ASSIGNED";
+  }
+
+  await item.save();
+  const items = await loadInventoryItems(company._id);
+  const companyRefreshed = await Company.findById(company._id).select(
+    "inventoryCategories"
+  );
+  sendSuccess(res, "Inventory item updated", {
+    items,
+    categories: companyRefreshed?.inventoryCategories || [],
+  });
+});
+
+// Admin: assign/unassign inventory item
+router.put("/inventory/:id/assign", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { id } = req.params;
+  const { employeeId } = req.body || {};
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const item = await InventoryItem.findOne({
+    _id: id,
+    company: company._id,
+    isDeleted: { $ne: true },
+  });
+  if (!item) return res.status(404).json({ error: "Item not found" });
+
+  if (employeeId) {
+    const assignee = await assertEmployeeInCompany(company._id, employeeId);
+    if (!assignee) return res.status(404).json({ error: "Employee not found" });
+    item.assignedTo = assignee._id;
+    item.status = "ASSIGNED";
+  } else {
+    item.assignedTo = null;
+    item.status = normalizeInventoryStatus(item.status, "AVAILABLE");
+    if (item.status === "ASSIGNED") item.status = "AVAILABLE";
+  }
+
+  await item.save();
+  const items = await loadInventoryItems(company._id);
+  const companyRefreshed = await Company.findById(company._id).select(
+    "inventoryCategories"
+  );
+  sendSuccess(res, "Assignment updated", {
+    items,
+    categories: companyRefreshed?.inventoryCategories || [],
+  });
+});
+
+// Admin: delete inventory item (soft delete)
+router.delete("/inventory/:id", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { id } = req.params;
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const item = await InventoryItem.findOne({
+    _id: id,
+    company: company._id,
+    isDeleted: { $ne: true },
+  });
+  if (!item) return res.status(404).json({ error: "Item not found" });
+
+  item.isDeleted = true;
+  item.assignedTo = null;
+  await item.save();
+
+  const items = await loadInventoryItems(company._id);
+  const companyRefreshed = await Company.findById(company._id).select(
+    "inventoryCategories"
+  );
+  sendSuccess(res, "Inventory item deleted", {
+    items,
+    categories: companyRefreshed?.inventoryCategories || [],
+  });
+});
+
+// Admin: list inventory categories
+router.get("/inventory-categories", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
   const company = await Company.findOne({ admin: req.employee.id }).select(
-    "_id"
+    "_id inventoryCategories"
   );
   if (!company) return res.status(400).json({ error: "Company not found" });
-  const day = startOfDay(new Date(date));
-  if (isNaN(day.getTime()))
-    return res.status(400).json({ error: "Invalid date" });
-  await CompanyDayOverride.deleteOne({ company: company._id, date: day });
-  res.json({ ok: true });
+  res.json({ categories: company.inventoryCategories || [] });
+});
+
+// Admin: add inventory category
+router.post("/inventory-categories", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { name } = req.body || {};
+  const normalized = normalizeCategoryName(name);
+  if (!normalized) return res.status(400).json({ error: "Category name required" });
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "_id inventoryCategories"
+  );
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const exists = (company.inventoryCategories || []).some(
+    (c) => c.trim().toLowerCase() === normalized.toLowerCase()
+  );
+  if (!exists) {
+    company.inventoryCategories = [
+      ...(company.inventoryCategories || []),
+      normalized,
+    ];
+    await company.save();
+  }
+
+  res.set("X-Success-Message", "Category added");
+  res.json({ categories: company.inventoryCategories || [] });
 });
 
 // Admin: reset leave balances for all employees in the company
@@ -1656,9 +2141,7 @@ router.post("/leave-balances/reset", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
   const { reaccrue } = req.body || {};
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "_id leavePolicy"
-  );
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
   if (!company) return res.status(400).json({ error: "Company not found" });
   const emps = await Employee.find({ company: company._id });
   let count = 0;
@@ -1674,50 +2157,64 @@ router.post("/leave-balances/reset", auth, async (req, res) => {
       }
       count++;
     } catch (err) {
-      console.warn(
-        "[leave-reset] failed for employee",
-        String(e._id),
-        err?.message || err
-      );
+      console.warn('[leave-reset] failed for employee', String(e._id), err?.message || err);
     }
   }
-  res.json({ ok: true, count });
+  sendSuccess(res, "Leave balances reset", { ok: true, count });
 });
 
 // Admin: update reporting person of an employee
 router.put("/employees/:id/reporting", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
-  const { reportingPersons, reportingPerson } = req.body;
+
+  const reportingIdStrings = normalizeReportingIdStrings(req.body);
+  const reportingIds = filterValidObjectIds(reportingIdStrings);
+  if (reportingIdStrings.length && reportingIds === null)
+    return res.status(400).json({ error: "Invalid reporting person" });
+
   const company = await Company.findOne({ admin: req.employee.id });
   if (!company) return res.status(400).json({ error: "Company not found" });
   const employee = await Employee.findById(req.params.id);
   if (!employee || !employee.company.equals(company._id))
     return res.status(404).json({ error: "Employee not found" });
 
-  const reportingInput =
-    reportingPersons !== undefined ? reportingPersons : reportingPerson;
-  let reportingDocs = [];
-  try {
-    reportingDocs = await resolveReportingEmployees(
-      company._id,
-      reportingInput
-    );
-  } catch (err) {
+  const selfId = String(employee._id);
+  if (reportingIds && reportingIds.some((id) => id === selfId))
     return res
-      .status(err?.statusCode || err?.status || 400)
-      .json({ error: err?.message || "Reporting person not found" });
+      .status(400)
+      .json({ error: "Employee cannot report to themselves" });
+
+  let reportingDocs = [];
+  if (reportingIds && reportingIds.length) {
+    const docs = await Employee.find({
+      _id: { $in: reportingIds },
+      company: company._id,
+    })
+      .select("name")
+      .lean();
+    if (docs.length !== reportingIds.length)
+      return res.status(400).json({ error: "Reporting person not found" });
+    const docMap = new Map(docs.map((d) => [String(d._id), d]));
+    reportingDocs = reportingIds.map((id) => docMap.get(id)).filter(Boolean);
   }
-  const reportingIds = reportingDocs.map((doc) => doc._id);
-  employee.reportingPersons = reportingIds;
-  employee.reportingPerson = reportingIds[0] || undefined;
+
+  const reportingObjectIds = reportingDocs.map((doc) => doc._id);
+  employee.reportingPersons = reportingObjectIds;
+  employee.reportingPerson = reportingObjectIds[0] || undefined;
 
   await employee.save();
-  res.json({
+
+  const responseReporting = reportingDocs.map((doc) => ({
+    id: doc._id,
+    name: doc.name,
+  }));
+
+  sendSuccess(res, "Reporting updated", {
     employee: {
       id: employee._id,
-      reportingPerson: employee.reportingPerson || null,
-      reportingPersons: formatReportingResponse(reportingDocs),
+      reportingPersons: responseReporting,
+      reportingPerson: responseReporting[0] || null,
     },
   });
 });
@@ -1740,7 +2237,7 @@ router.put("/employees/:id/role", auth, async (req, res) => {
 
   employee.subRoles = [role];
   await employee.save();
-  res.json({
+  sendSuccess(res, "Employee role updated", {
     employee: { id: employee._id, subRoles: employee.subRoles },
   });
 });
@@ -1755,6 +2252,7 @@ router.put("/employees/:id", auth, async (req, res) => {
     phone,
     dob,
     joiningDate,
+    attendanceStartDate,
     personalEmail,
     bloodGroup,
     ctc,
@@ -1762,7 +2260,14 @@ router.put("/employees/:id", auth, async (req, res) => {
     panNumber,
     bankDetails,
     email,
+    employeeId,
+    hasTds,
+    uan,
   } = req.body || {};
+  const employeeIdAlt =
+    (req.body && req.body.employeeID) ||
+    (req.body && req.body.employee_id) ||
+    undefined;
 
   // Only admins of the company can update within that company
   const company = await Company.findOne({ admin: req.employee.id });
@@ -1772,81 +2277,107 @@ router.put("/employees/:id", auth, async (req, res) => {
   if (!employee || !employee.company.equals(company._id))
     return res.status(404).json({ error: "Employee not found" });
 
+  // Normalize employeeId from any supported key
+  if (employeeId !== undefined || employeeIdAlt !== undefined) {
+    const rawId =
+      employeeId !== undefined ? employeeId : employeeIdAlt !== undefined ? employeeIdAlt : "";
+    const normalizedId = String(rawId || "").trim();
+    if (!normalizedId) {
+      employee.employeeId = undefined;
+    } else {
+      const existingId = await Employee.findOne({
+        employeeId: normalizedId,
+        _id: { $ne: employee._id },
+      })
+        .select("_id company")
+        .lean();
+      if (existingId) {
+        return res
+          .status(400)
+          .json({ error: "Employee ID already taken" });
+      }
+      employee.employeeId = normalizedId;
+    }
+  }
+
   if (email !== undefined) {
     const trimmed = String(email).trim();
-    if (!trimmed)
-      return res.status(400).json({ error: "Email cannot be empty" });
-    if (!isValidEmail(trimmed))
-      return res.status(400).json({ error: "Invalid email" });
+    if (!trimmed) return res.status(400).json({ error: 'Email cannot be empty' });
+    if (!isValidEmail(trimmed)) return res.status(400).json({ error: 'Invalid email' });
     const existingEmail = await Employee.findOne({ email: trimmed });
     if (existingEmail && !existingEmail._id.equals(employee._id))
-      return res.status(400).json({ error: "Email already taken" });
+      return res.status(400).json({ error: 'Email already taken' });
     employee.email = trimmed;
   }
 
   // Validate and assign fields
-  if (typeof address === "string") employee.address = address.trim();
+  if (typeof address === 'string') employee.address = address.trim();
   if (phone !== undefined) {
-    if (phone === null || String(phone).trim() === "") {
+    if (phone === null || String(phone).trim() === '') {
       employee.phone = undefined;
     } else {
-      if (!isValidPhone(phone))
-        return res
-          .status(400)
-          .json({ error: "Phone must be exactly 10 digits" });
+      if (!isValidPhone(phone)) return res.status(400).json({ error: 'Phone must be exactly 10 digits' });
       employee.phone = normalizePhone(phone);
     }
   }
   if (dob) {
     const d = new Date(dob);
-    if (isNaN(d.getTime()))
-      return res.status(400).json({ error: "Invalid DOB" });
+    if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid DOB' });
     employee.dob = d;
   }
   if (joiningDate !== undefined) {
-    if (joiningDate === null || String(joiningDate).trim() === "") {
+    if (joiningDate === null || String(joiningDate).trim() === '') {
       employee.joiningDate = undefined;
     } else {
-      const jd = new Date(joiningDate);
-      if (isNaN(jd.getTime()))
-        return res.status(400).json({ error: "Invalid joining date" });
+       const jd = parseDateOnly(joiningDate);
+      if (!jd) return res.status(400).json({ error: 'Invalid joining date' });
       employee.joiningDate = jd;
     }
   }
+  if (attendanceStartDate !== undefined) {
+    if (attendanceStartDate === null || String(attendanceStartDate).trim() === '') {
+      employee.attendanceStartDate = employee.joiningDate || undefined;
+    } else {
+      const asd = parseDateOnly(attendanceStartDate);
+      if (!asd) return res.status(400).json({ error: 'Invalid attendance start date' });
+      if (employee.joiningDate && asd < employee.joiningDate) {
+        employee.attendanceStartDate = employee.joiningDate;
+      } else {
+        employee.attendanceStartDate = asd;
+      }
+    }
+  }
   if (personalEmail !== undefined) {
-    if (personalEmail === null || String(personalEmail).trim() === "") {
+    if (personalEmail === null || String(personalEmail).trim() === '') {
       employee.personalEmail = undefined;
     } else {
       const trimmed = String(personalEmail).trim();
-      if (!isValidEmail(trimmed))
-        return res.status(400).json({ error: "Invalid personal email" });
+      if (!isValidEmail(trimmed)) return res.status(400).json({ error: 'Invalid personal email' });
       employee.personalEmail = trimmed;
     }
   }
   if (bloodGroup !== undefined) {
-    if (bloodGroup === null || String(bloodGroup).trim() === "") {
+    if (bloodGroup === null || String(bloodGroup).trim() === '') {
       employee.bloodGroup = undefined;
     } else {
       const normalized = normalizeBloodGroup(bloodGroup);
-      if (!normalized)
-        return res.status(400).json({ error: "Invalid blood group" });
+      if (!normalized) return res.status(400).json({ error: 'Invalid blood group' });
       employee.bloodGroup = normalized;
     }
   }
   if (ctc !== undefined) {
     const n = Number(ctc);
-    if (!Number.isFinite(n) || n < 0)
-      return res.status(400).json({ error: "Invalid CTC" });
+    if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'Invalid CTC' });
     employee.ctc = n;
   }
   if (aadharNumber !== undefined) {
     const rawAadhaar = String(aadharNumber).trim();
     const digits = normalizeAadhaar(rawAadhaar);
     if (rawAadhaar && !digits) {
-      return res.status(400).json({ error: "Invalid Aadhar number" });
+      return res.status(400).json({ error: 'Invalid Aadhar number' });
     }
     if (digits && !isValidAadhaar(digits)) {
-      return res.status(400).json({ error: "Invalid Aadhar number" });
+      return res.status(400).json({ error: 'Invalid Aadhar number' });
     }
     employee.aadharNumber = digits || undefined;
   }
@@ -1855,53 +2386,90 @@ router.put("/employees/:id", auth, async (req, res) => {
     if (rawPan) {
       const pan = normalizePan(rawPan);
       if (!isValidPan(pan)) {
-        return res.status(400).json({ error: "Invalid PAN number" });
+        return res.status(400).json({ error: 'Invalid PAN number' });
       }
       employee.panNumber = pan;
     } else {
       employee.panNumber = undefined;
     }
   }
-  if (bankDetails && typeof bankDetails === "object") {
+  if (uan !== undefined) {
+    const rawUan = String(uan).trim();
+    const digits = rawUan.replace(/\D/g, "");
+    if (rawUan && digits.length !== 12) {
+      return res.status(400).json({ error: "UAN must be 12 digits" });
+    }
+    employee.uan = digits || undefined;
+  }
+  if (bankDetails && typeof bankDetails === 'object') {
     employee.bankDetails = employee.bankDetails || {};
-    if (typeof bankDetails.accountNumber === "string")
-      employee.bankDetails.accountNumber = bankDetails.accountNumber.trim();
-    if (typeof bankDetails.bankName === "string")
-      employee.bankDetails.bankName = bankDetails.bankName.trim();
-    if (typeof bankDetails.ifsc === "string")
-      employee.bankDetails.ifsc = bankDetails.ifsc.trim();
+    if (typeof bankDetails.accountNumber === 'string') employee.bankDetails.accountNumber = bankDetails.accountNumber.trim();
+    if (typeof bankDetails.bankName === 'string') employee.bankDetails.bankName = bankDetails.bankName.trim();
+    if (typeof bankDetails.ifsc === 'string') employee.bankDetails.ifsc = bankDetails.ifsc.trim();
+  }
+  if (hasTds !== undefined) {
+    employee.hasTds = !!hasTds;
   }
 
   await employee.save();
   await accrueTotalIfNeeded(employee, company, new Date());
   await syncLeaveBalances(employee);
-  try {
-    employee.decryptFieldsSync();
-  } catch (_) {}
-  const responsePersonalEmail = employee.personalEmail || "";
-  const responseBloodGroup = employee.bloodGroup || "";
+  try { employee.decryptFieldsSync(); } catch (_) {}
+  const responsePersonalEmail = employee.personalEmail || '';
+  const responseBloodGroup = employee.bloodGroup || '';
   const responseJoiningDate = employee.joiningDate || null;
-  res.json({
+  sendSuccess(res, "Employee updated", {
     employee: {
       id: employee._id,
-      address: employee.address || "",
-      phone: employee.phone || "",
+      address: employee.address || '',
+      phone: employee.phone || '',
       dob: employee.dob,
       joiningDate: responseJoiningDate,
+      attendanceStartDate: employee.attendanceStartDate || responseJoiningDate,
       personalEmail: responsePersonalEmail,
       bloodGroup: responseBloodGroup,
       ctc: employee.ctc || 0,
-      aadharNumber: employee.aadharNumber || "",
-      panNumber: employee.panNumber || "",
+      aadharNumber: employee.aadharNumber || '',
+      panNumber: employee.panNumber || '',
       email: employee.email,
       bankDetails: {
-        accountNumber: employee.bankDetails?.accountNumber || "",
-        bankName: employee.bankDetails?.bankName || "",
-        ifsc: employee.bankDetails?.ifsc || "",
+        accountNumber: employee.bankDetails?.accountNumber || '',
+        bankName: employee.bankDetails?.bankName || '',
+        ifsc: employee.bankDetails?.ifsc || '',
       },
+      uan: employee.uan || '',
+      hasTds: !!employee.hasTds,
+      profileImage: employee.profileImage || null,
+      employeeId: employee.employeeId || '',
     },
   });
 });
+
+// Admin: upload/replace an employee profile image
+router.post(
+  "/employees/:id/photo",
+  auth,
+  avatarUpload.single("photo"),
+  async (req, res) => {
+    if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+      return res.status(403).json({ error: "Forbidden" });
+    try {
+      if (!req.file) return res.status(400).json({ error: "No photo uploaded" });
+      const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+      if (!company) return res.status(400).json({ error: "Company not found" });
+      const employee = await Employee.findById(req.params.id);
+      if (!employee || !employee.company.equals(company._id))
+        return res.status(404).json({ error: "Employee not found" });
+      const profileImage = await persistEmployeePhoto(employee, req.file);
+      return sendSuccess(res, "Profile photo uploaded", { profileImage });
+    } catch (err) {
+      console.error("[companies/employees/:id/photo]", err);
+      const status = err?.statusCode || 500;
+      const message = err?.statusCode ? err.message : "Failed to upload photo";
+      return res.status(status).json({ error: message });
+    }
+  }
+);
 
 // Admin: toggle probation/permanent employment status
 router.put("/employees/:id/probation", auth, async (req, res) => {
@@ -1910,14 +2478,12 @@ router.put("/employees/:id/probation", auth, async (req, res) => {
 
   const { status, since } = req.body || {};
   const normalizedStatus =
-    typeof status === "string" ? status.trim().toUpperCase() : "";
-  if (!["PROBATION", "PERMANENT"].includes(normalizedStatus)) {
-    return res.status(400).json({ error: "Invalid employment status" });
+    typeof status === 'string' ? status.trim().toUpperCase() : '';
+  if (!['PROBATION', 'PERMANENT'].includes(normalizedStatus)) {
+    return res.status(400).json({ error: 'Invalid employment status' });
   }
 
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "_id leavePolicy"
-  );
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const employee = await Employee.findById(req.params.id);
@@ -1927,18 +2493,18 @@ router.put("/employees/:id/probation", auth, async (req, res) => {
   await accrueTotalIfNeeded(employee, company, new Date());
   const currentTotal = Number(employee.totalLeaveAvailable) || 0;
 
-  if (normalizedStatus === "PROBATION") {
+  if (normalizedStatus === 'PROBATION') {
     let probationSince = since ? new Date(since) : new Date();
     if (since && Number.isNaN(probationSince.getTime())) {
-      return res.status(400).json({ error: "Invalid probation start date" });
+      return res.status(400).json({ error: 'Invalid probation start date' });
     }
     if (Number.isNaN(probationSince.getTime())) {
       probationSince = new Date();
     }
-    employee.employmentStatus = "PROBATION";
+    employee.employmentStatus = 'PROBATION';
     employee.probationSince = probationSince;
   } else {
-    employee.employmentStatus = "PERMANENT";
+    employee.employmentStatus = 'PERMANENT';
     employee.probationSince = undefined;
   }
 
@@ -1946,8 +2512,7 @@ router.put("/employees/:id/probation", auth, async (req, res) => {
 
   await accrueTotalIfNeeded(employee, company, new Date());
   const recalculatedTotal = Number(employee.totalLeaveAvailable) || 0;
-  const existingAdjustment =
-    Number(employee.leaveAccrual?.manualAdjustment) || 0;
+  const existingAdjustment = Number(employee.leaveAccrual?.manualAdjustment) || 0;
   const delta = currentTotal - recalculatedTotal;
   if (Math.abs(delta) > 1e-6) {
     employee.leaveAccrual = employee.leaveAccrual || {};
@@ -1958,7 +2523,7 @@ router.put("/employees/:id/probation", auth, async (req, res) => {
   await employee.save();
   await syncLeaveBalances(employee);
 
-  res.json({
+  sendSuccess(res, "Employment status updated", {
     employee: {
       id: employee._id,
       employmentStatus: employee.employmentStatus,
@@ -1985,9 +2550,7 @@ router.post("/employees/:id/leave-adjust", auth, async (req, res) => {
     return res.status(400).json({ error: "Amount must be a number" });
   }
 
-  const company = await Company.findOne({ admin: req.employee.id }).select(
-    "_id leavePolicy"
-  );
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id leavePolicy");
   if (!company) return res.status(400).json({ error: "Company not found" });
 
   const employee = await Employee.findById(req.params.id);
@@ -1998,13 +2561,12 @@ router.post("/employees/:id/leave-adjust", auth, async (req, res) => {
   const current = Number(employee.totalLeaveAvailable) || 0;
   employee.totalLeaveAvailable = current + delta;
   employee.leaveAccrual = employee.leaveAccrual || {};
-  const existingAdjustment =
-    Number(employee.leaveAccrual.manualAdjustment) || 0;
+  const existingAdjustment = Number(employee.leaveAccrual.manualAdjustment) || 0;
   employee.leaveAccrual.manualAdjustment = existingAdjustment + delta;
   await employee.save();
   await syncLeaveBalances(employee);
 
-  res.json({
+  sendSuccess(res, "Leave balance adjusted", {
     employee: {
       id: employee._id,
       totalLeaveAvailable: employee.totalLeaveAvailable || 0,
@@ -2018,7 +2580,53 @@ router.post("/employees/:id/leave-adjust", auth, async (req, res) => {
   });
 });
 
-// Admin: delete an employee (with safety checks)
+// Admin: override unpaid leaves taken for an employee (manual correction)
+router.post("/employees/:id/unpaid-taken", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const { unpaidTaken } = req.body || {};
+  const value = Number(unpaidTaken);
+  if (!Number.isFinite(value) || value < 0) {
+    return res
+      .status(400)
+      .json({ error: "Unpaid taken must be a non-negative number" });
+  }
+
+  const company = await Company.findOne({ admin: req.employee.id }).select(
+    "_id leavePolicy"
+  );
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const employee = await Employee.findById(req.params.id);
+  if (!employee || !employee.company.equals(company._id))
+    return res.status(404).json({ error: "Employee not found" });
+
+  employee.leaveUsage = employee.leaveUsage || {
+    paid: 0,
+    casual: 0,
+    sick: 0,
+    unpaid: 0,
+  };
+  employee.leaveUsage.unpaid = value;
+  await employee.save();
+  await syncLeaveBalances(employee);
+
+  sendSuccess(res, "Unpaid leave updated", {
+    employee: {
+      id: employee._id,
+      leaveBalances: employee.leaveBalances || {
+        paid: 0,
+        casual: 0,
+        sick: 0,
+        unpaid: 0,
+      },
+      leaveUsage: employee.leaveUsage,
+    },
+  });
+});
+
+// Admin: delete/disable an employee
 router.delete("/employees/:id", auth, async (req, res) => {
   if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
     return res.status(403).json({ error: "Forbidden" });
@@ -2034,69 +2642,149 @@ router.delete("/employees/:id", auth, async (req, res) => {
   if (["ADMIN", "SUPERADMIN"].includes(employee.primaryRole))
     return res.status(400).json({ error: "Cannot delete an admin account" });
   if (String(employee._id) === String(req.employee.id))
-    return res
-      .status(400)
-      .json({ error: "You cannot delete your own account" });
-
-  // Safety checks for project/team lead
-  const leads = await Project.countDocuments({ teamLead: employee._id });
-  if (leads > 0)
-    return res
-      .status(400)
-      .json({
-        error: "Employee is a team lead on projects. Reassign before deleting.",
-      });
-
-  // Safety checks for dependent records that can't be safely reassigned here
-  const hasTasks = await Task.exists({
-    $or: [{ assignedTo: employee._id }, { createdBy: employee._id }],
-  });
-  if (hasTasks)
-    return res
-      .status(400)
-      .json({
-        error: "Employee has tasks. Reassign or remove tasks before deleting.",
-      });
-
-  const hasSlips = await SalarySlip.exists({ employee: employee._id });
-  if (hasSlips)
-    return res
-      .status(400)
-      .json({
-        error:
-          "Employee has salary slips. Delete slips before deleting employee.",
-      });
+    return res.status(400).json({ error: "You cannot delete your own account" });
 
   // Remove from project memberships
-  await Project.updateMany(
-    { members: employee._id },
-    { $pull: { members: employee._id } }
-  );
+  await Project.updateMany({ members: employee._id }, { $pull: { members: employee._id } });
 
-  // Clear as reportingPerson for others within company
-  const impacted = await Employee.find({
+  const dependents = await Employee.find({
     company: company._id,
     $or: [
       { reportingPerson: employee._id },
       { reportingPersons: employee._id },
     ],
-  });
-  for (const other of impacted) {
-    const filtered = (other.reportingPersons || []).filter(
+  })
+    .select("_id reportingPerson reportingPersons")
+    .lean();
+
+  for (const dep of dependents) {
+    const currentArray = Array.isArray(dep.reportingPersons)
+      ? dep.reportingPersons
+      : [];
+    const filtered = currentArray.filter(
       (id) => String(id) !== String(employee._id)
     );
-    other.reportingPersons = filtered;
-    if (
-      other.reportingPerson &&
-      String(other.reportingPerson) === String(employee._id)
-    ) {
-      other.reportingPerson = filtered[0] || undefined;
+    const nextReportingPersons =
+      filtered.length !== currentArray.length ? filtered : currentArray;
+    const hasPrimary = dep.reportingPerson
+      ? String(dep.reportingPerson) === String(employee._id)
+      : false;
+    let nextReportingPerson = dep.reportingPerson || undefined;
+    if (hasPrimary) {
+      nextReportingPerson = filtered[0] || undefined;
+    } else if (!dep.reportingPerson && filtered.length) {
+      nextReportingPerson = filtered[0];
     }
-    await other.save();
+    const setOps = {
+      reportingPersons: nextReportingPersons,
+    };
+    if (nextReportingPerson) {
+      setOps.reportingPerson = nextReportingPerson;
+      await Employee.updateOne({ _id: dep._id }, { $set: setOps });
+    } else {
+      await Employee.updateOne(
+        { _id: dep._id },
+        { $set: setOps, $unset: { reportingPerson: 1 } }
+      );
+    }
   }
 
-  await Employee.deleteOne({ _id: employee._id });
-  res.json({ ok: true });
+  const { lastWorkingDay, reason, note } = req.body || {};
+  if (lastWorkingDay) {
+    const parsed = new Date(lastWorkingDay);
+    if (Number.isNaN(parsed.getTime()))
+      return res.status(400).json({ error: "Invalid last working day" });
+    employee.offboarding = employee.offboarding || {};
+    employee.offboarding.lastWorkingDay = parsed;
+  }
+  if (reason) {
+    const allowed = [
+      "resignation",
+      "termination",
+      "layoff",
+      "contract_end",
+      "absconded",
+      "other",
+    ];
+    if (!allowed.includes(reason))
+      return res.status(400).json({ error: "Invalid reason" });
+    employee.offboarding = employee.offboarding || {};
+    employee.offboarding.reason = reason;
+  }
+  if (note) {
+    const trimmed = String(note).trim();
+    if (trimmed.length > 2000)
+      return res.status(400).json({ error: "Note must be ≤ 2000 chars" });
+    employee.offboarding = employee.offboarding || {};
+    employee.offboarding.note = trimmed;
+  }
+  const offboardingSet = {
+    "offboarding.recordedBy": req.employee._id,
+    "offboarding.recordedAt": new Date(),
+  };
+  if (employee.offboarding?.lastWorkingDay) {
+    offboardingSet["offboarding.lastWorkingDay"] =
+      employee.offboarding.lastWorkingDay;
+  }
+  if (employee.offboarding?.reason) {
+    offboardingSet["offboarding.reason"] = employee.offboarding.reason;
+  }
+  if (employee.offboarding?.note) {
+    offboardingSet["offboarding.note"] = employee.offboarding.note;
+  }
+
+  await Employee.updateOne(
+    { _id: employee._id },
+    {
+      $set: {
+        isDeleted: true,
+        isActive: false,
+        ...offboardingSet,
+      },
+    }
+  );
+  const updatedEmployee = await Employee.findById(employee._id)
+    .select("_id isDeleted isActive offboarding")
+    .lean();
+  sendSuccess(res, "Employee deleted", {
+    ok: true,
+    employee: {
+      id: updatedEmployee?._id || employee._id,
+      isDeleted: updatedEmployee?.isDeleted === true,
+      isActive: updatedEmployee?.isActive !== false,
+      offboarding: updatedEmployee?.offboarding || null,
+    },
+  });
+});
+
+// Admin: restore a soft-deleted / inactive employee
+router.put("/employees/:id/restore", auth, async (req, res) => {
+  if (!["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole))
+    return res.status(403).json({ error: "Forbidden" });
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: "Missing employee id" });
+  const company = await Company.findOne({ admin: req.employee.id }).select("_id");
+  if (!company) return res.status(400).json({ error: "Company not found" });
+
+  const employee = await Employee.findById(id).select("_id company");
+  if (!employee || !employee.company?.equals(company._id))
+    return res.status(404).json({ error: "Employee not found" });
+
+  await Employee.updateOne(
+    { _id: employee._id },
+    {
+      $set: { isDeleted: false, isActive: true },
+      $unset: { offboarding: 1 },
+    }
+  );
+  sendSuccess(res, "Employee restored", {
+    employee: {
+      id: employee._id,
+      isDeleted: false,
+      isActive: true,
+      offboarding: null,
+    },
+  });
 });
 
 // Admin: list employees in their company
@@ -2115,21 +2803,37 @@ router.get("/employees", auth, async (req, res) => {
     companyId = req.employee.company;
   }
 
-  const employees = await Employee.find({ company: companyId })
-    .select(
-      "name email subRoles primaryRole employmentStatus probationSince createdAt"
-    )
-    .lean();
+  const includeDeleted =
+    ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) &&
+    String(req.query.includeDeleted || "").toLowerCase() === "true";
+  const includeInactive =
+    includeDeleted ||
+    String(req.query.includeInactive || "").toLowerCase() === "true";
+
+  const filter = { company: companyId };
+  if (!includeDeleted) filter.isDeleted = { $ne: true };
+  if (!includeInactive) filter.isActive = { $ne: false };
+
+  const employees = await Employee.find(filter);
   res.json({
     employees: employees.map((u) => ({
       id: u._id,
       name: u.name,
       email: u.email,
+      employeeId: u.employeeId || null,
       subRoles: u.subRoles,
       primaryRole: u.primaryRole,
+      joiningDate: u.joiningDate || null,
+      attendanceStartDate: u.attendanceStartDate || u.joiningDate || null,
       employmentStatus: u.employmentStatus || "PROBATION",
       probationSince: u.probationSince || null,
       createdAt: u.createdAt || null,
+      hasTds: !!u.hasTds,
+      profileImage: u.profileImage || null,
+      reportingPerson: u.reportingPerson || null,
+      reportingPersons: u.reportingPersons || [],
+      isDeleted: !!u.isDeleted,
+      isActive: u.isActive !== false,
     })),
   });
 });

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { resolveMediaUrl } from "../lib/utils";
 import { clearAuth, setAuth } from "../lib/auth";
-import { Field } from "../components/ui/Field";
+import { Field } from "../components/utils/Field";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { PasswordField } from "../components/ui/PasswordInput";
+import { PasswordField } from "../components/utils/PasswordInput";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
@@ -26,7 +27,7 @@ const ProfileSchema = z.object({
     .transform(strip)
     .refine(
       (v) => v === "" || z.string().email().safeParse(v).success,
-      "Invalid personal email"
+      "Invalid personal email",
     )
     .default(""),
   phone: z
@@ -34,7 +35,7 @@ const ProfileSchema = z.object({
     .transform(strip)
     .refine(
       (v) => v === "" || /^\d{10}$/.test(v),
-      "Phone must be exactly 10 digits"
+      "Phone must be exactly 10 digits",
     )
     .default(""),
   address: z.string().default(""),
@@ -44,7 +45,7 @@ const ProfileSchema = z.object({
     .refine((v) => v === "" || !Number.isNaN(Date.parse(v)), "Invalid date")
     .refine(
       (v) => v === "" || new Date(v) < new Date(),
-      "DOB must be in the past"
+      "DOB must be in the past",
     )
     .default(""),
   aadharNumber: z
@@ -63,7 +64,7 @@ const ProfileSchema = z.object({
     .transform(strip)
     .refine(
       (v) => v === "" || /^[0-9]{7,18}$/.test(v.replace(/\s+/g, "")),
-      "Enter 7–18 digits"
+      "Enter 7–18 digits",
     )
     .default(""),
   bankIfsc: z
@@ -91,6 +92,20 @@ export default function Profile() {
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [canEditProtected, setCanEditProtected] = useState(false);
+  const [avatar, setAvatar] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [employeeId, setEmployeeId] = useState<string>("");
+  const [roleText, setRoleText] = useState<string>("");
+  const [uan, setUan] = useState<string>("");
+  const [bankLocked, setBankLocked] = useState(false);
+  const resolveImageUrl = (value: string | null) => resolveMediaUrl(value);
+  const validateImageFile = (file: File | null) => {
+    if (!file) return "No file selected";
+    if (!file.type.startsWith("image/")) return "Only image files allowed";
+    if (file.size > 10 * 1024 * 1024) return "File must be ≤ 10MB";
+    return null;
+  };
 
   const {
     register,
@@ -138,11 +153,26 @@ export default function Profile() {
     (async () => {
       try {
         const res = await api.get("/auth/me");
-        console.log("hdsgdswkc", res);
         const emp = res.data.employee || {};
         setCanEditProtected(
-          ["ADMIN", "SUPERADMIN"].includes(emp.primaryRole || "")
+          ["ADMIN", "SUPERADMIN"].includes(emp.primaryRole || ""),
         );
+        setAvatar(emp.profileImage || null);
+        setEmployeeId(emp.employeeId || "");
+        const primary = emp.primaryRole ? String(emp.primaryRole) : "";
+        const subs =
+          Array.isArray(emp.subRoles) && emp.subRoles.length
+            ? emp.subRoles.map((r: string) => String(r)).join(", ")
+            : "";
+        const roleLine = [subs].filter(Boolean).join(" · ");
+        setRoleText(roleLine || "Not set");
+        setUan(emp.uan || "");
+        const existingBank =
+          (emp.bankDetails?.bankName ||
+            emp.bankDetails?.accountNumber ||
+            emp.bankDetails?.ifsc) &&
+          !["ADMIN", "SUPERADMIN"].includes(emp.primaryRole || "");
+        setBankLocked(!!existingBank);
         reset({
           name: emp.name || "",
           email: emp.email || "",
@@ -174,6 +204,7 @@ export default function Profile() {
       const me = await api.get("/auth/me");
       const token = localStorage.getItem("token") || "";
       if (token && me.data?.employee) setAuth(token, me.data.employee);
+      setUan(me?.data?.employee?.uan || "");
       setOk("Profile updated");
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to update profile");
@@ -199,6 +230,40 @@ export default function Profile() {
     }
   };
 
+  const onUploadAvatar = async () => {
+    setOk(null);
+    setErr(null);
+    const validation = validateImageFile(avatarFile);
+    if (validation) {
+      setErr(validation);
+      toast.error(validation);
+      return;
+    }
+    try {
+      setAvatarUploading(true);
+      const fd = new FormData();
+      fd.append("photo", avatarFile as File);
+      const res = await api.post("/auth/me/photo", fd);
+      const stored = res.data?.profileImage || null;
+      setAvatar(stored);
+      setAvatarFile(null);
+      const token = localStorage.getItem("token") || "";
+      if (token) {
+        try {
+          const me = await api.get("/auth/me");
+          if (me?.data?.employee) setAuth(token, me.data.employee);
+        } catch (_) {}
+      }
+      setOk("Profile photo updated");
+    } catch (e: any) {
+      const msg = e?.response?.data?.error || "Failed to upload photo";
+      setErr(msg);
+      toast.error(msg);
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   // Live UI uppercase PAN/IFSC (schema already uppercases; this only improves UX)
   const pan = watch("panNumber");
   useEffect(() => {
@@ -216,10 +281,15 @@ export default function Profile() {
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Profile</h2>
-        <p className="text-sm text-muted">Update your details.</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Employee ID: {employeeId || "Not set"}
+        </p>
+        <p className="text-xs text-muted-foreground capitalize">
+          Role: {roleText || "Not set"}
+        </p>
       </div>
 
-      {/* {err && (
+      {err && (
         <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
           {err}
         </div>
@@ -228,7 +298,49 @@ export default function Profile() {
         <div className="rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
           {ok}
         </div>
-      )} */}
+      )}
+
+      {/* Profile photo */}
+      <section className="rounded-lg border border-border bg-surface shadow-sm">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="text-lg font-semibold">Profile Photo</h3>
+          <p className="text-xs text-muted-foreground">
+            This image is used across the app where your profile appears.
+          </p>
+        </div>
+        <div className="flex flex-col gap-4 px-6 py-5 md:flex-row md:items-center">
+          <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border border-border bg-muted/40">
+            {avatar ? (
+              <img
+                src={resolveImageUrl(avatar) || ""}
+                alt="Profile"
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <span className="text-xs text-muted-foreground">No photo</span>
+            )}
+          </div>
+          <div className="space-y-3">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setAvatarFile(e.target.files?.[0] || null)}
+              className="block text-sm"
+            />
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onUploadAvatar}
+                disabled={avatarUploading || !avatarFile}
+                className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+              >
+                {avatarUploading ? "Uploading…" : "Upload Photo"}
+              </button>
+              <p className="text-xs text-muted-foreground">PNG/JPG • ≤10MB</p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Personal Information */}
       <section className="rounded-lg border border-border bg-surface shadow-sm">
@@ -253,7 +365,7 @@ export default function Profile() {
                 className={`w-full rounded-md border border-border px-3 py-2 outline-none focus:ring-2 focus:ring-primary ${
                   canEditProtected
                     ? "bg-surface"
-                    : "bg-muted/10 text-muted cursor-not-allowed"
+                    : "bg-muted/10 text-muted-foreground cursor-not-allowed"
                 }`}
                 {...register("email")}
                 readOnly={!canEditProtected}
@@ -279,6 +391,13 @@ export default function Profile() {
                   {errors.personalEmail.message}
                 </p>
               )}
+            </Field>
+            <Field label="Employee ID">
+              <input
+                className="w-full rounded-md border border-border bg-muted/10 px-3 py-2 text-muted-foreground cursor-not-allowed"
+                value={employeeId || "Not set"}
+                readOnly
+              />
             </Field>
           </div>
 
@@ -320,7 +439,7 @@ export default function Profile() {
             </Field>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
             <Field label="Aadhaar Number">
               <Controller
                 control={control}
@@ -330,7 +449,7 @@ export default function Profile() {
                     className={`w-full rounded-md border border-border px-3 py-2 outline-none focus:ring-2 focus:ring-primary ${
                       canEditProtected
                         ? "bg-surface"
-                        : "bg-muted/10 text-muted cursor-not-allowed"
+                        : "bg-muted/10 text-muted-foreground cursor-not-allowed"
                     }`}
                     value={formatAadhaar(field.value || "")}
                     onChange={(e) => field.onChange(e.target.value)}
@@ -353,7 +472,7 @@ export default function Profile() {
                 className={`w-full rounded-md border border-border px-3 py-2 uppercase outline-none focus:ring-2 focus:ring-primary ${
                   canEditProtected
                     ? "bg-surface"
-                    : "bg-muted/10 text-muted cursor-not-allowed"
+                    : "bg-muted/10 text-muted-foreground cursor-not-allowed"
                 }`}
                 maxLength={10}
                 {...register("panNumber")}
@@ -366,13 +485,30 @@ export default function Profile() {
                 </p>
               )}
             </Field>
+            <Field label="UAN">
+              <input
+                className="w-full rounded-md border border-border bg-muted/10 px-3 py-2 text-muted-foreground cursor-not-allowed"
+                value={uan || ""}
+                placeholder="Not set"
+                readOnly
+                aria-readonly={true}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Contact your administrator to update your UAN.
+              </p>
+            </Field>
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="Bank Name">
               <input
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full rounded-md border border-border px-3 py-2 outline-none focus:ring-2 focus:ring-primary ${
+                  bankLocked
+                    ? "bg-muted/10 text-muted-foreground cursor-not-allowed"
+                    : "bg-surface"
+                }`}
                 {...register("bankName")}
+                readOnly={bankLocked}
               />
               {errors.bankName && (
                 <p className="text-xs text-error mt-1">
@@ -382,9 +518,14 @@ export default function Profile() {
             </Field>
             <Field label="Account Number">
               <input
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full rounded-md border border-border px-3 py-2 outline-none focus:ring-2 focus:ring-primary ${
+                  bankLocked
+                    ? "bg-muted/10 text-muted-foreground cursor-not-allowed"
+                    : "bg-surface"
+                }`}
                 inputMode="numeric"
                 {...register("bankAccountNumber")}
+                readOnly={bankLocked}
               />
               {errors.bankAccountNumber && (
                 <p className="text-xs text-error mt-1">
@@ -395,8 +536,13 @@ export default function Profile() {
             <Field label="IFSC Code">
               <input
                 maxLength={11}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                className={`w-full rounded-md border border-border px-3 py-2 outline-none focus:ring-2 focus:ring-primary ${
+                  bankLocked
+                    ? "bg-muted/10 text-muted-foreground cursor-not-allowed"
+                    : "bg-surface"
+                }`}
                 {...register("bankIfsc")}
+                readOnly={bankLocked}
               />
               {errors.bankIfsc && (
                 <p className="text-xs text-error mt-1">

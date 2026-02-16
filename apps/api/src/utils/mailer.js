@@ -1,5 +1,7 @@
 const nodemailer = require('nodemailer');
 const Company = require('../models/Company');
+const Employee = require('../models/Employee');
+const Notification = require('../models/Notification');
 
 let _defaultTransporter = undefined;
 const companyTransporters = new Map();
@@ -195,6 +197,77 @@ async function resolveTransporter(companyId) {
   return getDefaultTransporter();
 }
 
+function extractEmails(value) {
+  const out = [];
+  const push = (s) => {
+    const raw = String(s || "").trim();
+    if (!raw) return;
+    raw
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .forEach((part) => {
+        const m = part.match(/<([^>]+)>/);
+        const email = (m ? m[1] : part).trim();
+        if (email && email.includes("@")) out.push(email);
+      });
+  };
+
+  if (!value) return out;
+  if (Array.isArray(value)) {
+    value.forEach((v) => out.push(...extractEmails(v)));
+    return out;
+  }
+  if (typeof value === "object") {
+    if (value.address) push(value.address);
+    return out;
+  }
+  push(value);
+  return out;
+}
+
+async function createInAppNotificationsFromMail(opts) {
+  const skip =
+    opts?.skipInAppNotification === true || opts?.notify === false || false;
+  if (skip) return;
+
+  const title = String(opts?.notify?.title || opts?.subject || "").trim();
+  if (!title) return;
+
+  const emails = Array.from(
+    new Set([
+      ...extractEmails(opts?.to),
+      ...extractEmails(opts?.cc),
+      ...extractEmails(opts?.bcc),
+    ])
+  );
+  if (!emails.length) return;
+
+  const baseQuery = { email: { $in: emails } };
+  const companyId = opts?.companyId ? String(opts.companyId) : null;
+  const query = companyId ? { ...baseQuery, company: companyId } : baseQuery;
+
+  const employees = await Employee.find(query).select("_id company").lean();
+  if (!employees.length) return;
+
+  const type = String(opts?.notify?.type || "MAIL");
+  const message = String(opts?.notify?.message || "");
+  const link = String(opts?.notify?.link || "");
+  const meta = opts?.notify?.meta;
+
+  const docs = employees.map((e) => ({
+    company: e.company || null,
+    employee: e._id,
+    type,
+    title,
+    message,
+    link,
+    meta,
+  }));
+
+  await Notification.insertMany(docs);
+}
+
 async function sendMail(opts) {
   const transporter = await resolveTransporter(opts.companyId);
   if (!transporter) {
@@ -219,6 +292,14 @@ async function sendMail(opts) {
     attachments: opts.attachments,
     replyTo: opts.replyTo || transporter._defaultReplyTo,
   };
+
+  // Mirror email events into in-app notifications (safe summary only).
+  createInAppNotificationsFromMail(opts).catch((err) => {
+    console.warn(
+      "[mailer] Failed to create in-app notifications:",
+      err?.message || err
+    );
+  });
 
   return transporter.sendMail(mailOptions);
 }

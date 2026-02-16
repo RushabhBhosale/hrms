@@ -92,14 +92,14 @@ export default function SuperadminDashboard() {
   const [companyError, setCompanyError] = useState<string | null>(null);
 
   const [masterSummary, setMasterSummary] = useState<MasterSummary | null>(
-    null
+    null,
   );
   const [masterLoading, setMasterLoading] = useState(false);
   const [masterError, setMasterError] = useState<string | null>(null);
   const [masterFile, setMasterFile] = useState<File | null>(null);
   const [masterUploading, setMasterUploading] = useState(false);
   const [masterUploadError, setMasterUploadError] = useState<string | null>(
-    null
+    null,
   );
   const [masterUploadResult, setMasterUploadResult] =
     useState<MasterImportResult | null>(null);
@@ -116,7 +116,7 @@ export default function SuperadminDashboard() {
   const [selectedCityId, setSelectedCityId] = useState<string>("");
   const [downloadingSample, setDownloadingSample] = useState(false);
   const [sampleDownloadError, setSampleDownloadError] = useState<string | null>(
-    null
+    null,
   );
 
   useEffect(() => {
@@ -134,7 +134,7 @@ export default function SuperadminDashboard() {
     } catch (err: any) {
       console.error(err);
       setCompanyError(
-        err?.response?.data?.error || "Failed to load company count"
+        err?.response?.data?.error || "Failed to load company count",
       );
     } finally {
       setCompanyLoading(false);
@@ -151,7 +151,7 @@ export default function SuperadminDashboard() {
       console.error(err);
       setMasterSummary(null);
       setMasterError(
-        err?.response?.data?.error || "Failed to load master summary"
+        err?.response?.data?.error || "Failed to load master summary",
       );
     } finally {
       setMasterLoading(false);
@@ -199,7 +199,7 @@ export default function SuperadminDashboard() {
           details.map((msg: string) => ({
             sheet: "format",
             message: msg,
-          }))
+          })),
         );
       }
     } finally {
@@ -233,7 +233,7 @@ export default function SuperadminDashboard() {
     } catch (err: any) {
       console.error(err);
       setHierarchyError(
-        err?.response?.data?.error || "Failed to load countries."
+        err?.response?.data?.error || "Failed to load countries.",
       );
       setCountries([]);
       setSelectedCountryId("");
@@ -281,7 +281,7 @@ export default function SuperadminDashboard() {
       console.error(err);
       setHierarchyError(
         err?.response?.data?.error ||
-          "Failed to load states for the selected country."
+          "Failed to load states for the selected country.",
       );
       setStates([]);
       setSelectedStateId("");
@@ -322,7 +322,7 @@ export default function SuperadminDashboard() {
     } catch (err: any) {
       console.error(err);
       setHierarchyError(
-        err?.response?.data?.error || "Failed to load cities for the state."
+        err?.response?.data?.error || "Failed to load cities for the state.",
       );
       setCities([]);
       setSelectedCityId("");
@@ -367,8 +367,7 @@ export default function SuperadminDashboard() {
     } catch (err: any) {
       console.error(err);
       setSampleDownloadError(
-        err?.response?.data?.error ||
-          "Failed to download the sample workbook."
+        err?.response?.data?.error || "Failed to download the sample workbook.",
       );
     } finally {
       setDownloadingSample(false);
@@ -439,18 +438,10 @@ export default function SuperadminDashboard() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">Superadmin Overview</h2>
-            <p className="text-sm text-muted">
+            <p className="text-sm text-muted-foreground">
               High-level snapshot of companies in the system.
             </p>
           </div>
-          <button
-            onClick={refreshCompanyCount}
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-bg disabled:opacity-60"
-            disabled={companyLoading}
-          >
-            <CalendarClock size={16} />
-            {companyLoading ? "Refreshing..." : "Refresh"}
-          </button>
         </div>
         {companyError && (
           <div className="rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
@@ -459,7 +450,9 @@ export default function SuperadminDashboard() {
         )}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg border border-border bg-muted/10 px-4 py-3">
-            <div className="text-xs uppercase text-muted">Total Companies</div>
+            <div className="text-xs uppercase text-muted-foreground">
+              Total Companies
+            </div>
             <div className="mt-2 text-3xl font-semibold">
               {companyLoading ? "..." : companyCount}
             </div>
@@ -471,19 +464,11 @@ export default function SuperadminDashboard() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">Master Data</h3>
-            <p className="text-sm text-muted">
+            <p className="text-sm text-muted-foreground">
               Upload an Excel workbook to manage countries, states, cities, and
               company types.
             </p>
           </div>
-          <button
-            onClick={refreshMasterSummary}
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm hover:bg-bg disabled:opacity-60"
-            disabled={masterLoading}
-          >
-            <CalendarClock size={16} />
-            {masterLoading ? "Refreshing..." : "Refresh"}
-          </button>
         </div>
 
         {masterError && (
@@ -493,7 +478,7 @@ export default function SuperadminDashboard() {
         )}
 
         {masterLoading && !masterSummary ? (
-          <div className="flex h-20 items-center justify-center text-sm text-muted">
+          <div className="flex h-20 items-center justify-center text-sm text-muted-foreground">
             Loading master summary...
           </div>
         ) : masterSummary ? (
@@ -507,9 +492,11 @@ export default function SuperadminDashboard() {
                   key={key}
                   className="rounded-lg border border-border bg-surface px-4 py-3"
                 >
-                  <div className="text-xs uppercase text-muted">{label}</div>
+                  <div className="text-xs uppercase text-muted-foreground">
+                    {label}
+                  </div>
                   <div className="mt-2 text-2xl font-semibold">{count}</div>
-                  <div className="text-xs text-muted">
+                  <div className="text-xs text-muted-foreground">
                     {last
                       ? `Updated ${formatDateLabel(last)}`
                       : "Not uploaded yet"}
@@ -519,7 +506,7 @@ export default function SuperadminDashboard() {
             })}
           </div>
         ) : (
-          <div className="flex h-20 items-center justify-center text-sm text-muted">
+          <div className="flex h-20 items-center justify-center text-sm text-muted-foreground">
             No master data available yet.
           </div>
         )}
@@ -527,11 +514,11 @@ export default function SuperadminDashboard() {
         <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
           <div className="space-y-3 rounded-lg border border-dashed border-border p-4">
             <h4 className="text-sm font-semibold">Workbook format</h4>
-            <p className="text-xs text-muted">
+            <p className="text-xs text-muted-foreground">
               Prepare a single .xlsx file with the sheets below. Column names
               are case-insensitive.
             </p>
-            <ul className="space-y-2 text-xs text-muted">
+            <ul className="space-y-2 text-xs text-muted-foreground">
               <li>
                 <span className="font-semibold text-foreground">Countries</span>
                 : required <code>Name</code>; optional <code>ISO Code</code>,
@@ -548,7 +535,9 @@ export default function SuperadminDashboard() {
                 <code>Country</code>.
               </li>
               <li>
-                <span className="font-semibold text-foreground">CompanyTypes</span>
+                <span className="font-semibold text-foreground">
+                  CompanyTypes
+                </span>
                 : required <code>Name</code>; optional <code>Description</code>.
               </li>
               <li>
@@ -567,7 +556,7 @@ export default function SuperadminDashboard() {
                   ? "Preparing sample..."
                   : "Download sample workbook"}
               </button>
-              <span className="text-[11px] text-muted">
+              <span className="text-[11px] text-muted-foreground">
                 Includes linked country, state, and city examples.
               </span>
             </div>
@@ -579,11 +568,11 @@ export default function SuperadminDashboard() {
             <div className="mt-5 space-y-3 rounded-lg border border-border/60 bg-muted/5 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h5 className="text-sm font-semibold">Hierarchy preview</h5>
-                <span className="text-[11px] text-muted">
+                <span className="text-[11px] text-muted-foreground">
                   Data pulls from the stored masters.
                 </span>
               </div>
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted-foreground">
                 Select a country to load its states, then pick a state to see
                 the available cities.
               </p>
@@ -593,15 +582,17 @@ export default function SuperadminDashboard() {
                   <select
                     className="rounded border border-border bg-surface px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                     value={selectedCountryId}
-                    onChange={(event) => setSelectedCountryId(event.target.value)}
+                    onChange={(event) =>
+                      setSelectedCountryId(event.target.value)
+                    }
                     disabled={countriesLoading || countries.length === 0}
                   >
                     <option value="">
                       {countriesLoading
                         ? "Loading..."
                         : countries.length === 0
-                        ? "No countries"
-                        : "Select country"}
+                          ? "No countries"
+                          : "Select country"}
                     </option>
                     {countries.map((country) => (
                       <option key={country.id} value={country.id}>
@@ -623,8 +614,8 @@ export default function SuperadminDashboard() {
                         ? statesLoading
                           ? "Loading..."
                           : states.length === 0
-                          ? "No states"
-                          : "Select state"
+                            ? "No states"
+                            : "Select state"
                         : "Select a country"}
                     </option>
                     {states.map((state) => (
@@ -647,8 +638,8 @@ export default function SuperadminDashboard() {
                         ? citiesLoading
                           ? "Loading..."
                           : cities.length === 0
-                          ? "No cities"
-                          : "Select city"
+                            ? "No cities"
+                            : "Select city"
                         : "Select a state"}
                     </option>
                     {cities.map((city) => (
@@ -664,7 +655,9 @@ export default function SuperadminDashboard() {
                   {hierarchyError}
                 </div>
               ) : (
-                <div className="text-xs text-muted">{hierarchyStatus}</div>
+                <div className="text-xs text-muted-foreground">
+                  {hierarchyStatus}
+                </div>
               )}
             </div>
           </div>
@@ -680,8 +673,9 @@ export default function SuperadminDashboard() {
                 className="rounded border border-border bg-surface px-3 py-2"
               />
               {masterFile && (
-                <div className="text-xs text-muted">
-                  Selected: <span className="font-medium">{masterFile.name}</span>
+                <div className="text-xs text-muted-foreground">
+                  Selected:{" "}
+                  <span className="font-medium">{masterFile.name}</span>
                 </div>
               )}
             </label>
@@ -711,7 +705,7 @@ export default function SuperadminDashboard() {
                         className="flex items-center justify-between gap-3"
                       >
                         <span>{label}</span>
-                        <span className="text-muted">
+                        <span className="text-muted-foreground">
                           {`${stats.inserted} new · ${stats.updated} updated · ${stats.skipped} skipped`}
                         </span>
                       </div>
@@ -726,9 +720,8 @@ export default function SuperadminDashboard() {
                 <ul className="space-y-1">
                   {masterWarnings.slice(0, 6).map((warning, idx) => {
                     const label =
-                      MASTER_LABELS[
-                        warning.sheet as keyof MasterSummary
-                      ] || warning.sheet;
+                      MASTER_LABELS[warning.sheet as keyof MasterSummary] ||
+                      warning.sheet;
                     return (
                       <li key={`${warning.sheet}-${idx}`}>
                         <span className="font-medium">{label}</span>

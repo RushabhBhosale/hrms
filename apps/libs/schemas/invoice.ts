@@ -23,6 +23,7 @@ export const invoiceSchema = z.object({
   partyType: z.enum(["client", "employee", "vendor"]),
   project: objectId.optional(),
   partyId: objectId.optional(),
+  client: objectId.optional(),
   partyName: z.string().optional(),
   partyEmail: z.string().optional(),
   partyAddress: z.string().optional(),
@@ -39,6 +40,8 @@ export const invoiceSchema = z.object({
   attachments: z.array(z.string()).optional(),
   pdfFile: z.string().optional(),
   partyLogo: z.string().optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type InvoiceLineItemInput = z.infer<typeof invoiceLineItemSchema>;

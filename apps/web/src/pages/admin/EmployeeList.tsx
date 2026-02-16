@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
-import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
-import { RoleBadge } from "../../components/ui/RoleBadge";
+import {
+  Th,
+  Td,
+  SkeletonRows,
+  PaginationFooter,
+} from "../../components/utils/Table";
+import { RoleBadge } from "../../components/utils/RoleBadge";
 import type { PrimaryRole } from "../../lib/auth";
 import type { RoleDefinition } from "../../types/roles";
 
@@ -10,8 +15,10 @@ type CompanyEmployee = {
   id: string;
   name: string;
   email: string;
+  employeeId?: string;
   subRoles: string[];
   primaryRole: PrimaryRole;
+  employmentStatus?: "PERMANENT" | "PROBATION";
 };
 
 export default function EmployeeList() {
@@ -32,7 +39,8 @@ export default function EmployeeList() {
       const res = await api.get("/companies/employees");
 
       const employees = res.data.employees?.filter(
-        (emp: any) => emp.primaryRole !== "ADMIN"
+        (emp: any) =>
+          emp.primaryRole !== "ADMIN" && !emp.isDeleted && emp.isActive !== false,
       );
       setEmployees(employees || []);
     } catch (e: any) {
@@ -66,8 +74,8 @@ export default function EmployeeList() {
       (u.primaryRole === "ADMIN"
         ? "admin"
         : u.primaryRole === "SUPERADMIN"
-        ? "superadmin"
-        : "employee");
+          ? "superadmin"
+          : "employee");
     const slug = slugRaw.toLowerCase();
     const label = roleLabels[slug] || prettifyRole(slug);
     return { slug, label };
@@ -75,13 +83,30 @@ export default function EmployeeList() {
 
   function prettifyRole(value: string) {
     if (!value) return "Employee";
-    return value
-      .replace(/[-_]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .split(" ")
-      .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : ""))
-      .join(" ") || "Employee";
+    return (
+      value
+        .replace(/[-_]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .split(" ")
+        .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : ""))
+        .join(" ") || "Employee"
+    );
+  }
+
+  function resolveEmploymentStatus(u: CompanyEmployee) {
+    const status = u.employmentStatus || "PROBATION";
+    const label =
+      status === "PERMANENT"
+        ? "Permanent"
+        : status === "PROBATION"
+          ? "Probation"
+          : prettifyRole(String(status).toLowerCase());
+    const tone =
+      status === "PERMANENT"
+        ? "bg-success/10 text-success"
+        : "bg-warning/10 text-warning";
+    return { status, label, tone };
   }
 
   const filtered = useMemo(() => {
@@ -91,8 +116,10 @@ export default function EmployeeList() {
       (e) =>
         e.name.toLowerCase().includes(term) ||
         e.email.toLowerCase().includes(term) ||
+        (e.employeeId || "").toLowerCase().includes(term) ||
         e.subRoles.join(",").toLowerCase().includes(term) ||
-        resolveRole(e).label.toLowerCase().includes(term)
+        resolveRole(e).label.toLowerCase().includes(term) ||
+        (e.employmentStatus || "PROBATION").toLowerCase().includes(term),
     );
   }, [q, employees]);
 
@@ -119,7 +146,7 @@ export default function EmployeeList() {
   const end = Math.min(total, page * limit);
   const pageRows = useMemo(
     () => sorted.slice((page - 1) * limit, (page - 1) * limit + limit),
-    [sorted, page, limit]
+    [sorted, page, limit],
   );
 
   function toggleSort(k: typeof sortKey) {
@@ -135,7 +162,7 @@ export default function EmployeeList() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 className="text-3xl font-bold">Employees</h2>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             All company employees with roles.
           </p>
         </div>
@@ -143,7 +170,7 @@ export default function EmployeeList() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name, email, role…"
+            placeholder="Search name, email, role, status…"
             className="h-10 w-72 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
           />
           <button
@@ -161,9 +188,9 @@ export default function EmployeeList() {
         </div>
       )}
 
-      <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
-        <div className="border-b border-border px-4 py-3 flex items-center justify-between">
-          <div className="text-sm text-muted">
+      <section className="rounded-lg border border-border bg-surface shadow-sm overflow-auto">
+        <div className="border-b border-border px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm text-muted-foreground">
             {loading
               ? "Loading…"
               : `Showing ${start}-${end} of ${total} employees`}
@@ -187,11 +214,13 @@ export default function EmployeeList() {
         </div>
 
         {/* Table (desktop) */}
-        <div className="hidden md:block">
+        <div className="hidden md:block overflow-auto">
           <table className="w-full text-sm">
             <thead className="bg-bg">
               <tr className="text-left">
+                <Th>Employee ID</Th>
                 <Th
+                  className="whitespace-nowrap"
                   sortable
                   onSort={() => toggleSort("name")}
                   dir={sortKey === "name" ? sortDir : null}
@@ -199,6 +228,7 @@ export default function EmployeeList() {
                   Name
                 </Th>
                 <Th
+                  className="w-[40%]"
                   sortable
                   onSort={() => toggleSort("email")}
                   dir={sortKey === "email" ? sortDir : null}
@@ -212,21 +242,26 @@ export default function EmployeeList() {
                 >
                   Role
                 </Th>
+                <Th>Status</Th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <SkeletonRows rows={6} cols={3} />
+                <SkeletonRows rows={6} cols={5} />
               ) : pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="px-4 py-6 text-center text-muted">
+                  <td
+                    colSpan={5}
+                    className="px-4 py-6 text-center text-muted-foreground"
+                  >
                     No employees found.
                   </td>
                 </tr>
               ) : (
                 pageRows.map((u) => (
                   <tr key={u.id} className="border-t border-border/70">
-                    <Td>
+                    <Td className="whitespace-nowrap">{u.employeeId || "—"}</Td>
+                    <Td className="whitespace-nowrap">
                       <Link
                         to={`/admin/employees/${u.id}`}
                         className="text-primary underline"
@@ -235,14 +270,28 @@ export default function EmployeeList() {
                       </Link>
                     </Td>
                     <Td>
-                      <span className="truncate inline-block max-w-[28rem] align-middle">
+                      <span className="truncate inline-block align-middle">
                         {u.email}
                       </span>
                     </Td>
                     <Td>
                       {(() => {
                         const info = resolveRole(u);
-                        return <RoleBadge role={info.slug} label={info.label} />;
+                        return (
+                          <RoleBadge role={info.slug} label={info.label} />
+                        );
+                      })()}
+                    </Td>
+                    <Td className="whitespace-nowrap">
+                      {(() => {
+                        const info = resolveEmploymentStatus(u);
+                        return (
+                          <span
+                            className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${info.tone}`}
+                          >
+                            {info.label}
+                          </span>
+                        );
                       })()}
                     </Td>
                   </tr>
@@ -268,12 +317,15 @@ export default function EmployeeList() {
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <div className="px-4 py-6 text-center text-muted">
+            <div className="px-4 py-6 text-center text-muted-foreground">
               No employees found.
             </div>
           ) : (
             filtered.map((u) => (
               <div key={u.id} className="p-4">
+                <div className="text-xs text-muted-foreground">
+                  ID: {u.employeeId || "—"}
+                </div>
                 <div className="font-medium">
                   <Link
                     to={`/admin/employees/${u.id}`}
@@ -282,30 +334,41 @@ export default function EmployeeList() {
                     {u.name}
                   </Link>
                 </div>
-                <div className="text-sm text-muted">{u.email}</div>
+                <div className="text-sm text-muted-foreground">{u.email}</div>
                 <div className="mt-2">
                   {(() => {
                     const info = resolveRole(u);
                     return <RoleBadge role={info.slug} label={info.label} />;
                   })()}
                 </div>
+                <div className="mt-3">
+                  {(() => {
+                    const info = resolveEmploymentStatus(u);
+                    return (
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${info.tone}`}
+                      >
+                        {info.label}
+                      </span>
+                    );
+                  })()}
+                </div>
               </div>
             ))
           )}
         </div>
+        <div className="border-t border-border px-4 py-3">
+          <PaginationFooter
+            page={page}
+            pages={pages}
+            onFirst={() => setPage(1)}
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => Math.min(pages, p + 1))}
+            onLast={() => setPage(pages)}
+            disabled={loading}
+          />
+        </div>
       </section>
-
-      <div className="flex items-center justify-end">
-        <Pagination
-          page={page}
-          pages={pages}
-          onFirst={() => setPage(1)}
-          onPrev={() => setPage((p) => Math.max(1, p - 1))}
-          onNext={() => setPage((p) => Math.min(pages, p + 1))}
-          onLast={() => setPage(pages)}
-          disabled={loading}
-        />
-      </div>
     </div>
   );
 }

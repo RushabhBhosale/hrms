@@ -6,15 +6,40 @@ const Leave = require("../models/Leave");
 const Company = require("../models/Company");
 const Project = require("../models/Project");
 const Task = require("../models/Task");
+const AttendanceRequest = require("../models/AttendanceRequest");
 const AttendanceOverride = require("../models/AttendanceOverride");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
+const AttendancePenalty = require("../models/AttendancePenalty");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
 const { runAutoPunchOut } = require("../jobs/autoPunchOut");
+const { runDailyStatusEmailJob } = require("../jobs/dailyStatusEmail");
+const { accrueTotalIfNeeded } = require("../utils/leaveBalances");
+const { computeDerivedBalances } = require("../utils/leaveMath");
+const {
+  DEFAULT_SANDWICH_MIN_DAYS,
+  normalizeSandwichMinDays,
+} = require("../utils/sandwich");
+const { requirePrimary } = require("../middleware/roles");
 
 function startOfDay(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
   return x;
+}
+
+function getAttendanceStartDate(employee) {
+  if (!employee) return null;
+  const joining =
+    employee.joiningDate && !Number.isNaN(new Date(employee.joiningDate).getTime())
+      ? startOfDay(employee.joiningDate)
+      : null;
+  const attendanceRaw = employee.attendanceStartDate;
+  const attendance =
+    attendanceRaw && !Number.isNaN(new Date(attendanceRaw).getTime())
+      ? startOfDay(attendanceRaw)
+      : null;
+  if (attendance && joining && attendance < joining) return joining;
+  return attendance || joining;
 }
 
 // Build yyyy-mm-dd for server-local date
@@ -24,6 +49,14 @@ function dateKeyLocal(d) {
   const m = String(x.getMonth() + 1).padStart(2, "0");
   const day = String(x.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function escapeHtml(value) {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 // Treat manual time inputs as belonging to a company-configured timezone.
@@ -36,7 +69,9 @@ const CONFIGURED_ATTENDANCE_OFFSET_MINUTES = (() => {
   return Number.isFinite(parsed) ? parsed : null;
 })();
 
-function resolveAttendanceOffsetMinutes(year, month, day) {
+function resolveAttendanceOffsetMinutes(year, month, day, options = {}) {
+  const rawOverride = options.timezoneOffsetMinutes;
+  if (Number.isFinite(rawOverride)) return rawOverride;
   if (CONFIGURED_ATTENDANCE_OFFSET_MINUTES !== null)
     return CONFIGURED_ATTENDANCE_OFFSET_MINUTES;
   // Use midday to avoid DST midnight transitions impacting offset lookup.
@@ -44,7 +79,7 @@ function resolveAttendanceOffsetMinutes(year, month, day) {
   return -probe.getTimezoneOffset();
 }
 
-function buildUtcDateFromLocal(dateKey, timeValue) {
+function buildUtcDateFromLocal(dateKey, timeValue, options = {}) {
   if (dateKey === null || dateKey === undefined)
     throw new Error("Invalid date");
 
@@ -68,18 +103,161 @@ function buildUtcDateFromLocal(dateKey, timeValue) {
   if (!Number.isFinite(minutes) || minutes < 0 || minutes > 59)
     throw new Error("Invalid minutes");
 
-  const offsetMs = resolveAttendanceOffsetMinutes(year, month, day) * 60000;
+  const offsetMs =
+    resolveAttendanceOffsetMinutes(year, month, day, options) * 60000;
   const utcMillis = Date.UTC(year, month - 1, day, hours, minutes);
   return new Date(utcMillis - offsetMs);
+}
+
+function extractTimezoneOptions(payload) {
+  if (!payload) return {};
+  const raw = payload.timezoneOffsetMinutes;
+  if (raw === undefined || raw === null) return {};
+  const normalized =
+    typeof raw === "string" ? raw.trim() : raw;
+  if (typeof normalized === "string" && normalized === "") return {};
+  const parsed = Number(normalized);
+  if (Number.isFinite(parsed)) {
+    return { timezoneOffsetMinutes: parsed };
+  }
+  return {};
+}
+
+function httpError(message, status = 400) {
+  const err = new Error(message);
+  err.statusCode = status;
+  return err;
+}
+
+function normalizeTimeString(value) {
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim();
+  const [hhRaw, mmRaw] = str.split(":");
+  const hours = parseInt(hhRaw, 10);
+  const minutes = parseInt(mmRaw, 10);
+  if (!Number.isFinite(hours) || hours < 0 || hours > 23) return null;
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 59) return null;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function validatePunchWindowInput(
+  dateValue,
+  punchIn,
+  punchOut,
+  timezoneOptions = {}
+) {
+  if (!dateValue) throw httpError("Missing date");
+  const day = startOfDay(new Date(dateValue));
+  if (Number.isNaN(day.getTime())) throw httpError("Invalid date");
+
+  const normalizedIn = normalizeTimeString(punchIn);
+  const normalizedOut = normalizeTimeString(punchOut);
+  if (!normalizedIn || !normalizedOut)
+    throw httpError("Both punch-in and punch-out times are required");
+
+  const options = extractTimezoneOptions(timezoneOptions);
+  const dateKey = dateKeyLocal(day);
+
+  let punchInDate;
+  let punchOutDate;
+  try {
+    punchInDate = buildUtcDateFromLocal(dateKey, normalizedIn, options);
+  } catch (err) {
+    throw httpError(err?.message || "Invalid punch-in time");
+  }
+  try {
+    punchOutDate = buildUtcDateFromLocal(dateKey, normalizedOut, options);
+  } catch (err) {
+    throw httpError(err?.message || "Invalid punch-out time");
+  }
+
+  const nextDay = new Date(day);
+  nextDay.setDate(nextDay.getDate() + 1);
+  if (!(punchInDate >= day && punchInDate < nextDay))
+    throw httpError("Punch-in must fall within the selected day");
+  if (!(punchOutDate >= day && punchOutDate < nextDay))
+    throw httpError("Punch-out must fall within the selected day");
+  if (!(punchOutDate > punchInDate))
+    throw httpError("Punch-out must be after punch-in");
+
+  const MAX_SPAN_MS = 16 * 60 * 60 * 1000;
+  const windowMs = Math.min(
+    MAX_SPAN_MS,
+    Math.max(0, punchOutDate.getTime() - punchInDate.getTime())
+  );
+
+  return {
+    day,
+    punchInDate,
+    punchOutDate,
+    punchIn: normalizedIn,
+    punchOut: normalizedOut,
+    windowMs,
+    timezoneOptions: options,
+  };
+}
+
+async function applyManualAttendanceWindow({
+  employeeId,
+  date,
+  punchIn,
+  punchOut,
+  timezoneOptions,
+  resolvedBy,
+}) {
+  if (!employeeId) throw httpError("Missing employeeId");
+
+  const { day, punchInDate, punchOutDate, windowMs } =
+    validatePunchWindowInput(date, punchIn, punchOut, timezoneOptions);
+
+  let record = await Attendance.findOne({ employee: employeeId, date: day });
+
+  if (!record) {
+    record = await Attendance.create({
+      employee: employeeId,
+      date: day,
+      firstPunchIn: punchInDate,
+      lastPunchIn: undefined,
+      lastPunchOut: punchOutDate,
+      workedMs: windowMs,
+    });
+    await resolveAutoLeavePenaltyForDay(employeeId, day, resolvedBy);
+    return record;
+  }
+
+  record.firstPunchIn = punchInDate;
+  record.lastPunchOut = punchOutDate;
+  record.lastPunchIn = undefined;
+  record.workedMs = windowMs;
+
+  if (record.autoPunchOut) {
+    record.autoPunchOut = false;
+    record.autoPunchResolvedAt = new Date();
+    record.autoPunchOutAt = punchOutDate;
+    record.autoPunchLastIn = undefined;
+  }
+
+  if (record.manualFillRequest) {
+    record.manualFillRequest.status = "COMPLETED";
+    record.manualFillRequest.resolvedAt = new Date();
+    record.manualFillRequest.resolvedBy = resolvedBy;
+  }
+
+  await record.save();
+  await resolveAutoLeavePenaltyForDay(employeeId, day, resolvedBy);
+
+  return record;
 }
 
 function isAdminUser(emp) {
   return ["ADMIN", "SUPERADMIN"].includes(emp?.primaryRole);
 }
 
-function canManageManualAttendance(emp) {
-  if (isAdminUser(emp)) return true;
-  return (emp?.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+function canViewManualRequests(emp) {
+  return (
+    isAdminUser(emp) ||
+    (emp?.subRoles || []).some((r) => ["hr", "manager"].includes(r))
+  );
 }
 
 const ATTENDANCE_ISSUE_TYPES = {
@@ -87,6 +265,552 @@ const ATTENDANCE_ISSUE_TYPES = {
   MISSING_PUNCH_OUT: "missingPunchOut",
   NO_ATTENDANCE: "noAttendance",
 };
+
+function getSandwichPolicyConfig(company) {
+  const cfg = company?.leavePolicy?.sandwich || {};
+  const enabled = !!cfg.enabled;
+  const minDays = normalizeSandwichMinDays(
+    cfg.minDays,
+    DEFAULT_SANDWICH_MIN_DAYS
+  );
+  return { enabled, minDays };
+}
+
+function shouldApplySandwichRange(rangeStart, rangeEnd, policy) {
+  if (!policy?.enabled) return false;
+  const start = startOfDay(rangeStart);
+  const end = startOfDay(rangeEnd);
+  if (end < start) return false;
+  const totalDays =
+    Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+  return totalDays > policy.minDays;
+}
+
+function numberOrZero(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeAllocations(alloc = {}) {
+  return {
+    paid: numberOrZero(alloc.paid),
+    casual: numberOrZero(alloc.casual),
+    sick: numberOrZero(alloc.sick),
+    unpaid: numberOrZero(alloc.unpaid),
+  };
+}
+
+function pickAutoLeaveType(allocations) {
+  const normalized = normalizeAllocations(allocations);
+  if (normalized.paid > 0) return "PAID";
+  if (normalized.casual > 0) return "CASUAL";
+  if (normalized.sick > 0) return "SICK";
+  return "UNPAID";
+}
+
+function buildAutoLeaveReason(day) {
+  return `Auto leave: Missing attendance on ${dateKeyLocal(day)}`;
+}
+
+async function ensureAutoLeaveDocument({ employee, penalty, allocations, day }) {
+  if (!employee || !penalty) return;
+  const targetDay = startOfDay(day);
+  const normalizedAllocations = normalizeAllocations(allocations || {});
+  const fallbackType =
+    normalizedAllocations.unpaid > 0 ? "UNPAID" : null;
+  const payload = {
+    employee: employee._id,
+    company: employee.company,
+    type: pickAutoLeaveType(normalizedAllocations),
+    fallbackType,
+    startDate: targetDay,
+    endDate: targetDay,
+    reason: buildAutoLeaveReason(targetDay),
+    status: "APPROVED",
+    allocations: normalizedAllocations,
+    isAuto: true,
+    autoPenalty: penalty._id,
+  };
+  if (employee.reportingPerson) {
+    payload.approver = employee.reportingPerson;
+  }
+  await Leave.findOneAndUpdate(
+    { autoPenalty: penalty._id },
+    { $set: payload },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+}
+
+async function deleteAutoLeaveDocument({ penalty, employeeId, day }) {
+  if (!penalty) return;
+  const res = await Leave.deleteOne({ autoPenalty: penalty._id });
+  if (res?.deletedCount && res.deletedCount > 0) return;
+  if (!employeeId) return;
+  const targetDay = startOfDay(day);
+  await Leave.deleteMany({
+    employee: employeeId,
+    startDate: targetDay,
+    endDate: targetDay,
+    isAuto: true,
+    autoPenalty: { $exists: false },
+  });
+}
+
+async function ensureAutoLeavePenaltyForDay(employeeId, day) {
+  if (!employeeId || !day) return null;
+  const targetDay = startOfDay(day);
+  let penalty = await AttendancePenalty.findOne({
+    employee: employeeId,
+    date: targetDay,
+    resolvedAt: null,
+  });
+  if (penalty) {
+    const employeeLite = await Employee.findById(employeeId).select(
+      "company reportingPerson"
+    );
+    if (employeeLite) {
+      await ensureAutoLeaveDocument({
+        employee: employeeLite,
+        penalty,
+        allocations: penalty.allocations || {},
+        day: targetDay,
+      });
+    }
+    return penalty;
+  }
+
+  const employee = await Employee.findById(employeeId);
+  if (!employee || !employee.company) return null;
+  const attendanceStart = getAttendanceStartDate(employee);
+  if (attendanceStart && targetDay < attendanceStart) {
+    return null;
+  }
+  const company = await Company.findById(employee.company).select("leavePolicy");
+  if (!company) return null;
+
+  await accrueTotalIfNeeded(employee, company, targetDay);
+
+  const caps = company.leavePolicy?.typeCaps || {};
+  if (!employee.leaveUsage) {
+    employee.leaveUsage = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+  }
+  const used = employee.leaveUsage;
+  used.paid = numberOrZero(used.paid);
+  used.casual = numberOrZero(used.casual);
+  used.sick = numberOrZero(used.sick);
+  used.unpaid = numberOrZero(used.unpaid);
+
+  const totalAvail = Math.max(0, numberOrZero(employee.totalLeaveAvailable));
+  let poolRemaining = totalAvail;
+  let remaining = 1;
+  const allocations = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+  const typeOrder = ["paid", "casual", "sick"];
+
+  for (const type of typeOrder) {
+    if (remaining <= 0) break;
+    const cap = Math.max(0, numberOrZero(caps[type]));
+    const usedType = numberOrZero(used[type]);
+    const capRemain = Math.max(0, cap - usedType);
+    if (capRemain <= 0 || poolRemaining <= 0) continue;
+    const take = Math.min(remaining, Math.min(capRemain, poolRemaining));
+    if (take <= 0) continue;
+    allocations[type] += take;
+    used[type] = usedType + take;
+    poolRemaining -= take;
+    remaining -= take;
+  }
+
+  if (remaining > 0) {
+    allocations.unpaid += remaining;
+    used.unpaid += remaining;
+    remaining = 0;
+  }
+
+  const derived = computeDerivedBalances(caps, used);
+  const nextLeaveUsage = {
+    paid: numberOrZero(used.paid),
+    casual: numberOrZero(used.casual),
+    sick: numberOrZero(used.sick),
+    unpaid: numberOrZero(used.unpaid),
+  };
+  const nextTotalLeave = Math.max(0, poolRemaining);
+  employee.leaveUsage = nextLeaveUsage;
+  employee.leaveBalances = derived;
+  employee.totalLeaveAvailable = nextTotalLeave;
+  await Employee.updateOne(
+    { _id: employee._id },
+    {
+      $set: {
+        leaveUsage: nextLeaveUsage,
+        leaveBalances: derived,
+        totalLeaveAvailable: nextTotalLeave,
+      },
+    }
+  );
+
+  penalty = await AttendancePenalty.create({
+    employee: employee._id,
+    company: employee.company,
+    date: targetDay,
+    units:
+      allocations.paid +
+      allocations.casual +
+      allocations.sick +
+      allocations.unpaid,
+    allocations,
+  });
+  await ensureAutoLeaveDocument({
+    employee,
+    penalty,
+    allocations,
+    day: targetDay,
+  });
+  return penalty;
+}
+
+async function resolveAutoLeavePenaltyForDay(employeeId, day, resolvedBy) {
+  if (!employeeId || !day) return;
+  const targetDay = startOfDay(day);
+  const penalty = await AttendancePenalty.findOne({
+    employee: employeeId,
+    date: targetDay,
+    resolvedAt: null,
+  });
+  if (!penalty) return;
+
+  const employee = await Employee.findById(employeeId);
+  if (!employee) return;
+  if (!employee.leaveUsage) {
+    employee.leaveUsage = { paid: 0, casual: 0, sick: 0, unpaid: 0 };
+  }
+  const company = employee.company
+    ? await Company.findById(employee.company).select("leavePolicy")
+    : null;
+  const caps = company?.leavePolicy?.typeCaps || {};
+  const used = employee.leaveUsage;
+
+  const allocations = penalty.allocations || {};
+  const typedRefund =
+    numberOrZero(allocations.paid) +
+    numberOrZero(allocations.casual) +
+    numberOrZero(allocations.sick);
+  employee.totalLeaveAvailable = Math.max(
+    0,
+    numberOrZero(employee.totalLeaveAvailable) + typedRefund
+  );
+
+  const types = ["paid", "casual", "sick", "unpaid"];
+  for (const type of types) {
+    const current = numberOrZero(used[type]);
+    const delta = numberOrZero(allocations[type]);
+    used[type] = Math.max(0, current - delta);
+  }
+
+  const derived = computeDerivedBalances(caps, used);
+  const nextLeaveUsage = {
+    paid: numberOrZero(used.paid),
+    casual: numberOrZero(used.casual),
+    sick: numberOrZero(used.sick),
+    unpaid: numberOrZero(used.unpaid),
+  };
+  employee.leaveUsage = nextLeaveUsage;
+  employee.leaveBalances = derived;
+  await Employee.updateOne(
+    { _id: employee._id },
+    {
+      $set: {
+        leaveUsage: nextLeaveUsage,
+        leaveBalances: derived,
+        totalLeaveAvailable: employee.totalLeaveAvailable,
+      },
+    }
+  );
+
+  penalty.resolvedAt = new Date();
+  penalty.resolvedBy = resolvedBy || employeeId;
+  await penalty.save();
+  await deleteAutoLeaveDocument({
+    penalty,
+    employeeId,
+    day: targetDay,
+  });
+}
+
+async function cleanupAutoPenaltiesBeforeStart(employeeId, startDate) {
+  if (!employeeId || !startDate) return;
+  const cutoff = startOfDay(startDate);
+  const penalties = await AttendancePenalty.find({
+    employee: employeeId,
+    date: { $lt: cutoff },
+    resolvedAt: null,
+  }).lean();
+  for (const p of penalties) {
+    try {
+      await resolveAutoLeavePenaltyForDay(employeeId, p.date, employeeId);
+    } catch (err) {
+      console.error(
+        "[attendance] failed to resolve old auto penalty",
+        err?.message || err
+      );
+    }
+  }
+  await Leave.deleteMany({
+    employee: employeeId,
+    endDate: { $lt: cutoff },
+    isAuto: true,
+  });
+}
+
+function getDayThresholds(workHours) {
+  const wh = workHours || {};
+  const rawFull =
+    Number.isFinite(wh?.minFullDayHours) && wh.minFullDayHours > 0
+      ? wh.minFullDayHours
+      : 6;
+  const rawHalf =
+    Number.isFinite(wh?.minHalfDayHours) && wh.minHalfDayHours >= 0
+      ? wh.minHalfDayHours
+      : 3;
+  const fullHours = rawFull;
+  const halfHours = Math.min(rawHalf, fullHours);
+  return {
+    fullHours,
+    halfHours,
+    fullMs: fullHours * 3600000,
+    halfMs: halfHours * 3600000,
+  };
+}
+
+async function buildMonthlyLeaveSummary({
+  employeeId,
+  start,
+  end,
+  company,
+  companyOverridesByKey,
+  now = new Date(),
+  employmentStart,
+  attendanceStart,
+}) {
+  const companyOverrideMap =
+    companyOverridesByKey && typeof companyOverridesByKey.get === "function"
+      ? companyOverridesByKey
+      : new Map();
+  const attendanceStartDay = attendanceStart ? startOfDay(attendanceStart) : null;
+
+  const rangeStart = (() => {
+    const base = startOfDay(start || new Date());
+    if (!employmentStart) return base;
+    const employmentDay = startOfDay(employmentStart);
+    return employmentDay > base ? employmentDay : base;
+  })();
+
+  if (!(end > rangeStart)) {
+    return {
+      leaveDays: 0,
+      halfDayLeaves: 0,
+      leaveDates: [],
+      bankHolidays: [],
+    };
+  }
+
+  const overrides = await AttendanceOverride.find({
+    employee: employeeId,
+    date: { $gte: rangeStart, $lt: end },
+  })
+    .select("date ignoreHoliday ignoreHalfDay")
+    .lean();
+  const overrideByKey = new Map(
+    overrides.map((o) => [dateKeyLocal(o.date), o])
+  );
+
+  const bankHolidayMap = new Map();
+  (company?.bankHolidays || [])
+    .filter((h) => h.date >= rangeStart && h.date < end)
+    .forEach((h) => {
+      const key = dateKeyLocal(h.date);
+      if (overrideByKey.get(key)?.ignoreHoliday) return;
+      bankHolidayMap.set(key, h.name || "Holiday");
+    });
+  for (const [key, o] of companyOverrideMap) {
+    if (o.type === "WORKING") bankHolidayMap.delete(key);
+    if (o.type === "HOLIDAY") {
+      const label = bankHolidayMap.get(key) || "Company holiday";
+      bankHolidayMap.set(key, label);
+    }
+  }
+  const bankHolidayKeys = Array.from(bankHolidayMap.keys()).sort();
+  const bankHolidayDetails = bankHolidayKeys.map((key) => ({
+    date: key,
+    name: bankHolidayMap.get(key) || "Holiday",
+  }));
+  const bankHolidaySet = new Set(bankHolidayKeys);
+
+  const leaves = await Leave.find({
+    employee: employeeId,
+    status: "APPROVED",
+    startDate: { $lte: end },
+    endDate: { $gte: rangeStart },
+  }).lean();
+
+  const sandwichPolicy = getSandwichPolicyConfig(company);
+  const approvedLeaveSet = new Set();
+  const sandwichDaySet = new Set();
+  for (const l of leaves) {
+    let leaveStart = startOfDay(l.startDate);
+    let leaveEnd = startOfDay(l.endDate);
+    if (leaveEnd < rangeStart) continue;
+    if (leaveStart < rangeStart) leaveStart = rangeStart;
+    if (leaveEnd > end) leaveEnd = new Date(end.getTime() - 1);
+    const applySandwich = shouldApplySandwichRange(
+      leaveStart,
+      leaveEnd,
+      sandwichPolicy
+    );
+    for (
+      let cursor = new Date(leaveStart);
+      cursor <= leaveEnd;
+      cursor.setDate(cursor.getDate() + 1)
+    ) {
+      const key = dateKeyLocal(cursor);
+      let isWeekend = cursor.getDay() === 0 || cursor.getDay() === 6;
+      const compOv = companyOverrideMap.get(key);
+      if (compOv?.type === "WORKING" || compOv?.type === "HALF_DAY")
+        isWeekend = false;
+      let isHoliday = bankHolidaySet.has(key);
+      if (compOv?.type === "WORKING") isHoliday = false;
+      if (compOv?.type === "HOLIDAY") isHoliday = true;
+
+      if (!isWeekend && !isHoliday) {
+        approvedLeaveSet.add(key);
+      } else if (applySandwich && (isWeekend || isHoliday)) {
+        sandwichDaySet.add(key);
+        approvedLeaveSet.add(key);
+      }
+    }
+  }
+
+  const attRecords = await Attendance.find({
+    employee: employeeId,
+    date: { $gte: rangeStart, $lt: end },
+  })
+    .select("date firstPunchIn lastPunchOut lastPunchIn workedMs")
+    .lean();
+  const attendanceByKey = new Map(
+    attRecords.map((r) => [dateKeyLocal(r.date), r])
+  );
+
+  const { fullMs: fullDayMs, halfMs: halfDayMs } = getDayThresholds(
+    company?.workHours
+  );
+  const leaveDateSet = new Set();
+  let leaveUnits = 0;
+  let halfDayCount = 0;
+
+  for (
+    let cursor = new Date(rangeStart);
+    cursor < end;
+    cursor.setDate(cursor.getDate() + 1)
+  ) {
+    const day = new Date(cursor);
+    const key = dateKeyLocal(day);
+    const rec = attendanceByKey.get(key);
+    const compOv = companyOverrideMap.get(key);
+    const ov = overrideByKey.get(key);
+    const isSandwichDay = sandwichDaySet.has(key);
+    const beforeAttendanceWindow =
+      attendanceStartDay && day < attendanceStartDay;
+
+    let isWeekend = day.getDay() === 0 || day.getDay() === 6;
+    if (compOv?.type === "WORKING" || compOv?.type === "HALF_DAY")
+      isWeekend = false;
+
+    let isHoliday = bankHolidaySet.has(key);
+    if (compOv?.type === "WORKING") isHoliday = false;
+    if (compOv?.type === "HOLIDAY") isHoliday = true;
+    if (ov?.ignoreHoliday) isHoliday = false;
+    if (isSandwichDay) {
+      isWeekend = false;
+      isHoliday = false;
+    }
+
+    const inFuture = day > now;
+    const hasApprovedLeave = approvedLeaveSet.has(key);
+    if (beforeAttendanceWindow && !hasApprovedLeave) continue;
+
+    let timeSpentMs = 0;
+    if (rec) {
+      timeSpentMs = rec.workedMs || 0;
+      if (rec.lastPunchIn && !rec.lastPunchOut) {
+        const recDay = startOfDay(new Date(rec.date));
+        if (recDay.getTime() === startOfDay(now).getTime()) {
+          timeSpentMs += now.getTime() - new Date(rec.lastPunchIn).getTime();
+        }
+      }
+      if (!timeSpentMs && rec.firstPunchIn && rec.lastPunchOut) {
+        timeSpentMs =
+          new Date(rec.lastPunchOut).getTime() -
+          new Date(rec.firstPunchIn).getTime();
+      }
+    }
+
+    const meetsFullDay = timeSpentMs >= fullDayMs;
+    const meetsHalfDay = !meetsFullDay && timeSpentMs >= halfDayMs;
+    const meetsHalfOrBetter = meetsFullDay || timeSpentMs >= halfDayMs;
+    let dayType = meetsFullDay ? "FULL_DAY" : "HALF_DAY";
+
+    let status = "";
+    if (inFuture) status = "";
+    else if (isWeekend) status = "WEEKEND";
+    else if (isHoliday) status = "HOLIDAY";
+    else if (rec && timeSpentMs > 0) {
+      status = meetsHalfOrBetter ? "WORKED" : "LEAVE";
+    } else if (hasApprovedLeave) {
+      status = "LEAVE";
+    } else if (!rec || timeSpentMs <= 0) {
+      status = "LEAVE";
+    } else {
+      status = "WORKED";
+    }
+
+    let leaveUnit = 0;
+    if (!inFuture && !isWeekend && !isHoliday) {
+      if (status === "LEAVE") {
+        leaveUnit = 1;
+      } else if (status === "WORKED") {
+        if (meetsFullDay) leaveUnit = 0;
+        else if (meetsHalfDay) leaveUnit = 0.5;
+        else leaveUnit = 1;
+      }
+    }
+
+    if (!inFuture && !isWeekend && !isHoliday && compOv?.type === "HALF_DAY") {
+      if ((!rec || timeSpentMs <= 0) && leaveUnit === 0) {
+        status = "LEAVE";
+        leaveUnit = 0.5;
+        dayType = "HALF_DAY";
+      }
+    }
+
+    if (ov?.ignoreHalfDay && status === "WORKED" && dayType === "HALF_DAY") {
+      dayType = "FULL_DAY";
+      leaveUnit = 0;
+    }
+
+    if (leaveUnit > 0) {
+      leaveDateSet.add(key);
+      if (Math.abs(leaveUnit - 0.5) < 1e-6) halfDayCount += 1;
+    }
+    leaveUnits += leaveUnit;
+  }
+
+  return {
+    leaveDays: Math.round(leaveUnits * 100) / 100,
+    halfDayLeaves: halfDayCount,
+    leaveDates: Array.from(leaveDateSet).sort(),
+    bankHolidays: bankHolidayKeys,
+    bankHolidayDetails,
+  };
+}
 
 async function collectAttendanceIssues({
   employeeId,
@@ -100,20 +824,25 @@ async function collectAttendanceIssues({
   const employee =
     employeeDoc ||
     (await Employee.findById(employeeId)
-      .select("company createdAt joiningDate")
+      .select("company joiningDate attendanceStartDate")
       .lean());
 
-  const employmentStartRaw = employee?.joiningDate || employee?.createdAt;
+  const employmentStartRaw = employee?.joiningDate;
   const employmentStart = employmentStartRaw
     ? startOfDay(employmentStartRaw)
     : null;
+  const attendanceStart = getAttendanceStartDate(employee);
+  const effectiveStart = attendanceStart || employmentStart;
 
-  let rangeStart = start ? startOfDay(start) : employmentStart || todayStart;
-  if (employmentStart && rangeStart < employmentStart) {
-    rangeStart = employmentStart;
+  let rangeStart = start ? startOfDay(start) : effectiveStart || todayStart;
+  if (effectiveStart && rangeStart < effectiveStart) {
+    rangeStart = effectiveStart;
   }
 
   if (!(end > rangeStart)) return [];
+  if (effectiveStart) {
+    await cleanupAutoPenaltiesBeforeStart(employeeId, effectiveStart);
+  }
 
   const [records, company, companyOverrides, overrides, leaves] = await Promise.all([
     Attendance.find({
@@ -121,7 +850,7 @@ async function collectAttendanceIssues({
       date: { $gte: rangeStart, $lt: end },
     })
       .select(
-        "date firstPunchIn lastPunchOut autoPunchOut autoPunchOutAt autoPunchLastIn manualFillRequest"
+        "date firstPunchIn lastPunchOut autoPunchOut autoPunchOutAt autoPunchLastIn"
       )
       .lean(),
     employee?.company
@@ -174,16 +903,14 @@ async function collectAttendanceIssues({
   }
 
   const issues = [];
+  const missingAttendanceDays = [];
   for (let cursor = new Date(rangeStart); cursor < end; cursor.setDate(cursor.getDate() + 1)) {
     const day = startOfDay(cursor);
     if (day >= todayStart) break;
-    if (employmentStart && day < employmentStart) continue;
+    if (effectiveStart && day < effectiveStart) continue;
 
     const key = dateKeyLocal(day);
     const rec = attendanceByKey.get(key);
-
-    const manualReqStatus = rec?.manualFillRequest?.status;
-    if (manualReqStatus === "COMPLETED") continue;
 
     let isWeekend = day.getDay() === 0 || day.getDay() === 6;
     const compOverride = companyOverrideByKey.get(key);
@@ -203,6 +930,7 @@ async function collectAttendanceIssues({
 
     if (!rec || !rec.firstPunchIn) {
       issues.push({ date: key, type: ATTENDANCE_ISSUE_TYPES.NO_ATTENDANCE });
+      missingAttendanceDays.push(new Date(day));
       continue;
     }
 
@@ -224,52 +952,17 @@ async function collectAttendanceIssues({
     }
   }
 
-  return issues;
-}
+  if (missingAttendanceDays.length) {
+    for (const d of missingAttendanceDays) {
+      try {
+        await ensureAutoLeavePenaltyForDay(employeeId, d);
+      } catch (err) {
+        console.error("auto-penalty error", err?.message || err);
+      }
+    }
+  }
 
-function serializeManualRequest(record) {
-  if (!record) return null;
-  const reqInfo = record.manualFillRequest || {};
-  const employee = record.employee || {};
-  const requestedBy = reqInfo.requestedBy || {};
-  const resolvedBy = reqInfo.resolvedBy || {};
-  const id = record._id || record.id;
-  return {
-    id: id ? String(id) : null,
-    employee: employee
-      ? {
-          id: employee._id ? String(employee._id) : null,
-          name: employee.name || "",
-          email: employee.email || "",
-        }
-      : null,
-    date: record.date ? dateKeyLocal(record.date) : null,
-    note: reqInfo.note || "",
-    adminNote: reqInfo.adminNote || "",
-    status: reqInfo.status || "PENDING",
-    requestedAt: reqInfo.requestedAt || null,
-    acknowledgedAt: reqInfo.acknowledgedAt || null,
-    resolvedAt: reqInfo.resolvedAt || null,
-    requestedBy: requestedBy._id
-      ? {
-          id: String(requestedBy._id),
-          name: requestedBy.name || "",
-          email: requestedBy.email || "",
-        }
-      : null,
-    resolvedBy: resolvedBy._id
-      ? {
-          id: String(resolvedBy._id),
-          name: resolvedBy.name || "",
-          email: resolvedBy.email || "",
-        }
-      : null,
-    autoPunchOut: !!record.autoPunchOut,
-    autoPunchOutAt: record.autoPunchOutAt || null,
-    firstPunchIn: record.firstPunchIn || null,
-    lastPunchOut: record.lastPunchOut || null,
-    workedMs: record.workedMs || 0,
-  };
+  return issues;
 }
 
 router.post("/punch", auth, async (req, res) => {
@@ -280,20 +973,24 @@ router.post("/punch", auth, async (req, res) => {
   const rawLocation =
     typeof req.body.location === "string" ? req.body.location.trim() : "";
   const locationLabel = rawLocation ? rawLocation.slice(0, 140) : "";
+  const triggerDailyStatusEmail =
+    req.body?.triggerDailyStatusEmail === true ||
+    req.body?.triggerDailyStatusEmail === "true" ||
+    req.body?.triggerDailyStatusEmail === 1 ||
+    req.body?.triggerDailyStatusEmail === "1";
 
   const today = startOfDay(new Date());
 
   if (action === "in") {
     const employeeDoc = await Employee.findById(req.employee.id)
-      .select("company createdAt joiningDate")
+      .select("company joiningDate attendanceStartDate")
       .lean();
     const fallbackStart = new Date(today);
     fallbackStart.setDate(fallbackStart.getDate() - 365);
-    const lookbackStart = employeeDoc?.joiningDate
-      ? new Date(employeeDoc.joiningDate)
-      : employeeDoc?.createdAt
-      ? new Date(employeeDoc.createdAt)
-      : fallbackStart;
+    const startBoundary =
+      getAttendanceStartDate(employeeDoc) ||
+      (employeeDoc?.joiningDate ? new Date(employeeDoc.joiningDate) : null);
+    const lookbackStart = startBoundary || fallbackStart;
     const issues = await collectAttendanceIssues({
       employeeId: req.employee.id,
       start: lookbackStart,
@@ -331,7 +1028,6 @@ router.post("/punch", auth, async (req, res) => {
     return res.json({ attendance: record });
   }
 
-  let didPunchOut = false;
   if (action === "in") {
     if (!record.lastPunchIn) {
       if (!record.firstPunchIn) record.firstPunchIn = now;
@@ -349,152 +1045,31 @@ router.post("/punch", auth, async (req, res) => {
       record.workedMs += now.getTime() - record.lastPunchIn.getTime();
       record.lastPunchOut = now;
       record.lastPunchIn = undefined;
-      didPunchOut = true;
     }
   }
   await record.save();
-  res.json({ attendance: record });
-
-  // Fire-and-forget: on punch-out, send daily task summary email to reporting person
-  if (didPunchOut) {
-    (async () => {
-      try {
-        const emp = await Employee.findById(req.employee.id)
-          .select(
-            "name email company reportingPersons reportingPerson"
-          )
-          .lean();
-        if (!emp) return;
-        const companyId = emp.company;
-        if (!(await isEmailEnabled(companyId))) return;
-        const reportingIds = Array.from(
-          new Set(
-            [
-              ...(Array.isArray(emp.reportingPersons)
-                ? emp.reportingPersons.map((id) => String(id))
-                : []),
-              emp.reportingPerson ? String(emp.reportingPerson) : null,
-            ].filter(Boolean)
-          )
-        );
-        if (!reportingIds.length) return; // no reporting person configured
-        const reportingRecipients = await Employee.find({
-          _id: { $in: reportingIds },
-        })
-          .select("name email")
-          .lean();
-        const recipientEmails = reportingRecipients
-          .map((rp) => rp?.email)
-          .filter((email) => typeof email === 'string' && email.trim());
-        if (!recipientEmails.length) return;
-
-        // Determine the calendar day for the record
-        const dayStart = startOfDay(record.date);
-        const dayEnd = new Date(dayStart);
-        dayEnd.setDate(dayEnd.getDate() + 1);
-
-        // Limit to projects within the same company
-        const companyProjects = await Project.find({ company: emp.company })
-          .select("_id title")
-          .lean();
-        const projectIds = companyProjects.map((p) => p._id);
-
-        // Tasks worked by this employee on that day
-        const rawTasks = await Task.find({
-          project: { $in: projectIds },
-          timeLogs: {
-            $elemMatch: {
-              addedBy: req.employee.id,
-              createdAt: { $gte: dayStart, $lt: dayEnd },
-            },
-          },
-        })
-          .populate("project", "title")
-          .select("title status timeLogs project")
-          .lean();
-
-        const tasks = rawTasks.map((t) => {
-          const logs = (t.timeLogs || []).filter(
-            (l) => String(l.addedBy) === String(req.employee.id) && l.createdAt >= dayStart && l.createdAt < dayEnd
-          );
-          const minutes = logs.reduce((acc, l) => acc + (l.minutes || 0), 0);
-          return {
-            id: String(t._id),
-            title: t.title,
-            status: t.status,
-            projectTitle: t.project ? t.project.title : "",
-            minutes,
-            logs: logs.map((l) => ({
-              minutes: l.minutes,
-              note: l.note,
-              createdAt: l.createdAt,
-            })),
-          };
-        });
-
-        // Build email
-        const y = dayStart.getFullYear();
-        const m = String(dayStart.getMonth() + 1).padStart(2, "0");
-        const d = String(dayStart.getDate()).padStart(2, "0");
-        const dateStr = `${y}-${m}-${d}`;
-        const totalMinutes = tasks.reduce((acc, t) => acc + (t.minutes || 0), 0);
-        const safe = (s) => (s ? String(s).replace(/</g, "&lt;") : "");
-
-        const rowsHtml = tasks.length
-          ? tasks
-              .map(
-                (t) => `
-              <tr>
-                <td style="padding:6px 8px; border:1px solid #eee;">${safe(t.projectTitle)}</td>
-                <td style="padding:6px 8px; border:1px solid #eee;">${safe(t.title)}</td>
-                <td style="padding:6px 8px; border:1px solid #eee; white-space:nowrap;">${Math.round(
-                  (t.minutes || 0) / 6
-                ) / 10} h</td>
-                <td style="padding:6px 8px; border:1px solid #eee; color:#666; font-size:12px;">${
-                  (t.logs || [])
-                    .filter((l) => l.note)
-                    .map((l) => `• ${safe(l.note)}`)
-                    .join("<br/>") || ""
-                }</td>
-              </tr>`
-              )
-              .join("")
-          : `<tr><td colspan="4" style="padding:10px; border:1px solid #eee; color:#666;">No tasks logged today.</td></tr>`;
-
-        const html = `
-          <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; line-height:1.5;">
-            <h2 style="margin:0 0 12px;">Daily Status Report</h2>
-            <p style="margin:0 0 4px;"><strong>Employee:</strong> ${safe(emp.name)} &lt;${safe(emp.email)}&gt;</p>
-            <p style="margin:0 0 12px;"><strong>Date:</strong> ${dateStr}</p>
-            <table style="border-collapse:collapse; width:100%;">
-              <thead>
-                <tr>
-                  <th align="left" style="padding:6px 8px; border:1px solid #eee; background:#f6f6f6;">Project</th>
-                  <th align="left" style="padding:6px 8px; border:1px solid #eee; background:#f6f6f6;">Task</th>
-                  <th align="left" style="padding:6px 8px; border:1px solid #eee; background:#f6f6f6;">Time</th>
-                  <th align="left" style="padding:6px 8px; border:1px solid #eee; background:#f6f6f6;">Notes</th>
-                </tr>
-              </thead>
-              <tbody>${rowsHtml}</tbody>
-            </table>
-            <p style="margin-top:12px;"><strong>Total:</strong> ${Math.round((totalMinutes / 60) * 10) / 10} hours</p>
-            <p style="margin-top:16px; color:#666; font-size:12px;">This is an automated notification from HRMS.</p>
-          </div>
-        `;
-
-        const subject = `Daily Status: ${emp.name} — ${dateStr}`;
-        await sendMail({
-          companyId,
-          to: Array.from(new Set(recipientEmails)),
-          subject,
-          html,
-          text: `Daily Status Report for ${emp.name} on ${dateStr}: Total ${Math.round((totalMinutes / 60) * 10) / 10} hours.`,
-        });
-      } catch (e) {
-        console.warn("[attendance] Failed to send daily status report:", e?.message || e);
-      }
-    })();
+  if (action === "out" && triggerDailyStatusEmail) {
+    const punchOutEmployeeId = req.employee?.id ? String(req.employee.id) : null;
+    if (!punchOutEmployeeId) {
+      console.warn(
+        "daily-status dispatch (punch-out) skipped: missing employee id"
+      );
+      return res.json({ attendance: record });
+    }
+    setImmediate(() => {
+      runDailyStatusEmailJob({
+        employeeIds: [punchOutEmployeeId],
+        strictEmployeeFilter: true,
+        source: "punchout",
+      }).catch((err) =>
+        console.warn(
+          "daily-status dispatch (punch-out) failed",
+          err?.message || err
+        )
+      );
+    });
   }
+  res.json({ attendance: record });
 });
 
 router.get("/today", auth, async (req, res) => {
@@ -505,6 +1080,15 @@ router.get("/today", auth, async (req, res) => {
   });
   res.json({ attendance: record });
 });
+
+// Daily status email notifications are disabled.
+router.post(
+  "/daily-status/send",
+  auth,
+  requirePrimary(["ADMIN", "SUPERADMIN"]),
+  async (_req, res) =>
+    res.status(403).json({ error: "Daily status notifications are disabled" })
+);
 
 router.get("/history/:employeeId?", auth, async (req, res) => {
   const targetId = req.params.employeeId || req.employee.id;
@@ -530,25 +1114,43 @@ router.get("/report/:employeeId?", auth, async (req, res) => {
   if (!isSelf && !canViewOthers)
     return res.status(403).json({ error: "Forbidden" });
 
-  const { month } = req.query;
+  const scopeAll = String(req.query.scope || "").toLowerCase() === "all";
+  const now = new Date();
   let start;
-  if (month) {
-    start = startOfDay(new Date(month + "-01"));
+  let end;
+  if (scopeAll) {
+    start = startOfDay(new Date(0));
+    end = startOfDay(now);
+    end.setDate(end.getDate() + 1);
   } else {
-    const now = new Date();
-    start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    const { month } = req.query;
+    if (month) {
+      start = startOfDay(new Date(month + "-01"));
+    } else {
+      start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    }
+    end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
   }
-  const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
 
   const workedDays = await Attendance.countDocuments({
     employee: targetId,
     date: { $gte: start, $lt: end },
   });
 
-  const emp = await Employee.findById(targetId).select("company");
+  const emp = await Employee.findById(targetId).select(
+    "company name joiningDate attendanceStartDate"
+  );
+  try { emp?.decryptFieldsSync?.(); } catch (_) {}
+  const employmentStart =
+    emp?.joiningDate ? startOfDay(emp.joiningDate) : null;
+  const attendanceStart = getAttendanceStartDate(emp);
+  const autoStart = attendanceStart || employmentStart;
+  if (autoStart) {
+    await cleanupAutoPenaltiesBeforeStart(targetId, autoStart);
+  }
   const company = emp
-    ? await Company.findById(emp.company).select("bankHolidays")
+    ? await Company.findById(emp.company).select("bankHolidays workHours leavePolicy")
     : null;
 
   // Company-wide day overrides for this month
@@ -556,6 +1158,8 @@ router.get("/report/:employeeId?", auth, async (req, res) => {
     ? await CompanyDayOverride.find({
         company: emp.company,
         date: { $gte: start, $lt: end },
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
       })
         .select("date type")
         .lean()
@@ -564,94 +1168,31 @@ router.get("/report/:employeeId?", auth, async (req, res) => {
     companyOverrides.map((o) => [dateKeyLocal(o.date), o])
   );
 
-  // Load overrides for this month for the target employee
-  const overrides = await AttendanceOverride.find({
-    employee: targetId,
-    date: { $gte: start, $lt: end },
-  })
-    .select("date ignoreHoliday")
-    .lean();
-  const overrideHolidayKeys = new Set(
-    overrides
-      .filter((o) => o.ignoreHoliday)
-      .map((o) => dateKeyLocal(o.date))
-  );
-
-  let bankHolidays = (company?.bankHolidays || [])
-    .filter((h) => h.date >= start && h.date < end)
-    .map((h) => dateKeyLocal(h.date))
-    .filter((key) => !overrideHolidayKeys.has(key));
-  // Apply company-level overrides: exclude WORKING, include HOLIDAY
-  const addHoliday = [];
-  const removeHoliday = new Set();
-  for (const [key, o] of companyOvByKey) {
-    if (o.type === 'WORKING') removeHoliday.add(key);
-    if (o.type === 'HOLIDAY') addHoliday.push(key);
-  }
-  bankHolidays = bankHolidays.filter((k) => !removeHoliday.has(k));
-  for (const k of addHoliday) if (!bankHolidays.includes(k)) bankHolidays.push(k);
-
-    const leaves = await Leave.find({
-      employee: targetId,
-      status: "APPROVED",
-      startDate: { $lte: end },
-      endDate: { $gte: start },
-    });
-  const holidaySet = new Set(
-    (company?.bankHolidays || [])
-      .map((h) => startOfDay(h.date).getTime())
-  );
-  const leaveDates = [];
-    // Pull attendance records for the window to exclude worked days from leaveDates
-    const attRecords = await Attendance.find({
-      employee: targetId,
-      date: { $gte: start, $lt: end },
-    })
-      .select("date firstPunchIn lastPunchOut workedMs")
-      .lean();
-    const attendanceKeySet = new Set(attRecords.map((r) => dateKeyLocal(r.date)));
-
-    for (const l of leaves) {
-      let s = l.startDate < start ? startOfDay(start) : startOfDay(l.startDate);
-      let e =
-        l.endDate > end
-          ? startOfDay(new Date(end.getTime() - 1))
-          : startOfDay(l.endDate);
-      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-        const dd = new Date(d);
-        const day = startOfDay(dd).getTime();
-        const key = dateKeyLocal(day);
-        // Skip company holidays and weekends; and exclude if attendance exists
-        const dow = dd.getDay();
-        let isWeekend = dow === 0 || dow === 6;
-        const keyStr = dateKeyLocal(dd);
-        // Company-level working override lifts weekend treatment
-        const co = companyOvByKey.get(keyStr);
-        if (co?.type === 'WORKING') isWeekend = false;
-        // Company-level holiday override adds holiday treatment
-        if (co?.type === 'HOLIDAY') {
-          // treat as holiday
-          if (attendanceKeySet.has(key)) continue; // worked anyway
-          continue; // skip adding to leaveDates since it's a holiday
-        }
-        // Apply ignoreHoliday override
-        if (overrideHolidayKeys.has(key)) {
-          // treat as not a holiday
-        } else if (holidaySet.has(day) || isWeekend) continue;
-        if (attendanceKeySet.has(key)) continue;
-        leaveDates.push(key);
-      }
-    }
+  const summary = await buildMonthlyLeaveSummary({
+    employeeId: targetId,
+    start,
+    end,
+    company,
+    companyOverridesByKey: companyOvByKey,
+    now: new Date(),
+    employmentStart,
+    attendanceStart,
+  });
 
   res.json({
     report: {
       workedDays,
-      leaveDays: leaveDates.length,
-      leaveDates,
-      bankHolidays,
+      leaveDays: summary.leaveDays,
+      leaveDates: summary.leaveDates,
+      halfDayLeaves: summary.halfDayLeaves,
+      bankHolidays: summary.bankHolidays,
+      bankHolidayDetails: summary.bankHolidayDetails,
+      employmentStart: emp?.joiningDate || null,
+      attendanceStartDate: attendanceStart || null,
     },
   });
 });
+
 
 // Detailed monthly day-by-day report for a selected employee
 // Includes every day of the month with punch in/out, time spent and day type
@@ -677,16 +1218,20 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
     end.setMonth(end.getMonth() + 1);
 
     // Load company holidays and approved leaves that overlap this month
-    const emp = await Employee.findById(targetId).select("company");
+    const emp = await Employee.findById(targetId).select("company joiningDate");
+    try { emp?.decryptFieldsSync?.(); } catch (_) {}
     const company = emp
-      ? await Company.findById(emp.company).select("bankHolidays workHours")
+      ? await Company.findById(emp.company).select("bankHolidays workHours leavePolicy")
       : null;
+    const employmentStart = emp?.joiningDate ? startOfDay(emp.joiningDate) : null;
 
     // Load company-wide day overrides for the selected month
     const compOverrides = emp
       ? await CompanyDayOverride.find({
           company: emp.company,
           date: { $gte: start, $lt: end },
+          isDeleted: { $ne: true },
+          isActive: { $ne: false },
         })
           .select("date type")
           .lean()
@@ -724,9 +1269,12 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
     }).lean();
     const approvedLeaveSet = new Set();
     for (const l of leaves) {
-      const s = l.startDate < start ? start : startOfDay(l.startDate);
-      const e =
-        l.endDate > end ? new Date(end.getTime() - 1) : startOfDay(l.endDate);
+      let s = startOfDay(l.startDate);
+      let e = startOfDay(l.endDate);
+      if (employmentStart && e < employmentStart) continue;
+      if (employmentStart && s < employmentStart) s = employmentStart;
+      if (s < start) s = start;
+      if (e > end) e = new Date(end.getTime() - 1);
       for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
         const key = dateKeyLocal(d);
         const dow = d.getDay();
@@ -747,6 +1295,10 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
       byKey.set(key, r);
     }
 
+    const { fullMs: fullDayMs, halfMs: halfDayMs } = getDayThresholds(
+      company?.workHours
+    );
+
     const days = [];
     let totalLeaveUnits = 0;
     const now = new Date();
@@ -754,6 +1306,7 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
       const key = dateKeyLocal(d);
       const rec = byKey.get(key);
       const dow = d.getDay();
+      const beforeEmployment = employmentStart && startOfDay(d) < employmentStart;
       let isWeekend = dow === 0 || dow === 6;
       const compOv = compOvByKey.get(key);
       if (compOv?.type === 'WORKING') isWeekend = false; // treat as working even if weekend
@@ -761,7 +1314,7 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
       let isHoliday = bankHolidaySet.has(key);
       if (compOv?.type === 'WORKING') isHoliday = false;
       if (compOv?.type === 'HOLIDAY') isHoliday = true;
-      const isApprovedLeave = approvedLeaveSet.has(key);
+      const isApprovedLeave = beforeEmployment ? false : approvedLeaveSet.has(key);
       const inFuture = d > new Date();
 
       let firstPunchIn = rec?.firstPunchIn ? new Date(rec.firstPunchIn) : null;
@@ -782,24 +1335,36 @@ router.get("/monthly/:employeeId?", auth, async (req, res) => {
         }
       }
 
-      let dayType = timeSpentMs > 6 * 3600000 ? "FULL_DAY" : "HALF_DAY";
+      const meetsFullDay = timeSpentMs >= fullDayMs;
+      const meetsHalfDay = !meetsFullDay && timeSpentMs >= halfDayMs;
+      const meetsHalfOrBetter = meetsFullDay || timeSpentMs >= halfDayMs;
+      let dayType = meetsFullDay ? "FULL_DAY" : "HALF_DAY";
 
       let status = "";
-      if (inFuture) status = "";
+      if (beforeEmployment) status = "NOT_JOINED";
+      else if (inFuture) status = "";
       else if (isWeekend) status = "WEEKEND";
       else if (isHoliday) status = "HOLIDAY";
-      else if (rec && timeSpentMs > 0) status = "WORKED";
+      else if (rec && timeSpentMs > 0) {
+        status = meetsHalfOrBetter ? "WORKED" : "LEAVE";
+      }
       else if (isApprovedLeave) status = "LEAVE";
       else if (!rec || timeSpentMs <= 0) status = "LEAVE";
       else status = "WORKED";
 
       // Leave units: exclude weekends/holidays; count 1 for leave days, 0.5 for half-day work
       let leaveUnit = 0;
-      if (!inFuture && !isWeekend && !isHoliday) {
+      if (!beforeEmployment && !inFuture && !isWeekend && !isHoliday) {
         if (status === "LEAVE") {
           leaveUnit = 1;
-        } else if (status === "WORKED" && dayType === "HALF_DAY") {
-          leaveUnit = 0.5;
+        } else if (status === "WORKED") {
+          if (meetsFullDay) {
+            leaveUnit = 0;
+          } else if (meetsHalfDay) {
+            leaveUnit = 0.5;
+          } else {
+            leaveUnit = 1;
+          }
         }
       }
       // If company override marks the day as HALF_DAY (and no attendance), count as 0.5 leave
@@ -919,16 +1484,20 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
     end.setMonth(end.getMonth() + 1);
 
     // Pull company holidays and approved leaves
-    const emp = await Employee.findById(targetId).select("company name");
+    const emp = await Employee.findById(targetId).select("company name joiningDate");
+    try { emp?.decryptFieldsSync?.(); } catch (_) {}
     const company = emp
-      ? await Company.findById(emp.company).select("bankHolidays workHours")
+      ? await Company.findById(emp.company).select("bankHolidays workHours leavePolicy")
       : null;
+    const employmentStart = emp?.joiningDate ? startOfDay(emp.joiningDate) : null;
 
     // Load company-wide overrides
     const compOverrides = emp
       ? await CompanyDayOverride.find({
           company: emp.company,
           date: { $gte: start, $lt: end },
+          isDeleted: { $ne: true },
+          isActive: { $ne: false },
         })
           .select("date type")
           .lean()
@@ -962,14 +1531,33 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       startDate: { $lte: end },
       endDate: { $gte: start },
     }).lean();
+    const sandwichPolicy = getSandwichPolicyConfig(company);
     const approvedLeaveSet = new Set();
+    const sandwichDaySet = new Set();
     for (const l of leaves) {
-      const s = l.startDate < start ? start : startOfDay(l.startDate);
-      const e =
-        l.endDate > end ? new Date(end.getTime() - 1) : startOfDay(l.endDate);
+      let s = startOfDay(l.startDate);
+      let e = startOfDay(l.endDate);
+      if (employmentStart && e < employmentStart) continue;
+      if (employmentStart && s < employmentStart) s = employmentStart;
+      if (s < start) s = start;
+      if (e > end) e = new Date(end.getTime() - 1);
+      const applySandwich = shouldApplySandwichRange(s, e, sandwichPolicy);
       for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
         const key = dateKeyLocal(d);
-        if (!bankHolidaySet.has(key)) approvedLeaveSet.add(key);
+        const compOv = compOvByKey.get(key);
+        let isWeekend = d.getDay() === 0 || d.getDay() === 6;
+        if (compOv?.type === 'WORKING' || compOv?.type === 'HALF_DAY')
+          isWeekend = false;
+        let isHoliday = bankHolidaySet.has(key);
+        if (compOv?.type === 'WORKING') isHoliday = false;
+        if (compOv?.type === 'HOLIDAY') isHoliday = true;
+
+        if (!isWeekend && !isHoliday) {
+          approvedLeaveSet.add(key);
+        } else if (applySandwich && (isWeekend || isHoliday)) {
+          sandwichDaySet.add(key);
+          approvedLeaveSet.add(key);
+        }
       }
     }
 
@@ -983,6 +1571,10 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       byKey.set(key, r);
     }
 
+    const { fullMs: fullDayMs, halfMs: halfDayMs } = getDayThresholds(
+      company?.workHours
+    );
+
     const rows = [];
     let totalLeaveUnits = 0;
     const now = new Date();
@@ -990,11 +1582,19 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
       const key = dateKeyLocal(d);
       const rec = byKey.get(key);
       const dow = d.getDay();
+      const beforeEmployment = employmentStart && startOfDay(d) < employmentStart;
       let isWeekend = dow === 0 || dow === 6;
       const compOv = compOvByKey.get(key);
       if (compOv?.type === 'WORKING') isWeekend = false;
       let isHoliday = bankHolidaySet.has(key);
-      const isApprovedLeave = approvedLeaveSet.has(key);
+      if (compOv?.type === 'WORKING') isHoliday = false;
+      if (compOv?.type === 'HOLIDAY') isHoliday = true;
+      const isSandwichDay = sandwichDaySet.has(key);
+      if (isSandwichDay) {
+        isWeekend = false;
+        isHoliday = false;
+      }
+      const isApprovedLeave = beforeEmployment ? false : approvedLeaveSet.has(key);
 
       let timeSpentMs = 0;
       if (rec) {
@@ -1011,24 +1611,36 @@ router.get("/monthly/:employeeId/excel", auth, async (req, res) => {
             new Date(rec.firstPunchIn).getTime();
         }
       }
-      let dayType = timeSpentMs > 6 * 3600000 ? "FULL_DAY" : "HALF_DAY";
+      const meetsFullDay = timeSpentMs >= fullDayMs;
+      const meetsHalfDay = !meetsFullDay && timeSpentMs >= halfDayMs;
+      const meetsHalfOrBetter = meetsFullDay || timeSpentMs >= halfDayMs;
+      let dayType = meetsFullDay ? "FULL_DAY" : "HALF_DAY";
       const inFuture = d > new Date();
       let status = "";
-      if (inFuture) status = "";
+      if (beforeEmployment) status = "NOT_JOINED";
+      else if (inFuture) status = "";
       else if (isWeekend) status = "WEEKEND";
       else if (isHoliday) status = "HOLIDAY";
       // Consider actual worked time first; approved leave should not override presence of work
-      else if (rec && timeSpentMs > 0) status = "WORKED";
+      else if (rec && timeSpentMs > 0) {
+        status = meetsHalfOrBetter ? "WORKED" : "LEAVE";
+      }
       else if (isApprovedLeave) status = "LEAVE";
       else if (!rec || timeSpentMs <= 0) status = "LEAVE";
       else status = "WORKED";
 
       let leaveUnit = 0;
-      if (!inFuture && !isWeekend && !isHoliday) {
+      if (!beforeEmployment && !inFuture && !isWeekend && !isHoliday) {
         if (status === "LEAVE") {
           leaveUnit = 1;
-        } else if (status === "WORKED" && dayType === "HALF_DAY") {
-          leaveUnit = 0.5;
+        } else if (status === "WORKED") {
+          if (meetsFullDay) {
+            leaveUnit = 0;
+          } else if (meetsHalfDay) {
+            leaveUnit = 0.5;
+          } else {
+            leaveUnit = 1;
+          }
         }
       }
       if (!inFuture && !isWeekend && !isHoliday && compOv?.type === 'HALF_DAY') {
@@ -1184,9 +1796,9 @@ router.get("/company/today", auth, async (req, res) => {
     (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
   if (!allowed) return res.status(403).json({ error: "Forbidden" });
   const today = startOfDay(new Date());
+  // Include all company users (admins/managers/hr) in the headcount so admin punch-ins are visible
   const employees = await Employee.find({
     company: req.employee.company,
-    primaryRole: "EMPLOYEE",
   }).select("_id name");
   const records = await Attendance.find({
     employee: { $in: employees.map((u) => u._id) },
@@ -1209,21 +1821,178 @@ router.get("/company/today", auth, async (req, res) => {
   res.json({ attendance });
 });
 
+function canViewCompanyPresence(req) {
+  const isAdmin =
+    req.employee?.primaryRole === "ADMIN" ||
+    req.employee?.primaryRole === "SUPERADMIN";
+  const subOk = (req.employee?.subRoles || []).some((r) =>
+    ["hr", "manager"].includes(r)
+  );
+  const hasPresencePermission =
+    !!req.employee?.permissions?.presence?.read ||
+    !!req.employee?.permissions?.presence?.write;
+  return isAdmin || subOk || hasPresencePermission;
+}
+
+router.get("/company/presence", auth, async (req, res) => {
+  if (!canViewCompanyPresence(req))
+    return res.status(403).json({ error: "Forbidden" });
+
+  const today = startOfDay(new Date());
+  const tomorrow = startOfDay(new Date());
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const dayAfterTomorrow = startOfDay(new Date(tomorrow));
+  dayAfterTomorrow.setUTCDate(dayAfterTomorrow.getUTCDate() + 1);
+
+  const employees = await Employee.find({
+    company: req.employee.company,
+    isDeleted: { $ne: true },
+  })
+    .select("_id name isActive")
+    .lean();
+  const ids = employees.map((e) => e._id);
+
+  const [records, todayLeaves, tomorrowLeaves, futureLeaves] = await Promise.all([
+    Attendance.find({
+      employee: { $in: ids },
+      date: today,
+    }).select(
+      "employee firstPunchIn lastPunchOut firstPunchInLocation lastPunchInLocation"
+    ),
+    Leave.find({
+      company: req.employee.company,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+      status: { $in: ["APPROVED", "PENDING"] },
+      startDate: { $lte: today },
+      endDate: { $gte: today },
+    }).select("employee status startDate endDate reason type"),
+    Leave.find({
+      company: req.employee.company,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+      status: { $in: ["APPROVED", "PENDING"] },
+      startDate: { $lt: dayAfterTomorrow },
+      endDate: { $gte: tomorrow },
+    }).select("employee status startDate endDate reason type"),
+    Leave.find({
+      company: req.employee.company,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+      status: { $in: ["APPROVED", "PENDING"] },
+      startDate: { $gte: tomorrow }, // from tomorrow onward
+    }).select("employee status startDate reason type"),
+  ]);
+
+  const leaveTodayStatusMap = new Map();
+  const leaveTodayReasonMap = new Map();
+  for (const l of todayLeaves) {
+    leaveTodayStatusMap.set(String(l.employee), l.status || "PENDING");
+    leaveTodayReasonMap.set(String(l.employee), {
+      reason: l.reason || null,
+      type: l.type || null,
+    });
+  }
+  const leaveTomorrowMap = new Map();
+  const leaveTomorrowReasonMap = new Map();
+  for (const l of tomorrowLeaves) {
+    const startKey = startOfDay(l.startDate).getTime();
+    if (startKey === tomorrow.getTime()) {
+      leaveTomorrowMap.set(String(l.employee), l.status || "PENDING");
+      leaveTomorrowReasonMap.set(String(l.employee), {
+        reason: l.reason || null,
+        type: l.type || null,
+      });
+    }
+  }
+
+  // Nearest upcoming leave after today (in days)
+  const futureLeaveMap = new Map();
+  for (const l of futureLeaves) {
+    const startKey = startOfDay(l.startDate).getTime();
+    const daysAway = Math.ceil((startKey - today.getTime()) / 86400000);
+    if (daysAway <= 0) continue;
+    const key = String(l.employee);
+    const current = futureLeaveMap.get(key);
+    if (!current || daysAway < current.daysAway) {
+      futureLeaveMap.set(key, { daysAway, status: l.status || "PENDING" });
+    }
+  }
+
+  const rows = employees.map((emp) => {
+    const rec = records.find(
+      (r) => String(r.employee) === String(emp._id)
+    );
+    const id = String(emp._id);
+    const future = futureLeaveMap.get(id);
+    const todayLeave = leaveTodayReasonMap.get(id) || null;
+    const tomorrowLeave = leaveTomorrowReasonMap.get(id) || null;
+    return {
+      employee: { id, name: emp.name },
+      firstPunchIn: rec?.firstPunchIn,
+      lastPunchOut: rec?.lastPunchOut,
+      firstPunchInLocation: rec?.firstPunchInLocation,
+      lastPunchInLocation: rec?.lastPunchInLocation,
+      onLeaveToday: leaveTodayStatusMap.has(id),
+      leaveTodayStatus: leaveTodayStatusMap.get(id) || null,
+      leaveTodayReason: todayLeave?.reason || null,
+      leaveTodayType: todayLeave?.type || null,
+      startingLeaveTomorrow: leaveTomorrowMap.has(id),
+      leaveTomorrowStatus: leaveTomorrowMap.get(id) || null,
+      leaveTomorrowReason: tomorrowLeave?.reason || null,
+      leaveTomorrowType: tomorrowLeave?.type || null,
+      nextLeaveInDays: future?.daysAway || null,
+      nextLeaveStatus: future?.status || null,
+      nextLeaveReason: futureLeaveMap.has(id)
+        ? futureLeaves.find(
+            (f) =>
+              String(f.employee) === id &&
+              Math.ceil((startOfDay(f.startDate).getTime() - today.getTime()) / 86400000) ===
+                future?.daysAway,
+          )?.reason || null
+        : null,
+      nextLeaveType: futureLeaveMap.has(id)
+        ? futureLeaves.find(
+            (f) =>
+              String(f.employee) === id &&
+              Math.ceil((startOfDay(f.startDate).getTime() - today.getTime()) / 86400000) ===
+                future?.daysAway,
+          )?.type || null
+        : null,
+      isActive: emp.isActive !== false,
+    };
+  });
+
+  res.json({
+    today: today.toISOString(),
+    tomorrow: tomorrow.toISOString(),
+    rows,
+  });
+});
+
 router.get("/company/history", auth, async (req, res) => {
   const allowed =
     ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
     (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
   if (!allowed) return res.status(403).json({ error: "Forbidden" });
-  const { month } = req.query;
+  const scopeAll = String(req.query.scope || "").toLowerCase() === "all";
+  const now = new Date();
   let start;
-  if (month) {
-    start = startOfDay(new Date(month + "-01"));
+  let end;
+  if (scopeAll) {
+    start = startOfDay(new Date(0));
+    end = startOfDay(now);
+    end.setDate(end.getDate() + 1);
   } else {
-    const now = new Date();
-    start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    const { month } = req.query;
+    if (month) {
+      start = startOfDay(new Date(month + "-01"));
+    } else {
+      start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    }
+    end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
   }
-  const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
 
   const employees = await Employee.find({
     company: req.employee.company,
@@ -1258,21 +2027,40 @@ router.get("/company/report", auth, async (req, res) => {
     (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
   if (!allowed) return res.status(403).json({ error: "Forbidden" });
 
+  const scopeAll = String(req.query.scope || "").toLowerCase() === "all";
   const { month } = req.query;
-  let start;
-  if (month) {
-    start = startOfDay(new Date(month + "-01"));
-  } else {
-    const now = new Date();
-    start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
-  }
-  const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
+  const now = new Date();
 
   const employees = await Employee.find({
     company: req.employee.company,
     primaryRole: "EMPLOYEE",
-  }).select("_id name");
+  }).select("_id name joiningDate attendanceStartDate");
+  let start;
+  let end;
+
+  if (scopeAll) {
+    let earliest = null;
+    for (const emp of employees) {
+      const candidate = emp.joiningDate && startOfDay(emp.joiningDate);
+      if (!candidate) continue;
+      if (!earliest || candidate < earliest) {
+        earliest = candidate;
+      }
+    }
+    start =
+      earliest ||
+      startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    end = startOfDay(now);
+    end.setDate(end.getDate() + 1);
+  } else {
+    if (month) {
+      start = startOfDay(new Date(month + "-01"));
+    } else {
+      start = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    }
+    end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+  }
 
   const counts = await Attendance.aggregate([
     {
@@ -1286,406 +2074,45 @@ router.get("/company/report", auth, async (req, res) => {
   const countMap = new Map(counts.map((c) => [String(c._id), c.workedDays]));
 
   const company = await Company.findById(req.employee.company).select(
-    "bankHolidays"
+    "bankHolidays workHours leavePolicy"
+  );
+
+  const companyOverrides = await CompanyDayOverride.find({
+    company: req.employee.company,
+    date: { $gte: start, $lt: end },
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
+  })
+    .select("date type")
+    .lean();
+  const companyOvByKey = new Map(
+    companyOverrides.map((o) => [dateKeyLocal(o.date), o])
   );
 
   const report = [];
   for (const emp of employees) {
-    const leaves = await Leave.find({
-      employee: emp._id,
-      status: "APPROVED",
-      startDate: { $lte: end },
-      endDate: { $gte: start },
+    const employmentStart = emp.joiningDate || null;
+    const attendanceStart = getAttendanceStartDate(emp);
+    const summary = await buildMonthlyLeaveSummary({
+      employeeId: emp._id,
+      start,
+      end,
+      company,
+      companyOverridesByKey: companyOvByKey,
+      now,
+      employmentStart,
+      attendanceStart,
     });
-
-    // Attendance keys for this employee (exclude days with attendance from leave count)
-    const att = await Attendance.find({
-      employee: emp._id,
-      date: { $gte: start, $lt: end },
-    })
-      .select("date")
-      .lean();
-    const attSet = new Set(att.map((r) => dateKeyLocal(r.date)));
-
-    let leaveDays = 0;
-    for (const l of leaves) {
-      const s = l.startDate < start ? start : new Date(l.startDate);
-      const e = l.endDate > end ? end : new Date(l.endDate);
-      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-        const key = dateKeyLocal(d);
-        const dow = d.getDay();
-        const isWeekend = dow === 0 || dow === 6;
-        const isHoliday = (company?.bankHolidays || []).some(
-          (h) => dateKeyLocal(h.date) === key
-        );
-        if (isWeekend || isHoliday) continue;
-        if (attSet.has(key)) continue;
-        leaveDays += 1;
-      }
-    }
 
     report.push({
       employee: { id: emp._id, name: emp.name },
       workedDays: countMap.get(String(emp._id)) || 0,
-      leaveDays,
+      leaveDays: summary.leaveDays,
+      halfDayLeaves: summary.halfDayLeaves,
     });
   }
 
   res.json({ report });
-});
-
-router.get("/manual-requests", auth, async (req, res) => {
-  try {
-    if (!canManageManualAttendance(req.employee))
-      return res.status(403).json({ error: "Forbidden" });
-
-    const rawStatuses = String(req.query.status || "PENDING,ACKED")
-      .split(",")
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
-    const allowedStatuses = [
-      "PENDING",
-      "ACKED",
-      "COMPLETED",
-      "CANCELLED",
-    ];
-    const statuses = rawStatuses.length
-      ? rawStatuses.filter((s) => allowedStatuses.includes(s))
-      : ["PENDING", "ACKED"];
-
-    const records = await Attendance.find({
-      "manualFillRequest.status": { $in: statuses },
-    })
-      .populate("employee", "name email company")
-      .populate("manualFillRequest.requestedBy", "name email")
-      .populate("manualFillRequest.resolvedBy", "name email")
-      .lean();
-
-    const companyId = String(req.employee.company);
-    const requests = records
-      .filter(
-        (rec) =>
-          rec?.employee?.company &&
-          String(rec.employee.company) === companyId
-      )
-      .map((rec) => serializeManualRequest(rec))
-      .sort((a, b) => {
-        const aTime = a.requestedAt ? new Date(a.requestedAt).getTime() : 0;
-        const bTime = b.requestedAt ? new Date(b.requestedAt).getTime() : 0;
-        return aTime - bTime;
-      });
-
-    res.json({ requests });
-  } catch (e) {
-    console.error("manual-requests list error", e);
-    res.status(500).json({ error: "Failed to load manual attendance requests" });
-  }
-});
-
-router.post("/manual-request/:employeeId?", auth, async (req, res) => {
-  try {
-    const targetId = req.params.employeeId || req.employee.id;
-    const isSelf = String(targetId) === String(req.employee.id);
-    const canManage =
-      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
-      (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
-    if (!isSelf && !canManage)
-      return res.status(403).json({ error: "Forbidden" });
-
-    const { date, note } = req.body || {};
-    if (!date) return res.status(400).json({ error: "Missing date" });
-    const day = startOfDay(new Date(date));
-    if (isNaN(day.getTime()))
-      return res.status(400).json({ error: "Invalid date" });
-
-    const today = startOfDay(new Date());
-    if (!(day < today))
-      return res
-        .status(400)
-        .json({ error: "Manual attendance requests are only allowed for past dates" });
-
-    let record = await Attendance.findOne({ employee: targetId, date: day });
-    if (record) {
-      if (record.firstPunchIn && record.lastPunchOut)
-        return res.status(400).json({ error: "Attendance already exists for this day" });
-      const status = record.manualFillRequest?.status;
-      if (status === "PENDING" || status === "ACKED")
-        return res
-          .status(400)
-          .json({ error: "Manual attendance request already submitted for this day" });
-    }
-
-    const nextDay = new Date(day);
-    nextDay.setDate(nextDay.getDate() + 1);
-    const issues = await collectAttendanceIssues({
-      employeeId: targetId,
-      start: day,
-      endExclusive: nextDay,
-    });
-    const missing = issues.some(
-      (iss) =>
-        iss.date === dateKeyLocal(day) && iss.type === ATTENDANCE_ISSUE_TYPES.NO_ATTENDANCE
-    );
-    if (!missing)
-      return res
-        .status(400)
-        .json({ error: "No missing attendance detected for the selected day" });
-
-    if (!record) {
-      record = new Attendance({ employee: targetId, date: day });
-    }
-
-    record.manualFillRequest = {
-      requestedBy: req.employee.id,
-      requestedAt: new Date(),
-      status: "PENDING",
-      note: typeof note === "string" ? note : undefined,
-      resolvedAt: undefined,
-      resolvedBy: undefined,
-    };
-    if (!record.isNew) record.markModified("manualFillRequest");
-    await record.save();
-
-    const saved = await Attendance.findById(record._id).lean();
-
-    try {
-      const employee = await Employee.findById(targetId)
-        .select("name email company reportingPerson")
-        .lean();
-      const companyId = employee?.company;
-      if (companyId && (await isEmailEnabled(companyId))) {
-        const admins = await Employee.find({
-          company: companyId,
-          $or: [
-            { primaryRole: { $in: ["ADMIN", "SUPERADMIN"] } },
-            { subRoles: { $in: ["hr"] } },
-          ],
-        })
-          .select("name email")
-          .lean();
-
-        const recipients = new Set();
-        for (const adm of admins) if (adm?.email) recipients.add(adm.email);
-
-        if (employee?.reportingPerson) {
-          const rp = await Employee.findById(employee.reportingPerson)
-            .select("email")
-            .lean();
-          if (rp?.email) recipients.add(rp.email);
-        }
-
-        const requester = await Employee.findById(req.employee.id)
-          .select("name email")
-          .lean();
-
-        if (recipients.size) {
-          const to = Array.from(recipients);
-          const dateLabel = dateKeyLocal(day);
-          const employeeName = employee?.name || "An employee";
-          const requesterName = requester?.name || req.employee.name || employeeName;
-          const requesterEmail = requester?.email || req.employee.email || employee?.email || "";
-          const cleanNote = typeof note === "string" && note.trim() ? note.trim() : null;
-
-          const subject = `Manual attendance request: ${employeeName} — ${dateLabel}`;
-          const textParts = [
-            `${employeeName} requested manual attendance entry for ${dateLabel}.`,
-            `Requested by: ${requesterName}${requesterEmail ? ` <${requesterEmail}>` : ""}`,
-          ];
-          if (cleanNote) textParts.push(`Note: ${cleanNote}`);
-
-          const htmlLines = [
-            `<p><strong>${employeeName}</strong> requested manual attendance entry for <strong>${dateLabel}</strong>.</p>`,
-            `<p>Requested by: <strong>${requesterName}</strong>${
-              requesterEmail ? ` &lt;${requesterEmail}&gt;` : ""
-            }</p>`,
-          ];
-          if (cleanNote)
-            htmlLines.push(
-              `<p><strong>Note:</strong> ${cleanNote.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`
-            );
-
-          await sendMail({
-            companyId,
-            to,
-            subject,
-            text: textParts.join("\n"),
-            html: htmlLines.join(""),
-          });
-        }
-      }
-    } catch (mailErr) {
-      console.warn("[attendance] Failed to send manual request email:", mailErr?.message || mailErr);
-    }
-
-    res.json({ attendance: saved });
-  } catch (e) {
-    console.error("manual-request error", e);
-    res.status(500).json({ error: "Failed to request manual attendance entry" });
-  }
-});
-
-router.patch("/manual-request/:attendanceId/status", auth, async (req, res) => {
-  try {
-    if (!canManageManualAttendance(req.employee))
-      return res.status(403).json({ error: "Forbidden" });
-
-    const { attendanceId } = req.params;
-    const { status, adminNote } = req.body || {};
-    const allowed = ["PENDING", "ACKED", "CANCELLED"];
-    if (!allowed.includes(status))
-      return res.status(400).json({ error: "Invalid status" });
-
-    const record = await Attendance.findById(attendanceId)
-      .populate("employee", "company")
-      .populate("manualFillRequest.requestedBy", "name email")
-      .populate("manualFillRequest.resolvedBy", "name email");
-    if (!record) return res.status(404).json({ error: "Manual request not found" });
-    if (
-      !record.employee ||
-      String(record.employee.company) !== String(req.employee.company)
-    )
-      return res.status(403).json({ error: "Forbidden" });
-
-    record.manualFillRequest = record.manualFillRequest || {
-      requestedBy: req.employee.id,
-      requestedAt: new Date(),
-    };
-    record.manualFillRequest.status = status;
-    if (typeof adminNote === "string")
-      record.manualFillRequest.adminNote = adminNote;
-
-    if (status === "ACKED") {
-      record.manualFillRequest.acknowledgedAt = new Date();
-    } else if (status === "PENDING") {
-      record.manualFillRequest.acknowledgedAt = undefined;
-    }
-
-    if (status === "CANCELLED") {
-      record.manualFillRequest.resolvedAt = new Date();
-      record.manualFillRequest.resolvedBy = req.employee.id;
-    } else if (status === "PENDING") {
-      record.manualFillRequest.resolvedAt = undefined;
-      record.manualFillRequest.resolvedBy = undefined;
-    }
-
-    await record.save();
-    const refreshed = await Attendance.findById(attendanceId)
-      .populate("employee", "name email company")
-      .populate("manualFillRequest.requestedBy", "name email")
-      .populate("manualFillRequest.resolvedBy", "name email")
-      .lean();
-    res.json({ request: serializeManualRequest(refreshed) });
-  } catch (e) {
-    console.error("manual-request status error", e);
-    res
-      .status(500)
-      .json({ error: "Failed to update manual attendance request status" });
-  }
-});
-
-router.post("/manual-request/:attendanceId/resolve", auth, async (req, res) => {
-  try {
-    if (!canManageManualAttendance(req.employee))
-      return res.status(403).json({ error: "Forbidden" });
-
-    const { attendanceId } = req.params;
-    const record = await Attendance.findById(attendanceId)
-      .populate("employee", "company")
-      .populate("manualFillRequest.requestedBy", "name email")
-      .populate("manualFillRequest.resolvedBy", "name email");
-    if (!record) return res.status(404).json({ error: "Manual request not found" });
-    if (
-      !record.employee ||
-      String(record.employee.company) !== String(req.employee.company)
-    )
-      return res.status(403).json({ error: "Forbidden" });
-
-    const { firstPunchIn, lastPunchOut, breakMinutes, totalMinutes, adminNote } =
-      req.body || {};
-
-    if (!firstPunchIn && !record.firstPunchIn)
-      return res
-        .status(400)
-        .json({ error: "Missing first punch-in time" });
-    if (!lastPunchOut && !record.lastPunchOut)
-      return res.status(400).json({ error: "Missing last punch-out time" });
-
-    const dateKey = dateKeyLocal(record.date);
-    const parseTime = (value) => {
-      if (!value && value !== 0) return null;
-      return buildUtcDateFromLocal(dateKey, value);
-    };
-
-    let firstIn = record.firstPunchIn || null;
-    let lastOut = record.lastPunchOut || null;
-
-    try {
-      if (firstPunchIn) firstIn = parseTime(firstPunchIn);
-      if (lastPunchOut) lastOut = parseTime(lastPunchOut);
-    } catch (parseErr) {
-      return res.status(400).json({ error: parseErr.message || "Invalid time" });
-    }
-
-    if (!firstIn || !lastOut)
-      return res
-        .status(400)
-        .json({ error: "Punch-in and punch-out times are required" });
-    if (!(lastOut > firstIn))
-      return res
-        .status(400)
-        .json({ error: "Punch-out must be after punch-in" });
-
-    let workedMinutes = Math.max(
-      0,
-      Math.round((lastOut.getTime() - firstIn.getTime()) / 60000)
-    );
-    if (breakMinutes !== undefined) {
-      const breakM = parseInt(breakMinutes, 10);
-      if (!isFinite(breakM) || breakM < 0)
-        return res.status(400).json({ error: "Invalid breakMinutes" });
-      workedMinutes = Math.max(0, workedMinutes - breakM);
-    }
-    if (totalMinutes !== undefined) {
-      const total = parseInt(totalMinutes, 10);
-      if (!isFinite(total) || total < 0)
-        return res.status(400).json({ error: "Invalid totalMinutes" });
-      workedMinutes = total;
-    }
-
-    record.firstPunchIn = firstIn;
-    record.lastPunchIn = undefined;
-    record.lastPunchOut = lastOut;
-    record.workedMs = workedMinutes * 60000;
-    record.autoPunchOut = false;
-    record.autoPunchOutAt = undefined;
-    record.autoPunchLastIn = undefined;
-    record.autoPunchResolvedAt = new Date();
-
-    record.manualFillRequest = record.manualFillRequest || {
-      requestedBy: req.employee.id,
-      requestedAt: new Date(),
-    };
-    record.manualFillRequest.status = "COMPLETED";
-    record.manualFillRequest.resolvedAt = new Date();
-    record.manualFillRequest.resolvedBy = req.employee.id;
-    record.manualFillRequest.acknowledgedAt =
-      record.manualFillRequest.acknowledgedAt || new Date();
-    if (typeof adminNote === "string")
-      record.manualFillRequest.adminNote = adminNote;
-
-    await record.save();
-    const refreshed = await Attendance.findById(attendanceId)
-      .populate("employee", "name email company")
-      .populate("manualFillRequest.requestedBy", "name email")
-      .populate("manualFillRequest.resolvedBy", "name email")
-      .lean();
-    res.json({ request: serializeManualRequest(refreshed) });
-  } catch (e) {
-    console.error("manual-request resolve error", e);
-    res
-      .status(500)
-      .json({ error: "Failed to resolve manual attendance request" });
-  }
 });
 
 router.post("/resolve/leave", auth, async (req, res) => {
@@ -1695,7 +2122,10 @@ router.post("/resolve/leave", auth, async (req, res) => {
 
     const targetId = employeeId || req.employee.id;
     const isSelf = String(targetId) === String(req.employee.id);
-    if (!isSelf && !canManageManualAttendance(req.employee))
+    const canManageOthers =
+      isAdminUser(req.employee) ||
+      (req.employee.subRoles || []).some((r) => ["hr", "manager"].includes(r));
+    if (!isSelf && !canManageOthers)
       return res.status(403).json({ error: "Forbidden" });
 
     const start = startOfDay(new Date(date));
@@ -1734,21 +2164,6 @@ router.post("/resolve/leave", auth, async (req, res) => {
       reason: typeof reason === "string" ? reason : undefined,
       status: "APPROVED",
     });
-
-    // If a manual attendance request exists for any day in range, mark it completed
-    const attendanceRecords = await Attendance.find({
-      employee: targetId,
-      date: { $gte: start, $lte: end },
-    });
-    for (const record of attendanceRecords) {
-      if (record.manualFillRequest) {
-        record.manualFillRequest.status = "COMPLETED";
-        record.manualFillRequest.resolvedAt = new Date();
-        record.manualFillRequest.resolvedBy = req.employee.id;
-        await record.save();
-      }
-    }
-
     res.json({ leave });
   } catch (e) {
     console.error("resolve-leave error", e);
@@ -1776,14 +2191,14 @@ router.get("/missing-out/:employeeId?", auth, async (req, res) => {
 
     if (scope === "all") {
       employeeDoc = await Employee.findById(targetId)
-        .select("company createdAt joiningDate")
+        .select("company joiningDate attendanceStartDate")
         .lean();
-      const employmentStartRaw =
-        employeeDoc?.joiningDate || employeeDoc?.createdAt;
+      const employmentStartRaw = employeeDoc?.joiningDate;
       const employmentStart = employmentStartRaw
         ? startOfDay(employmentStartRaw)
         : startOfDay(new Date());
-      start = employmentStart;
+      const attendanceStart = getAttendanceStartDate(employeeDoc);
+      start = attendanceStart || employmentStart;
       end = startOfDay(new Date());
     } else if (month) {
       start = startOfDay(new Date(month + "-01"));
@@ -1836,7 +2251,7 @@ router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
     // Compose punch-out timestamp in server-local time on that day
     let out;
     try {
-      out = buildUtcDateFromLocal(date, time);
+      out = buildUtcDateFromLocal(date, time, extractTimezoneOptions(req.body));
     } catch (parseErr) {
       return res.status(400).json({ error: parseErr?.message || "Invalid time" });
     }
@@ -1885,6 +2300,427 @@ router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
       record.autoPunchLastIn = undefined;
     }
 
+    await record.save();
+
+    res.json({ attendance: record });
+  } catch (e) {
+    console.error("punchout-at error", e);
+    res.status(500).json({ error: "Failed to set punch-out time" });
+  }
+});
+
+// Notify admins that someone needs help editing/adding attendance
+router.post("/manual-request", auth, async (req, res) => {
+  try {
+    const { date, message, employeeId, type, punchIn, punchOut } =
+      req.body || {};
+    if (!date)
+      return res.status(400).json({ error: "Missing date" });
+
+    const normalizedType = typeof type === "string" ? type.trim().toUpperCase() : "";
+    const requestType = normalizedType === "ADD" ? "ADD" : "EDIT";
+
+    const targetId = employeeId || req.employee.id;
+    const isSelf = String(targetId) === String(req.employee.id);
+    const canViewOthers =
+      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+      (req.employee.subRoles || []).some((r) =>
+        ["hr", "manager"].includes(r)
+      );
+    if (!isSelf && !canViewOthers)
+      return res.status(403).json({ error: "Forbidden" });
+
+    const [requester, targetEmployee] = await Promise.all([
+      Employee.findById(req.employee.id).select(
+        "name email employeeId company primaryRole"
+      ),
+      Employee.findById(targetId).select(
+        "name email employeeId company"
+      ),
+    ]);
+
+    if (!requester)
+      return res.status(404).json({ error: "Requester not found" });
+    if (!targetEmployee)
+      return res.status(404).json({ error: "Employee not found" });
+
+    if (
+      targetEmployee.company &&
+      requester.company &&
+      String(targetEmployee.company) !== String(requester.company) &&
+      !isAdminUser(req.employee)
+    ) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const companyId =
+      targetEmployee.company ||
+      requester.company ||
+      req.employee.company;
+    if (!companyId)
+      return res
+        .status(400)
+        .json({ error: "Employee is not linked to a company" });
+
+    const tzOptions = extractTimezoneOptions(req.body);
+    const validated = validatePunchWindowInput(
+      date,
+      punchIn,
+      punchOut,
+      tzOptions
+    );
+    const day = validated.day;
+
+    const company = await Company.findById(companyId).populate(
+      "admin",
+      "name email"
+    );
+
+    const recipients = new Set();
+    if (company?.admin?.email) recipients.add(company.admin.email);
+
+    const admins = await Employee.find({
+      company: companyId,
+      primaryRole: { $in: ["ADMIN", "SUPERADMIN"] },
+    }).select("email");
+    for (const admin of admins) {
+      if (admin?.email) recipients.add(admin.email);
+    }
+
+    const dateStr = dateKeyLocal(day);
+    const cleanMessage =
+      typeof message === "string" ? message.trim() : "";
+    const hasMessage = cleanMessage.length > 0;
+    const requestLabel =
+      requestType === "ADD" ? "Add missing punches" : "Update punches";
+
+    const payload = {
+      company: companyId,
+      employee: targetId,
+      requestedBy: req.employee.id,
+      date: day,
+      type: requestType,
+      status: "PENDING",
+      punchIn: validated.punchIn,
+      punchOut: validated.punchOut,
+      message: cleanMessage,
+      adminMessage: "",
+      resolvedAt: null,
+      resolvedBy: null,
+      timezoneOffsetMinutes:
+        validated.timezoneOptions.timezoneOffsetMinutes,
+    };
+
+    const existing = await AttendanceRequest.findOne({
+      employee: targetId,
+      company: companyId,
+      date: day,
+      status: "PENDING",
+    });
+    const requestDoc = existing
+      ? await AttendanceRequest.findByIdAndUpdate(
+          existing._id,
+          payload,
+          { new: true }
+        )
+      : await AttendanceRequest.create(payload);
+
+    const formattedMessage = hasMessage
+      ? escapeHtml(cleanMessage).replace(/\n/g, "<br/>")
+      : null;
+    const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.5;">
+        <h2 style="margin:0 0 12px;">Attendance Change Request</h2>
+        <p><strong>Requester:</strong> ${escapeHtml(
+          requester.name || ""
+        )} &lt;${escapeHtml(requester.email || "")}&gt;</p>
+        <p><strong>For Employee:</strong> ${escapeHtml(
+          targetEmployee.name || ""
+        )}${
+      targetEmployee.employeeId
+        ? ` (#${escapeHtml(targetEmployee.employeeId)})`
+        : ""
+    }</p>
+        <p><strong>Date:</strong> ${dateStr}</p>
+        <p><strong>Action:</strong> ${requestLabel}</p>
+        <p><strong>Requested punch window:</strong> ${validated.punchIn} → ${validated.punchOut}</p>
+        ${
+          hasMessage
+            ? `<p><strong>Message:</strong><br/>${formattedMessage}</p>`
+            : `<p>No additional message was provided.</p>`
+        }
+        <p style="margin-top:16px;color:#666;font-size:12px;">Generated automatically by HRMS.</p>
+      </div>`;
+
+    const textLines = [
+      `${requester.name} requested ${requestLabel.toLowerCase()} for ${targetEmployee.name} on ${dateStr}.`,
+      `Requested punches: ${validated.punchIn} to ${validated.punchOut}`,
+    ];
+    if (hasMessage) {
+      textLines.push(`Message: ${cleanMessage}`);
+    }
+
+    let emailSent = false;
+    if (await isEmailEnabled(companyId)) {
+      if (recipients.size) {
+        await sendMail({
+          companyId,
+          to: Array.from(recipients),
+          subject: `Attendance change request — ${targetEmployee.name} (${dateStr})`,
+          text: textLines.join("\n\n"),
+          html,
+        });
+        emailSent = true;
+      }
+    }
+
+    res.json({
+      message: emailSent ? "Admin notified" : "Request recorded",
+      request: requestDoc,
+      emailSent,
+    });
+  } catch (e) {
+    const status = e?.statusCode || 500;
+    if (status >= 500) console.error("manual-request error", e);
+    res
+      .status(status)
+      .json({ error: e?.message || "Failed to notify admin" });
+  }
+});
+
+// Admin/HR/Manager: List manual punch update requests
+router.get("/manual-requests", auth, async (req, res) => {
+  try {
+    if (!canViewManualRequests(req.employee))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const { status, type } = req.query || {};
+    const normalizedStatus =
+      typeof status === "string" ? status.trim().toUpperCase() : "PENDING";
+    const normalizedType =
+      typeof type === "string" ? type.trim().toUpperCase() : "";
+
+    const query = {};
+    if (req.employee.company) query.company = req.employee.company;
+    else if (!isAdminUser(req.employee))
+      return res.status(400).json({ error: "Company not set for employee" });
+
+    const allowedStatuses = ["PENDING", "APPROVED", "REJECTED"];
+    if (normalizedStatus && normalizedStatus !== "ALL") {
+      if (allowedStatuses.includes(normalizedStatus))
+        query.status = normalizedStatus;
+    }
+
+    if (normalizedType && normalizedType !== "ALL") {
+      if (["ADD", "EDIT"].includes(normalizedType)) {
+        query.type = normalizedType;
+      }
+    }
+
+    const requests = await AttendanceRequest.find(query)
+      .sort({ createdAt: -1 })
+      .populate("employee", "name employeeId")
+      .populate("requestedBy", "name employeeId");
+
+    res.json({ requests });
+  } catch (e) {
+    console.error("manual-requests list error", e);
+    res
+      .status(500)
+      .json({ error: "Failed to load attendance change requests" });
+  }
+});
+
+// Admin/Superadmin: Approve a manual punch update request (applies punches)
+router.post("/manual-requests/:id/approve", auth, async (req, res) => {
+  try {
+    if (!isAdminUser(req.employee))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const reqId = req.params.id;
+    if (!reqId) return res.status(400).json({ error: "Missing request id" });
+
+    const requestDoc = await AttendanceRequest.findById(reqId);
+    if (!requestDoc)
+      return res.status(404).json({ error: "Request not found" });
+    if (requestDoc.status !== "PENDING")
+      return res.status(400).json({ error: "Request is already resolved" });
+
+    if (
+      req.employee.company &&
+      requestDoc.company &&
+      String(requestDoc.company) !== String(req.employee.company) &&
+      req.employee.primaryRole !== "SUPERADMIN"
+    ) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const timezoneOptions = {
+      timezoneOffsetMinutes:
+        requestDoc.timezoneOffsetMinutes ??
+        extractTimezoneOptions(req.body).timezoneOffsetMinutes,
+    };
+
+    const attendance = await applyManualAttendanceWindow({
+      employeeId: requestDoc.employee,
+      date: requestDoc.date,
+      punchIn: requestDoc.punchIn,
+      punchOut: requestDoc.punchOut,
+      timezoneOptions,
+      resolvedBy: req.employee.id,
+    });
+
+    requestDoc.status = "APPROVED";
+    requestDoc.resolvedBy = req.employee.id;
+    requestDoc.resolvedAt = new Date();
+    requestDoc.adminMessage =
+      typeof req.body?.adminMessage === "string"
+        ? req.body.adminMessage.trim()
+        : "";
+
+    await requestDoc.save();
+
+    res.json({ request: requestDoc, attendance });
+  } catch (e) {
+    const status = e?.statusCode || 500;
+    if (status >= 500) console.error("manual-request approve error", e);
+    res
+      .status(status)
+      .json({ error: e?.message || "Failed to approve request" });
+  }
+});
+
+// Admin/Superadmin: Reject a manual punch update request
+router.post("/manual-requests/:id/reject", auth, async (req, res) => {
+  try {
+    if (!isAdminUser(req.employee))
+      return res.status(403).json({ error: "Forbidden" });
+
+    const reqId = req.params.id;
+    if (!reqId) return res.status(400).json({ error: "Missing request id" });
+
+    const requestDoc = await AttendanceRequest.findById(reqId);
+    if (!requestDoc)
+      return res.status(404).json({ error: "Request not found" });
+    if (requestDoc.status !== "PENDING")
+      return res.status(400).json({ error: "Request is already resolved" });
+
+    if (
+      req.employee.company &&
+      requestDoc.company &&
+      String(requestDoc.company) !== String(req.employee.company) &&
+      req.employee.primaryRole !== "SUPERADMIN"
+    ) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    requestDoc.status = "REJECTED";
+    requestDoc.resolvedBy = req.employee.id;
+    requestDoc.resolvedAt = new Date();
+    requestDoc.adminMessage =
+      typeof req.body?.adminMessage === "string"
+        ? req.body.adminMessage.trim()
+        : "";
+
+    await requestDoc.save();
+
+    res.json({ request: requestDoc });
+  } catch (e) {
+    const status = e?.statusCode || 500;
+    if (status >= 500) console.error("manual-request reject error", e);
+    res
+      .status(status)
+      .json({ error: e?.message || "Failed to reject request" });
+  }
+});
+
+// Admin/Superadmin: Manually adjust punch-in/punch-out window for a day
+// Body: { date: 'yyyy-mm-dd', firstIn: 'HH:mm', lastOut: 'HH:mm', timezoneOffsetMinutes?: number }
+router.post("/manual/:employeeId", auth, async (req, res) => {
+  try {
+    const canEdit = isAdminUser(req.employee);
+    if (!canEdit) return res.status(403).json({ error: "Forbidden" });
+
+    const targetId = req.params.employeeId;
+    if (!targetId) return res.status(400).json({ error: "Missing employeeId" });
+
+    const { date, firstIn, lastOut } = req.body || {};
+    if (!date) return res.status(400).json({ error: "Missing date" });
+    if (!firstIn || !lastOut)
+      return res
+        .status(400)
+        .json({ error: "Both punch-in and punch-out times are required" });
+
+    const day = startOfDay(new Date(date));
+    if (Number.isNaN(day.getTime()))
+      return res.status(400).json({ error: "Invalid date" });
+
+    let record = await Attendance.findOne({ employee: targetId, date: day });
+
+    const tzOptions = extractTimezoneOptions(req.body);
+    let punchIn;
+    let punchOut;
+    try {
+      punchIn = buildUtcDateFromLocal(date, firstIn, tzOptions);
+    } catch (err) {
+      return res
+        .status(400)
+        .json({ error: err?.message || "Invalid punch-in time" });
+    }
+    try {
+      punchOut = buildUtcDateFromLocal(date, lastOut, tzOptions);
+    } catch (err) {
+      return res
+        .status(400)
+        .json({ error: err?.message || "Invalid punch-out time" });
+    }
+
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+    if (!(punchIn >= day && punchIn < nextDay))
+      return res
+        .status(400)
+        .json({ error: "Punch-in must fall within the selected day" });
+    if (!(punchOut >= day && punchOut < nextDay))
+      return res
+        .status(400)
+        .json({ error: "Punch-out must fall within the selected day" });
+
+    if (!(punchOut > punchIn))
+      return res
+        .status(400)
+        .json({ error: "Punch-out must be after punch-in" });
+
+    const MAX_SPAN_MS = 16 * 60 * 60 * 1000;
+    const windowMs = Math.min(
+      MAX_SPAN_MS,
+      Math.max(0, punchOut.getTime() - punchIn.getTime())
+    );
+
+    if (!record) {
+      record = await Attendance.create({
+        employee: targetId,
+        date: day,
+        firstPunchIn: punchIn,
+        lastPunchIn: undefined,
+        lastPunchOut: punchOut,
+        workedMs: windowMs,
+      });
+      await resolveAutoLeavePenaltyForDay(targetId, day, req.employee.id);
+      return res.json({ attendance: record });
+    }
+
+    record.firstPunchIn = punchIn;
+    record.lastPunchOut = punchOut;
+    record.lastPunchIn = undefined;
+    record.workedMs = windowMs;
+
+    if (record.autoPunchOut) {
+      record.autoPunchOut = false;
+      record.autoPunchResolvedAt = new Date();
+      record.autoPunchOutAt = punchOut;
+      record.autoPunchLastIn = undefined;
+    }
+
     if (record.manualFillRequest) {
       record.manualFillRequest.status = "COMPLETED";
       record.manualFillRequest.resolvedAt = new Date();
@@ -1892,11 +2728,12 @@ router.post("/punchout-at/:employeeId?", auth, async (req, res) => {
     }
 
     await record.save();
+    await resolveAutoLeavePenaltyForDay(targetId, day, req.employee.id);
 
     res.json({ attendance: record });
   } catch (e) {
-    console.error("punchout-at error", e);
-    res.status(500).json({ error: "Failed to set punch-out time" });
+    console.error("manual attendance update error", e);
+    res.status(500).json({ error: "Failed to update attendance window" });
   }
 });
 
@@ -1913,6 +2750,103 @@ router.post("/admin/auto-punchout/run", auth, async (req, res) => {
   } catch (e) {
     console.error("auto-punchout run error", e);
     res.status(500).json({ error: "Failed to run auto-punchout" });
+  }
+});
+
+// Admin/HR: Resolve an auto-applied leave for missing attendance (e.g., punch-in existed)
+router.post("/admin/auto-leave/resolve", auth, async (req, res) => {
+  try {
+    const canManage =
+      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+      (req.employee.subRoles || []).includes("hr");
+    if (!canManage) return res.status(403).json({ error: "Forbidden" });
+
+    const { employeeId, date } = req.body || {};
+    if (!employeeId || !date)
+      return res.status(400).json({ error: "employeeId and date are required" });
+
+    const day = startOfDay(date);
+    if (Number.isNaN(day.getTime()))
+      return res.status(400).json({ error: "Invalid date" });
+
+    await resolveAutoLeavePenaltyForDay(employeeId, day, req.employee.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("resolve auto leave error", e);
+    res.status(500).json({ error: "Failed to resolve auto-applied leave" });
+  }
+});
+
+// Admin/HR: Resolve all auto-applied leaves for a specific date across the company
+router.post("/admin/auto-leave/bulk-resolve", auth, async (req, res) => {
+  try {
+    const canManage =
+      ["ADMIN", "SUPERADMIN"].includes(req.employee.primaryRole) ||
+      (req.employee.subRoles || []).includes("hr");
+    if (!canManage) return res.status(403).json({ error: "Forbidden" });
+
+    const { date } = req.body || {};
+    if (!date) return res.status(400).json({ error: "date is required" });
+    const day = startOfDay(new Date(date));
+    if (Number.isNaN(day.getTime()))
+      return res.status(400).json({ error: "Invalid date" });
+
+    const companyId = req.employee.company;
+    if (!companyId)
+      return res
+        .status(400)
+        .json({ error: "Company not found for the admin account" });
+
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    const penalties = await AttendancePenalty.find({
+      company: companyId,
+      date: { $gte: day, $lt: nextDay },
+      resolvedAt: null,
+    })
+      .select("employee date")
+      .lean();
+
+    let resolved = 0;
+    let failed = 0;
+    for (const p of penalties) {
+      try {
+        await resolveAutoLeavePenaltyForDay(
+          p.employee,
+          p.date ? startOfDay(p.date) : day,
+          req.employee.id
+        );
+        resolved += 1;
+      } catch (err) {
+        failed += 1;
+        console.error(
+          "[auto-leave bulk resolve] failed",
+          p?.employee,
+          err?.message || err
+        );
+      }
+    }
+
+    const leavesRes = await Leave.deleteMany({
+      company: companyId,
+      startDate: { $gte: day, $lt: nextDay },
+      endDate: { $gte: day, $lt: nextDay },
+      isAuto: true,
+    });
+
+    res.json({
+      message: "Auto-applied leaves resolved for the selected date",
+      ok: true,
+      date: day.toISOString().slice(0, 10),
+      penaltiesFound: penalties.length,
+      resolved,
+      failed,
+      autoLeavesDeleted: leavesRes?.deletedCount || 0,
+    });
+  } catch (e) {
+    console.error("bulk resolve auto leave error", e);
+    res.status(500).json({ error: "Failed to resolve auto-applied leaves" });
   }
 });
 
@@ -1949,5 +2883,7 @@ router.post("/overrides/:employeeId", auth, async (req, res) => {
     res.status(500).json({ error: "Failed to save override" });
   }
 });
+
+router.collectAttendanceIssues = collectAttendanceIssues;
 
 module.exports = router;

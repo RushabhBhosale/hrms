@@ -1,5 +1,17 @@
 const mongoose = require("mongoose");
 const { fieldEncryption } = require("mongoose-field-encryption");
+const ENCRYPTED_FIELDS = [
+  "address",
+  "phone",
+  "personalEmail",
+  "bloodGroup",
+  "dob",
+  "aadharNumber",
+  "panNumber",
+  "bankDetails",
+  "uan",
+  "ctc",
+];
 
 const EmployeeSchema = new mongoose.Schema(
   {
@@ -24,19 +36,11 @@ const EmployeeSchema = new mongoose.Schema(
     personalEmail: { type: String },
     bloodGroup: {
       type: String,
-      enum: [
-        "A+",
-        "A-",
-        "B+",
-        "B-",
-        "AB+",
-        "AB-",
-        "O+",
-        "O-",
-      ],
+      enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"],
     },
     dob: { type: Date },
     joiningDate: { type: Date },
+    attendanceStartDate: { type: Date },
     employeeId: { type: String },
     aadharNumber: { type: String },
     panNumber: { type: String },
@@ -45,22 +49,17 @@ const EmployeeSchema = new mongoose.Schema(
       bankName: { type: String },
       ifsc: { type: String },
     },
+    uan: { type: String },
     // Monthly CTC used for salary computations
     ctc: { type: Number, default: 0 },
     documents: { type: [String], default: [] },
-    // Primary reporting person is kept for backward compatibility while
-    // the application gradually transitions to supporting multiple
-    // reporting managers for an employee.
     reportingPerson: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
     reportingPersons: {
-      type: [
-        {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "Employee",
-        },
-      ],
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: "Employee",
       default: [],
     },
+    hasTds: { type: Boolean, default: false },
     // Derived/display leave balances (kept for backward-compatible API payloads)
     leaveBalances: {
       casual: { type: Number, default: 0 },
@@ -86,26 +85,81 @@ const EmployeeSchema = new mongoose.Schema(
     resetOtpExpires: { type: Date },
     resetOtpAttempts: { type: Number, default: 0 },
     resetOtpLastSentAt: { type: Date },
+    // Optional profile image (stored file key or URL)
+    profileImage: { type: String },
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
+    offboarding: {
+      lastWorkingDay: { type: Date },
+      reason: {
+        type: String,
+        enum: [
+          "resignation",
+          "termination",
+          "layoff",
+          "contract_end",
+          "absconded",
+          "other",
+        ],
+        default: "other",
+      },
+      note: { type: String },
+      recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+      recordedAt: { type: Date },
+    },
+    uan: { type: String },
   },
   { timestamps: true }
 );
+
+function hasSerializableEncryptionValue(value) {
+  if (typeof value === "undefined") return true;
+  if (typeof value === "string") return true;
+  try {
+    return typeof JSON.stringify(value) !== "undefined";
+  } catch (_) {
+    return false;
+  }
+}
+
+// Guard against malformed values that can crash encryption middleware.
+EmployeeSchema.pre("save", function (next) {
+  try {
+    for (const field of ENCRYPTED_FIELDS) {
+      const value = this.get(field);
+      if (!hasSerializableEncryptionValue(value)) {
+        this.set(field, undefined);
+      }
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+EmployeeSchema.pre("insertMany", function (next, docs) {
+  try {
+    for (const doc of docs || []) {
+      for (const field of ENCRYPTED_FIELDS) {
+        const value =
+          typeof doc?.get === "function" ? doc.get(field) : doc?.[field];
+        if (!hasSerializableEncryptionValue(value)) {
+          if (typeof doc?.set === "function") doc.set(field, undefined);
+          else if (doc && typeof doc === "object") doc[field] = undefined;
+        }
+      }
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Encrypt sensitive PII and compensation fields
 // Do NOT encrypt fields used for login/lookup/indexes (email, employeeId, name, company, roles)
 const secret = process.env.ENC_KEY || "12345678901234567890123456789012";
 EmployeeSchema.plugin(fieldEncryption, {
-  fields: [
-    "address",
-    "phone",
-    "personalEmail",
-    "bloodGroup",
-    "dob",
-    "joiningDate",
-    "aadharNumber",
-    "panNumber",
-    "bankDetails",
-    "ctc",
-  ],
+  fields: ENCRYPTED_FIELDS,
   secret,
 });
 

@@ -1,22 +1,83 @@
-export async function resolveLocationLabel(): Promise<string | null> {
+export type LocationResolution = {
+  label: string | null;
+  permission: "granted" | "denied" | "prompt" | "unavailable";
+};
+
+type ResolveLocationOptions = {
+  /**
+   * When false, skip any action that would trigger a browser permission prompt.
+   * Location is only fetched if permission is already granted.
+   */
+  requestPermission?: boolean;
+};
+
+function mapPermissionState(state?: PermissionState | null): LocationResolution["permission"] {
+  if (state === "granted") return "granted";
+  if (state === "denied") return "denied";
+  if (state === "prompt") return "prompt";
+  return "prompt";
+}
+
+export async function resolveLocationLabel(
+  opts?: ResolveLocationOptions,
+): Promise<LocationResolution> {
   if (typeof navigator === "undefined" || !navigator.geolocation) {
-    return null;
+    return { label: null, permission: "unavailable" };
   }
 
+  const requestPermission = opts?.requestPermission !== false;
+  let permission: LocationResolution["permission"] = "prompt";
+
+  try {
+    if (navigator.permissions?.query) {
+      const result = await navigator.permissions.query({
+        // PermissionName is a DOM lib union that includes "geolocation"
+        name: "geolocation" as PermissionName,
+      });
+      permission = mapPermissionState(result.state);
+    }
+  } catch {
+    // Ignore permission API failures; fallback to geolocation response
+  }
+
+  // If we shouldn't trigger a browser prompt, bail unless already granted.
+  if (!requestPermission && permission !== "granted") {
+    return { label: null, permission };
+  }
+
+  let denied = false;
   const position = await new Promise<GeolocationPosition>((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(resolve, reject, {
       enableHighAccuracy: true,
       timeout: 10000,
       maximumAge: 0,
     });
-  }).catch(() => null);
+  }).catch((err: any) => {
+    const code = typeof err?.code === "number" ? err.code : null;
+    // 1 === PERMISSION_DENIED per spec
+    if (code === 1) {
+      denied = true;
+    }
+    return null;
+  });
 
-  if (!position) return null;
+  if (!position) {
+    if (denied) permission = "denied";
+    else if (permission === "prompt") permission = "unavailable";
+    return { label: null, permission };
+  }
+
+  permission = "granted";
 
   const { latitude, longitude } = position.coords;
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-    return null;
+    return { label: null, permission };
   }
+
+  const coordsLabel = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`.slice(
+    0,
+    140
+  );
 
   try {
     const url = new URL("https://nominatim.openstreetmap.org/reverse");
@@ -130,9 +191,10 @@ export async function resolveLocationLabel(): Promise<string | null> {
       .slice(0, 3)
       .map((candidate) => candidate.value)
       .join(", ");
-    return label ? label.slice(0, 140) : null;
+    const finalLabel = label ? label.slice(0, 140) : coordsLabel;
+    return { label: finalLabel, permission };
   } catch (err) {
     console.warn("Failed to fetch location label", err);
-    return null;
+    return { label: coordsLabel, permission };
   }
 }

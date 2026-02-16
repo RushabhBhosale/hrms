@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
-import { Th, Td } from "../../components/ui/Table";
+import { Th, Td } from "../../components/utils/Table";
 import { getEmployee } from "../../lib/auth";
 
 type EmployeeLite = { id: string; name: string; email: string };
@@ -9,6 +9,7 @@ type Project = {
   _id: string;
   title: string;
   estimatedTimeMinutes?: number;
+  monthlyEstimateMinutes?: number;
   startTime?: string;
   isPersonal?: boolean;
 };
@@ -21,7 +22,7 @@ type TimeLog = {
 type Task = {
   _id: string;
   title: string;
-  assignedTo: string;
+  assignedTo: string | string[];
   project: string;
   timeLogs?: TimeLog[];
   timeSpentMinutes?: number;
@@ -145,7 +146,7 @@ function Donut({
             <span className="truncate max-w-[180px]" title={d.label}>
               {d.label}
             </span>
-            <span className="text-muted">
+            <span className="text-muted-foreground">
               {Math.round((d.value / 60) * 100) / 100} h
             </span>
           </div>
@@ -180,13 +181,12 @@ function StackedBars({
               className="inline-block w-3 h-3 rounded-sm"
               style={{ background: l.color }}
             />
-            <span className="text-muted">{l.label}</span>
+            <span className="text-muted-foreground">{l.label}</span>
           </div>
         ))}
       </div>
       <div className="space-y-4">
         {rows.map((r) => {
-          console.log("dhsds", rows);
           return (
             <div key={r.label} className="space-y-1">
               <div className="flex items-center justify-between text-xs">
@@ -202,7 +202,7 @@ function StackedBars({
                     </Link>
                   )}
                 </span>
-                <span className="text-muted">
+                <span className="text-muted-foreground">
                   {Math.round((r.total / 60) * 100) / 100} h
                 </span>
               </div>
@@ -244,7 +244,11 @@ function StackedBars({
   );
 }
 
-export default function ProjectTime({ onlyActive = false }: { onlyActive?: boolean }) {
+export default function ProjectTime({
+  onlyActive = false,
+}: {
+  onlyActive?: boolean;
+}) {
   const me = getEmployee();
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // yyyy-mm
   const [dateMode, setDateMode] = useState<"ALL" | "MONTH">("ALL");
@@ -253,7 +257,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<string>("ALL");
   const [tasksByProject, setTasksByProject] = useState<Record<string, Task[]>>(
-    {}
+    {},
   );
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -328,6 +332,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
             _id: p._id,
             title: p.title,
             estimatedTimeMinutes: p.estimatedTimeMinutes,
+            monthlyEstimateMinutes: p.monthlyEstimateMinutes,
             startTime: p.startTime,
             isPersonal: !!p.isPersonal,
           })),
@@ -335,20 +340,25 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
         if (personalProjs.length) {
           const estSum = personalProjs.reduce(
             (s, p) => s + (p.estimatedTimeMinutes || 0),
-            0
+            0,
+          );
+          const monthlySum = personalProjs.reduce(
+            (s, p) => s + (p.monthlyEstimateMinutes || 0),
+            0,
           );
           const startTimes = personalProjs
             .map((p) => p.startTime)
             .filter(Boolean) as string[];
           const earliestStart = startTimes.length
             ? new Date(
-                Math.min(...startTimes.map((d) => new Date(d).getTime()))
+                Math.min(...startTimes.map((d) => new Date(d).getTime())),
               ).toISOString()
             : undefined;
           aggregatedProjects.push({
             _id: PERSONAL_ID,
             title: "Personal Tasks",
             estimatedTimeMinutes: estSum || undefined,
+            monthlyEstimateMinutes: monthlySum || undefined,
             startTime: earliestStart,
             isPersonal: true,
           });
@@ -366,7 +376,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
             } catch {
               rawTaskMap[p._id] = [];
             }
-          })
+          }),
         );
         // Re-map into aggregated task map with single PERSONAL bucket
         const aggregatedTaskMap: Record<string, Task[]> = {};
@@ -470,10 +480,10 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
     const empMap = new Map(employees.map((e) => [e.id, e.name]));
     // Establish a stable color per employee based on total contribution
     const empOrder = Object.keys(byEmpTotal).sort(
-      (a, b) => (byEmpTotal[b] || 0) - (byEmpTotal[a] || 0)
+      (a, b) => (byEmpTotal[b] || 0) - (byEmpTotal[a] || 0),
     );
     const empColor = new Map<string, string>(
-      empOrder.map((id, idx) => [id, palette[idx % palette.length]])
+      empOrder.map((id, idx) => [id, palette[idx % palette.length]]),
     );
 
     // Build rows for all visible projects (include 0-minute projects)
@@ -512,12 +522,24 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
       return Math.round((totalMinutes / days / 60) * 100) / 100;
     })();
 
+    const selectedProject =
+      projectId !== "ALL"
+        ? projects.find((p) => p._id === projectId)
+        : undefined;
     const selectedSpent =
       projectId !== "ALL" ? byProject[projectId] || 0 : undefined;
     const selectedEst =
       projectId !== "ALL"
-        ? projects.find((p) => p._id === projectId)?.estimatedTimeMinutes || 0
+        ? selectedProject?.estimatedTimeMinutes || 0
         : undefined;
+    const selectedMonthlyCapMinutes =
+      selectedProject && Number(selectedProject.monthlyEstimateMinutes) > 0
+        ? selectedProject.monthlyEstimateMinutes
+        : undefined;
+    const canShowMonthlyProgress =
+      !!selectedMonthlyCapMinutes &&
+      dateMode === "MONTH" &&
+      projectId !== "ALL";
 
     return {
       donut,
@@ -534,9 +556,38 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
           selectedSpent !== undefined
             ? minutesToHours(selectedSpent)
             : undefined,
+        selectedMonthlyCapHours:
+          selectedMonthlyCapMinutes !== undefined
+            ? minutesToHours(selectedMonthlyCapMinutes)
+            : undefined,
+        selectedMonthlySpentHours:
+          canShowMonthlyProgress && selectedSpent !== undefined
+            ? minutesToHours(selectedSpent)
+            : undefined,
+        selectedMonthlyRemainingHours:
+          canShowMonthlyProgress && selectedSpent !== undefined
+            ? minutesToHours(
+                Math.max(0, selectedMonthlyCapMinutes - selectedSpent),
+              )
+            : undefined,
+        selectedMonthlyOverHours:
+          canShowMonthlyProgress && selectedSpent !== undefined
+            ? minutesToHours(
+                Math.max(0, selectedSpent - selectedMonthlyCapMinutes),
+              )
+            : undefined,
       },
     };
-  }, [tasksByProject, projects, employees, start, end, employeeId, projectId]);
+  }, [
+    tasksByProject,
+    projects,
+    employees,
+    start,
+    end,
+    employeeId,
+    projectId,
+    dateMode,
+  ]);
 
   const monthLabel = useMemo(() => {
     const [y, m] = month.split("-").map(Number);
@@ -546,7 +597,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
 
   const timeLabel = useMemo(
     () => (dateMode === "MONTH" ? monthLabel : "All Dates"),
-    [dateMode, monthLabel]
+    [dateMode, monthLabel],
   );
 
   // Determine base path for project details links
@@ -581,6 +632,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
           title: p.title,
           estimatedMinutes: p.estimatedTimeMinutes || 0,
           spentMinutes: spent,
+          monthlyCapMinutes: p.monthlyEstimateMinutes || 0,
           startTime: p.startTime,
         };
       })
@@ -625,7 +677,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
             esc(empName(seg.key)),
             String(minutes),
             String(hours),
-          ].join(",")
+          ].join(","),
         );
       }
       // total row
@@ -638,7 +690,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
             esc("Total"),
             String(totalMin),
             String(totalHr),
-          ].join(",")
+          ].join(","),
         );
       }
     }
@@ -656,6 +708,9 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
     a.remove();
     URL.revokeObjectURL(url);
   }
+
+  const showMonthlyColumns = dateMode === "MONTH";
+  const projectTableColSpan = showMonthlyColumns ? 7 : 5;
 
   return (
     <div className="space-y-6">
@@ -719,13 +774,13 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
         </div>
       )}
       {loading ? (
-        <div className="text-sm text-muted">Loading…</div>
+        <div className="text-sm text-muted-foreground">Loading…</div>
       ) : (
         <>
           {/* Summary cards */}
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-md border border-border bg-surface p-4">
-              <div className="text-xs text-muted">
+              <div className="text-xs text-muted-foreground">
                 Total Hours ({timeLabel})
               </div>
               <div className="text-2xl font-semibold mt-1">
@@ -733,7 +788,9 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
               </div>
             </div>
             <div className="rounded-md border border-border bg-surface p-4">
-              <div className="text-xs text-muted">Active Projects</div>
+              <div className="text-xs text-muted-foreground">
+                Active Projects
+              </div>
               <div className="text-2xl font-semibold mt-1">
                 {agg.summary.activeProjects}
               </div>
@@ -741,7 +798,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
             {agg.summary.selectedProjectId && (
               <>
                 <div className="rounded-md border border-border bg-surface p-4">
-                  <div className="text-xs text-muted">
+                  <div className="text-xs text-muted-foreground">
                     Estimated Time (selected project)
                   </div>
                   <div className="text-base font-medium mt-1">
@@ -751,7 +808,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                   </div>
                 </div>
                 <div className="rounded-md border border-border bg-surface p-4">
-                  <div className="text-xs text-muted">
+                  <div className="text-xs text-muted-foreground">
                     Spent Time (selected project)
                   </div>
                   <div className="text-base font-medium mt-1">
@@ -760,6 +817,39 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                       : "-"}
                   </div>
                 </div>
+                {agg.summary.selectedMonthlyCapHours !== undefined && (
+                  <div className="rounded-md border border-border bg-surface p-4">
+                    <div className="text-xs text-muted-foreground">
+                      Monthly Cap (selected project)
+                    </div>
+                    <div className="text-base font-medium mt-1">
+                      {agg.summary.selectedMonthlyCapHours} h/mo
+                    </div>
+                    <div className="text-xs mt-1">
+                      {agg.summary.selectedMonthlySpentHours !== undefined ? (
+                        agg.summary.selectedMonthlyOverHours &&
+                        agg.summary.selectedMonthlyOverHours > 0 ? (
+                          <span className="text-error">
+                            Used {agg.summary.selectedMonthlySpentHours} h •
+                            Over by {agg.summary.selectedMonthlyOverHours} h
+                            this month
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            Used {agg.summary.selectedMonthlySpentHours} h •
+                            Remaining{" "}
+                            {agg.summary.selectedMonthlyRemainingHours ?? 0} h
+                            this month
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-muted-foreground">
+                          Switch to Monthly range to see cap usage
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -777,7 +867,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                     ? "Time by Project"
                     : "Time by Employee (Selected Project)"}
                 </div>
-                <div className="text-xs text-muted">{timeLabel}</div>
+                <div className="text-xs text-muted-foreground">{timeLabel}</div>
               </div>
               {agg.donut.length ? (
                 <Donut
@@ -787,7 +877,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                   }
                 />
               ) : (
-                <div className="text-sm text-muted">
+                <div className="text-sm text-muted-foreground">
                   No time logged in {timeLabel}.
                 </div>
               )}
@@ -798,7 +888,9 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                 <div className="text-sm font-medium">
                   Who worked how much (per project)
                 </div>
-                <div className="text-xs text-muted">Stacked totals</div>
+                <div className="text-xs text-muted-foreground">
+                  Stacked totals
+                </div>
               </div>
               {agg.rows.length ? (
                 <StackedBars
@@ -807,7 +899,7 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                   basePath={basePath}
                 />
               ) : (
-                <div className="text-sm text-muted">No data</div>
+                <div className="text-sm text-muted-foreground">No data</div>
               )}
             </div>
           </div>
@@ -823,12 +915,20 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                     <Th>Start</Th>
                     <Th>Estimated (h)</Th>
                     <Th>Spent (h)</Th>
+                    {showMonthlyColumns && (
+                      <>
+                        <Th>Monthly Cap (h)</Th>
+                        <Th>Monthly Status</Th>
+                      </>
+                    )}
                     <Th>Status</Th>
                   </tr>
                 </thead>
                 <tbody>
                   {projectTable.map((r) => {
                     const over = r.spentMinutes - r.estimatedMinutes;
+                    const monthlyOver =
+                      r.spentMinutes - (r.monthlyCapMinutes || 0);
                     return (
                       <tr key={r.id} className="border-b border-border">
                         <Td>{r.title}</Td>
@@ -839,16 +939,50 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                         </Td>
                         <Td>{minutesToHours(r.estimatedMinutes)}</Td>
                         <Td>{minutesToHours(r.spentMinutes)}</Td>
+                        {showMonthlyColumns && (
+                          <>
+                            <Td>
+                              {r.monthlyCapMinutes
+                                ? `${minutesToHours(r.monthlyCapMinutes)} h/mo`
+                                : "No cap"}
+                            </Td>
+                            <Td>
+                              {r.monthlyCapMinutes ? (
+                                monthlyOver > 0 ? (
+                                  <span className="text-error">
+                                    Over by {minutesToHours(monthlyOver)} h
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    Remaining{" "}
+                                    {minutesToHours(
+                                      Math.max(
+                                        0,
+                                        r.monthlyCapMinutes - r.spentMinutes,
+                                      ),
+                                    )}{" "}
+                                    h
+                                  </span>
+                                )
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </Td>
+                          </>
+                        )}
                         <Td>
                           {over > 0 ? (
                             <span className="text-error">
                               + {minutesToHours(over)} h
                             </span>
                           ) : (
-                            <span className="text-muted">
+                            <span className="text-muted-foreground">
                               -{" "}
                               {minutesToHours(
-                                Math.max(0, r.estimatedMinutes - r.spentMinutes)
+                                Math.max(
+                                  0,
+                                  r.estimatedMinutes - r.spentMinutes,
+                                ),
                               )}{" "}
                               h
                             </span>
@@ -859,7 +993,10 @@ export default function ProjectTime({ onlyActive = false }: { onlyActive?: boole
                   })}
                   {projectTable.length === 0 && (
                     <tr>
-                      <td className="px-3 py-3 text-sm text-muted" colSpan={5}>
+                      <td
+                        className="px-3 py-3 text-sm text-muted-foreground"
+                        colSpan={projectTableColSpan}
+                      >
                         No projects
                       </td>
                     </tr>

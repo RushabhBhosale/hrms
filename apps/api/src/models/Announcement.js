@@ -11,12 +11,15 @@ const AnnouncementSchema = new mongoose.Schema(
     },
     title: { type: String, required: true },
     message: { type: String, required: true },
+    images: { type: [String], default: [] },
     expiresAt: { type: Date },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",
       required: true,
     },
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

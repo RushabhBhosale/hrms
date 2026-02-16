@@ -39,6 +39,7 @@ const announcementSchema = z.object({
     .trim()
     .min(10, "Message must be at least 10 characters")
     .max(5000, "Message must be at most 5000 characters"),
+  images: z.array(z.string().trim().min(1)).optional(),
   expiresAt: expiresAtField,
   createdBy: objectIdString,
 });

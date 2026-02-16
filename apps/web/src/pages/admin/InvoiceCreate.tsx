@@ -2,6 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { z, ZodError } from "zod";
+import { Button } from "../../components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 
 type LineItem = {
   description: string;
@@ -11,7 +19,8 @@ type LineItem = {
   flatAmount: number;
 };
 
-type ProjectLite = { _id: string; title: string };
+type ProjectLite = { _id: string; title: string; clientId?: string };
+type Client = { _id: string; name: string; email?: string };
 
 const fmtMoney = (n: number, currency = "INR", locale = "en-IN") =>
   new Intl.NumberFormat(locale, {
@@ -54,6 +63,7 @@ const LineItemSchema = z
 const BaseInvoice = z.object({
   partyType: z.enum(["client", "employee", "vendor"]),
   projectId: z.string().optional(),
+  clientId: z.string().optional(),
   partyName: z.string().optional(),
   partyEmail: z.string().email("Invalid email").optional().or(z.literal("")),
   issueDate: z.string().refine(isDate, "Issue date is required"),
@@ -74,19 +84,23 @@ const ReceivableSchema = BaseInvoice.extend({
     .max(100, "Tax must be ≤ 100")
     .default(0),
 })
-  .refine((d) => !!d.projectId || !!(d.partyName && d.partyName.trim()), {
-    message: "Provide a project or a party name",
-    path: ["partyName"],
-  })
+  .refine(
+    (d) =>
+      !!d.projectId || !!d.clientId || !!(d.partyName && d.partyName.trim()),
+    {
+      message: "Provide a project or a party name",
+      path: ["partyName"],
+    },
+  )
   .refine(
     (d) =>
       !d.dueDate ||
       new Date(d.dueDate).getTime() >= new Date(d.issueDate).getTime(),
-    { message: "Due date must be on/after issue date", path: ["dueDate"] }
+    { message: "Due date must be on/after issue date", path: ["dueDate"] },
   )
   .superRefine((d, ctx) => {
     const anyNonEmpty = d.lineItems.some(
-      (l) => l.description && l.description.trim().length > 0
+      (l) => l.description && l.description.trim().length > 0,
     );
     if (!anyNonEmpty) {
       ctx.addIssue({
@@ -105,12 +119,16 @@ const PayableSchema = BaseInvoice.extend({
     (d) =>
       !d.dueDate ||
       new Date(d.dueDate).getTime() >= new Date(d.issueDate).getTime(),
-    { message: "Due date must be on/after issue date", path: ["dueDate"] }
+    { message: "Due date must be on/after issue date", path: ["dueDate"] },
   )
-  .refine((d) => !!d.projectId || !!(d.partyName && d.partyName.trim()), {
-    message: "Provide a project or a party name",
-    path: ["partyName"],
-  });
+  .refine(
+    (d) =>
+      !!d.projectId || !!d.clientId || !!(d.partyName && d.partyName.trim()),
+    {
+      message: "Provide a project or a party name",
+      path: ["partyName"],
+    },
+  );
 
 // -------- error helpers --------
 type FieldErrors = Record<string, string>;
@@ -131,14 +149,17 @@ export default function InvoiceCreate() {
 
   const [type, setType] = useState<"receivable" | "payable">(initialType);
   const [partyType, setPartyType] = useState<"client" | "employee" | "vendor">(
-    initialType === "payable" ? "vendor" : "client"
+    initialType === "payable" ? "vendor" : "client",
   );
+  const [clients, setClients] = useState<Client[]>([]);
+  const [clientId, setClientId] = useState<string>("");
+  const [clientChoiceManual, setClientChoiceManual] = useState(false);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [projectId, setProjectId] = useState<string>("");
   const [partyName, setPartyName] = useState("");
   const [partyEmail, setPartyEmail] = useState("");
   const [issueDate, setIssueDate] = useState<string>(() =>
-    new Date().toISOString().slice(0, 10)
+    new Date().toISOString().slice(0, 10),
   );
   const [dueDate, setDueDate] = useState<string>("");
   const [paymentTerms, setPaymentTerms] = useState("");
@@ -187,12 +208,24 @@ export default function InvoiceCreate() {
   useEffect(() => {
     (async () => {
       try {
+        const res = await api.get("/clients");
+        setClients(res.data.clients || []);
+      } catch (error) {
+        console.error("clients load failed", error);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
         const res = await api.get("/projects", { params: { active: "true" } });
         setProjects(
           (res.data.projects || []).map((p: any) => ({
             _id: p._id,
             title: p.title,
-          }))
+            clientId: p.client || undefined,
+          })),
         );
       } catch (error) {
         console.error("projects load failed", error);
@@ -214,14 +247,47 @@ export default function InvoiceCreate() {
     }
   }
 
+  useEffect(() => {
+    if (partyType !== "client") return;
+    if (clientChoiceManual) return;
+    const proj = projects.find((p) => p._id === projectId);
+    if (proj?.clientId) {
+      setClientId(proj.clientId);
+      const cli = clients.find((c) => c._id === proj.clientId);
+      if (cli) {
+        setPartyName(cli.name || "");
+        setPartyEmail(cli.email || "");
+      }
+    } else {
+      setClientId("");
+    }
+  }, [projectId, projects, clients, partyType, clientChoiceManual]);
+
+  useEffect(() => {
+    if (partyType !== "client") {
+      setClientId("");
+      setClientChoiceManual(false);
+    }
+  }, [partyType]);
+
+  useEffect(() => {
+    if (partyType !== "client") return;
+    if (!clientId) return;
+    const cli = clients.find((c) => c._id === clientId);
+    if (cli) {
+      setPartyName(cli.name || "");
+      setPartyEmail(cli.email || "");
+    }
+  }, [clientId, clients, partyType]);
+
   // ---- local helpers to manage errors + inputs ----
   const setLine = (idx: number, patch: Partial<LineItem>) => {
     setLineItems((prev) =>
-      prev.map((li, i) => (i === idx ? { ...li, ...patch } : li))
+      prev.map((li, i) => (i === idx ? { ...li, ...patch } : li)),
     );
     // clear inline errors for changed fields
     Object.keys(patch).forEach((k) =>
-      clearFieldError(`lineItems.${idx}.${k as keyof LineItem}`)
+      clearFieldError(`lineItems.${idx}.${k as keyof LineItem}`),
     );
     clearFieldError("lineItems"); // clear block-level lineItems error if any
   };
@@ -263,7 +329,7 @@ export default function InvoiceCreate() {
           };
         }
         return { ...li, amountMode: "time" };
-      })
+      }),
     );
     clearFieldError(`lineItems.${idx}.rate`);
     clearFieldError(`lineItems.${idx}.quantity`);
@@ -272,7 +338,7 @@ export default function InvoiceCreate() {
 
   function toggleTask(id: string) {
     setSelectedTaskIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   }
 
@@ -309,6 +375,7 @@ export default function InvoiceCreate() {
         type: "receivable" as const,
         partyType,
         projectId: projectId || undefined,
+        clientId: clientId || undefined,
         partyName: partyName || undefined,
         partyEmail: partyEmail || undefined,
         issueDate,
@@ -329,6 +396,7 @@ export default function InvoiceCreate() {
         type: "payable" as const,
         partyType,
         projectId: projectId || undefined,
+        clientId: clientId || undefined,
         partyName: partyName || undefined,
         partyEmail: partyEmail || undefined,
         issueDate,
@@ -347,6 +415,7 @@ export default function InvoiceCreate() {
         type: "receivable" as const,
         partyType,
         projectId: projectId || undefined,
+        clientId: clientId || undefined,
         partyName: partyName || undefined,
         partyEmail: partyEmail || undefined,
         issueDate,
@@ -373,6 +442,7 @@ export default function InvoiceCreate() {
         type: "payable" as const,
         partyType,
         projectId: projectId || undefined,
+        clientId: clientId || undefined,
         partyName: partyName || undefined,
         partyEmail: partyEmail || undefined,
         issueDate,
@@ -404,7 +474,7 @@ export default function InvoiceCreate() {
     }, 0);
     const normalizedTaxPercent = Math.min(
       Math.max(Number(taxPercent || 0), 0),
-      100
+      100,
     );
     const tax = subtotal * (normalizedTaxPercent / 100);
     return {
@@ -429,6 +499,7 @@ export default function InvoiceCreate() {
           type: "payable",
           partyType: validated.partyType,
           projectId: validated.projectId,
+          clientId: validated.clientId,
           partyName: validated.partyName,
           partyEmail: validated.partyEmail || undefined,
           issueDate: validated.issueDate,
@@ -464,6 +535,7 @@ export default function InvoiceCreate() {
           type: "receivable",
           partyType: validated.partyType,
           projectId: validated.projectId,
+          clientId: validated.clientId,
           partyName: validated.partyName,
           partyEmail: validated.partyEmail || undefined,
           issueDate: validated.issueDate,
@@ -513,86 +585,125 @@ export default function InvoiceCreate() {
               {type === "receivable" ? "Outgoing" : "Incoming"}
             </span>
           </div>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             Create an invoice with detailed line items and rich descriptions.
           </p>
         </div>
-        <Link className="text-sm underline" to="/admin/invoices">
-          Back to invoices
-        </Link>
+        <Button asChild variant="outline" className="h-10">
+          <Link to="/admin/invoices">Back to invoices</Link>
+        </Button>
       </div>
 
       {/* Only API errors at top */}
       {apiErr && <div className="text-error text-sm">{apiErr}</div>}
 
       <div className="flex flex-wrap gap-2">
-        <button
-          className={`px-3 py-1.5 rounded-md border ${
-            type === "receivable" ? "bg-primary text-white" : ""
-          }`}
+        <Button
+          variant={type === "receivable" ? "default" : "outline"}
+          size="sm"
           onClick={() => setType("receivable")}
         >
           Outgoing
-        </button>
-        <button
-          className={`px-3 py-1.5 rounded-md border ${
-            type === "payable" ? "bg-primary text-white" : ""
-          }`}
+        </Button>
+        <Button
+          variant={type === "payable" ? "default" : "outline"}
+          size="sm"
           onClick={() => setType("payable")}
         >
           Incoming
-        </button>
+        </Button>
       </div>
 
       <div className="border border-border rounded-xl p-5 space-y-4 bg-surface/50">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {!isPayable && (
             <div>
-              <div className="text-xs text-muted mb-1">Party Type</div>
-              <select
+              <div className="text-xs text-muted-foreground mb-1">
+                Party Type
+              </div>
+              <Select
                 value={partyType}
-                onChange={(e) => {
-                  setPartyType(e.target.value as any);
-                }}
-                className={inputClass("partyType")}
+                onValueChange={(v) => setPartyType(v as any)}
               >
-                <option value="client">Client</option>
-                <option value="employee">Employee</option>
-                <option value="vendor">Vendor</option>
-              </select>
+                <SelectTrigger className={inputClass("partyType")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="client">Client</SelectItem>
+                  <SelectItem value="employee">Employee</SelectItem>
+                  <SelectItem value="vendor">Vendor</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           )}
 
           <div>
-            <div className="text-xs text-muted mb-1">Project (Client)</div>
-            <select
+            <div className="text-xs text-muted-foreground mb-1">
+              Project (Client)
+            </div>
+            <Select
               value={projectId}
-              onChange={async (e) => {
-                const v = e.target.value;
-                setProjectId(v);
+              onValueChange={async (v) => {
+                const val = v;
+                setClientChoiceManual(false);
+                setProjectId(val);
                 clearFieldError("partyName"); // condition could be satisfied by project
-                if (v) {
-                  const proj = projects.find((p) => p._id === v);
+                if (val) {
+                  const proj = projects.find((p) => p._id === val);
                   if (proj && !partyName) setPartyName(proj.title);
-                  await loadTasksForProject(v);
+                  await loadTasksForProject(val);
                 } else {
                   setTasks([]);
                 }
               }}
-              className={inputClass("projectId")}
             >
-              <option value="">— Select Project —</option>
-              {projects.map((p) => (
-                <option key={p._id} value={p._id}>
-                  {p.title}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className={inputClass("projectId")}>
+                <SelectValue placeholder="— Select Project —" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">— Select Project —</SelectItem>
+                {projects.map((p) => (
+                  <SelectItem key={p._id} value={p._id}>
+                    {p.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {/* if the schema put "Provide a project or a party name" on partyName, we show it below partyName field instead */}
           </div>
 
+          {partyType === "client" && (
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Client</div>
+              <Select
+                value={clientId}
+                onValueChange={(v) => {
+                  setClientChoiceManual(true);
+                  setClientId(v);
+                  if (!v) return;
+                  clearFieldError("partyName");
+                }}
+              >
+                <SelectTrigger className={inputClass("clientId")}>
+                  <SelectValue placeholder="— Custom recipient —" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">— Custom recipient —</SelectItem>
+                  {clients.map((c) => (
+                    <SelectItem key={c._id} value={c._id}>
+                      {c.name} {c.email ? `(${c.email})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Pick a saved client or choose custom to send to another contact.
+              </p>
+            </div>
+          )}
+
           <div>
-            <div className="text-xs text-muted mb-1">Party Name</div>
+            <div className="text-xs text-muted-foreground mb-1">Party Name</div>
             <input
               placeholder="Company or person e.g. Acme Ltd."
               value={partyName}
@@ -610,7 +721,9 @@ export default function InvoiceCreate() {
           </div>
 
           <div>
-            <div className="text-xs text-muted mb-1">Party Email</div>
+            <div className="text-xs text-muted-foreground mb-1">
+              Party Email
+            </div>
             <input
               type="email"
               placeholder="billing@acme.com"
@@ -629,7 +742,7 @@ export default function InvoiceCreate() {
           </div>
 
           <div>
-            <div className="text-xs text-muted mb-1">Issue Date</div>
+            <div className="text-xs text-muted-foreground mb-1">Issue Date</div>
             <input
               type="date"
               value={issueDate}
@@ -648,7 +761,7 @@ export default function InvoiceCreate() {
           </div>
 
           <div>
-            <div className="text-xs text-muted mb-1">Due Date</div>
+            <div className="text-xs text-muted-foreground mb-1">Due Date</div>
             <input
               type="date"
               value={dueDate}
@@ -666,7 +779,9 @@ export default function InvoiceCreate() {
           </div>
 
           <div>
-            <div className="text-xs text-muted mb-1">Payment Terms</div>
+            <div className="text-xs text-muted-foreground mb-1">
+              Payment Terms
+            </div>
             <input
               placeholder="Net 15 / Net 30 / On receipt"
               value={paymentTerms}
@@ -694,7 +809,7 @@ export default function InvoiceCreate() {
             )}
             <div className="space-y-3 mt-2">
               {lineItems.length === 0 && (
-                <div className="border border-dashed border-border rounded-md p-4 text-sm text-muted">
+                <div className="border border-dashed border-border rounded-md p-4 text-sm text-muted-foreground">
                   No line items yet. Add one to get started.
                 </div>
               )}
@@ -709,7 +824,7 @@ export default function InvoiceCreate() {
                     key={idx}
                     className="rounded-lg border border-border bg-surface px-3 py-3 space-y-3"
                   >
-                    <div className="flex items-center justify-between text-xs text-muted">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>Line {idx + 1}</span>
                       <button
                         type="button"
@@ -739,7 +854,7 @@ export default function InvoiceCreate() {
                       </p>
                     )}
 
-                    <div className="flex gap-2 text-xs text-muted flex-wrap">
+                    <div className="flex gap-2 text-xs text-muted-foreground flex-wrap">
                       <button
                         type="button"
                         className="px-2 py-1 border rounded"
@@ -768,7 +883,7 @@ export default function InvoiceCreate() {
                           const lastNumber = lines.length
                             ? parseInt(
                                 lines[lines.length - 1].split(".")[0],
-                                10
+                                10,
                               )
                             : 0;
                           const nextNumber = Number.isFinite(lastNumber)
@@ -790,7 +905,9 @@ export default function InvoiceCreate() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="text-xs text-muted">Amount type</span>
+                      <span className="text-xs text-muted-foreground">
+                        Amount type
+                      </span>
                       <button
                         type="button"
                         onClick={() => changeAmountMode(idx, "time")}
@@ -828,7 +945,7 @@ export default function InvoiceCreate() {
                                 : "border-border"
                             }`}
                           />
-                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                             hrs
                           </span>
                           {fieldErrors[`lineItems.${idx}.quantity`] && (
@@ -839,7 +956,7 @@ export default function InvoiceCreate() {
                         </div>
 
                         <div className="relative w-full md:w-36">
-                          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                             ₹
                           </span>
                           <input
@@ -865,7 +982,7 @@ export default function InvoiceCreate() {
                       </div>
                     ) : (
                       <div className="relative w-full md:w-48">
-                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                           ₹
                         </span>
                         <input
@@ -928,7 +1045,9 @@ export default function InvoiceCreate() {
         {isPayable && (
           <div className="space-y-3">
             <div>
-              <div className="text-xs text-muted mb-1">Invoice Amount</div>
+              <div className="text-xs text-muted-foreground mb-1">
+                Invoice Amount
+              </div>
               <input
                 type="number"
                 value={invoiceAmount}
@@ -948,7 +1067,9 @@ export default function InvoiceCreate() {
             </div>
 
             <div>
-              <div className="text-xs text-muted mb-1">Attachments</div>
+              <div className="text-xs text-muted-foreground mb-1">
+                Attachments
+              </div>
               <input
                 type="file"
                 multiple
@@ -974,7 +1095,7 @@ export default function InvoiceCreate() {
                         className="underline"
                         onClick={() =>
                           setAttachments((prev) =>
-                            prev.filter((_, i) => i !== idx)
+                            prev.filter((_, i) => i !== idx),
                           )
                         }
                       >
@@ -990,7 +1111,7 @@ export default function InvoiceCreate() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="md:col-span-2">
-            <div className="text-xs text-muted">Notes</div>
+            <div className="text-xs text-muted-foreground">Notes</div>
             <textarea
               placeholder="Thank you for your business. UPI/Bank details, late fee policy, or PO reference can go here."
               value={notes}
@@ -1010,7 +1131,7 @@ export default function InvoiceCreate() {
               <span>Subtotal</span>
               <span>
                 {fmtMoney(
-                  isPayable ? Number(invoiceAmount || 0) : totals.subtotal
+                  isPayable ? Number(invoiceAmount || 0) : totals.subtotal,
                 )}
               </span>
             </div>
@@ -1055,7 +1176,7 @@ export default function InvoiceCreate() {
               <span>Total</span>
               <span>
                 {fmtMoney(
-                  isPayable ? Number(invoiceAmount || 0) : totals.total
+                  isPayable ? Number(invoiceAmount || 0) : totals.total,
                 )}
               </span>
             </div>

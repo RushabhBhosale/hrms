@@ -2,8 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- App palette (RGB tuples) ---------- */
 :root {
-  /* Light theme - RGB tuples for opacity support */
   --color-primary: 37 99 235; /* #2563eb */
   --color-secondary: 16 185 129; /* #10b981 */
   --color-accent: 245 158 11; /* #f59e0b */
@@ -11,11 +11,11 @@
   --color-warning: 245 158 11; /* #f59e0b */
   --color-error: 220 38 38; /* #dc2626 */
 
-  --color-bg: 247 247 251; /* #f7f7fb app background */
-  --color-surface: 255 255 255; /* #ffffff cards/sidebars */
+  --color-bg: 247 247 251; /* #f7f7fb */
+  --color-surface: 255 255 255; /* #ffffff */
   --color-border: 229 231 235; /* #e5e7eb */
   --color-text: 17 24 39; /* #111827 */
-  --color-text-muted: 107 114 128; /* #6b7280 */
+  --color-text-muted-foreground: 107 114 128; /* #6b7280 */
 
   --sidebar-bg: var(--color-surface);
   --sidebar-text: 55 65 81; /* #374151 */
@@ -28,6 +28,91 @@
   --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
 }
 
+/* ---------- shadcn tokens (HSL) ---------- */
+:root {
+  --background: 240 27% 98%;
+  --foreground: 222 47% 11%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 160 84% 39%;
+  --secondary-foreground: 0 0% 100%;
+
+  --muted: 210 20% 96%;
+  --muted-foreground: 215 16% 35%;
+
+  --accent: 38 92% 50%;
+  --accent-foreground: 222 47% 11%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 221 83% 53%;
+
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: 222 47% 7%;
+  --foreground: 210 40% 98%;
+
+  --card: 222 47% 9%;
+  --card-foreground: 210 40% 98%;
+
+  --popover: 222 47% 9%;
+  --popover-foreground: 210 40% 98%;
+
+  --primary: 221 83% 60%;
+  --primary-foreground: 222 47% 7%;
+
+  --secondary: 160 84% 35%;
+  --secondary-foreground: 210 40% 98%;
+
+  --muted: 217 28% 18%;
+  --muted-foreground: 215 20% 75%;
+
+  --accent: 38 92% 50%;
+  --accent-foreground: 222 47% 7%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+
+  --border: 217 33% 17%;
+  --input: 217 33% 17%;
+  --ring: 221 83% 60%;
+}
+
+/* ---------- Base styles ---------- */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  th,
+  td {
+    word-break: break-word;
+  }
+}
+
+/* ---------- Components ---------- */
 @layer components {
   .required-label,
   .required-label.block,

@@ -12,10 +12,10 @@ async function runAutoPunchOut() {
     const now = new Date();
     const todayStart = startOfDay(now);
 
-    // 🔹 Find all today's records with an open punch-in
+    // 🔹 Find all previous-day (and older) records with an open punch-in
     const records = await Attendance.find({
-      date: todayStart,
-      lastPunchIn: { $exists: true },
+      date: { $lt: todayStart },
+      lastPunchIn: { $exists: true, $ne: null },
     });
 
     console.log(
@@ -29,14 +29,34 @@ async function runAutoPunchOut() {
       if (!openStart) continue;
 
       const lastIn = new Date(openStart);
-      if (!(now > lastIn)) continue;
 
-      const addMs = now.getTime() - lastIn.getTime();
+      const workdayStart = startOfDay(rec.date);
+      const workdayEnd = new Date(workdayStart);
+      workdayEnd.setDate(workdayEnd.getDate() + 1);
+
+      const lastInMs = lastIn.getTime();
+      const dayEndMs = workdayEnd.getTime();
+
+      let autoOutMs = Math.min(now.getTime(), dayEndMs);
+      if (autoOutMs <= lastInMs) {
+        autoOutMs = Math.min(
+          now.getTime(),
+          Math.max(lastInMs + 60000, dayEndMs)
+        );
+      }
+      if (autoOutMs <= lastInMs) {
+        autoOutMs = lastInMs + 60000;
+      }
+      if (autoOutMs <= lastInMs) continue;
+
+      const autoOut = new Date(autoOutMs);
+
+      const addMs = autoOut.getTime() - lastInMs;
       rec.workedMs = (rec.workedMs || 0) + addMs;
-      rec.lastPunchOut = now;
+      rec.lastPunchOut = autoOut;
       rec.lastPunchIn = undefined;
       rec.autoPunchOut = true;
-      rec.autoPunchOutAt = now;
+      rec.autoPunchOutAt = autoOut;
       rec.autoPunchLastIn = openStart;
       rec.autoPunchResolvedAt = undefined;
       await rec.save();
@@ -45,7 +65,7 @@ async function runAutoPunchOut() {
       console.log(
         `[auto-punchout] closed employee=${
           rec.employee
-        } date=${todayStart.toISOString()} +${Math.round(addMs / 60000)}m`
+        } date=${workdayStart.toISOString()} autoOut=${autoOut.toISOString()} +${Math.round(addMs / 60000)}m`
       );
     }
 

@@ -73,7 +73,7 @@ hrms/
 - `auth` – Decodes JWT, populates `req.employee`.
 - `requirePrimary([...])` – Ensures primary role is allowed.
 - `requireAnySub([...])` – Checks sub-roles (e.g., HR access).
-- `multer` – Handles document and attachment uploads to `/uploads`.
+- `multer` – Handles document and attachment uploads to S3-backed storage (`/files`).
 
 ### Key Models (Mongoose)
 
@@ -107,7 +107,7 @@ hrms/
 **Notable New Logic (Vouchers)**
 
 - Expense creation can generate a voucher number (scoped by month + company).
-- PDF vouchers stored in `/uploads` via PDFKit.
+- PDF vouchers are generated and stored in S3-backed storage via PDFKit.
 - Updates allow toggling off recurring or vouchers, with file cleanup + regen.
 - `/expenses` GET returns `hasVoucher` and nested `voucher` metadata for UI.
 
@@ -316,9 +316,9 @@ Each layout fetches company branding (`/companies/branding`) to display logos; i
 
 ## 13. File Storage & Downloads
 
-- Upload directory: `apps/uploads` (served at `/uploads/<filename>`).
+- File storage: S3 keys served at `/files/<key>`.
 - Expenses store attachments + vouchers; invoices store generated PDFs.
-- Deletion/update logic removes old files to avoid orphaned uploads.
+- Deletion/update logic removes old files to avoid orphaned storage objects.
 
 ---
 
@@ -343,13 +343,13 @@ Each layout fetches company branding (`/companies/branding`) to display logos; i
 1. Model changes → Add Mongoose schema, update indexes.
 2. Routes → Register in `src/index.js` and implement CRUD with auth guards.
 3. Front-end → Create pages/components, update layouts for navigation.
-4. Files → Use existing upload dir; reuse `multer` configuration.
+4. Files → Use the existing S3 file-storage flow; reuse `multer` configuration.
 5. Authorization → Wrap routes with `RoleGuard` / primary role checks.
 
 **Styling Tips** – Follow Tailwind patterns; prefer condensed table columns with modals for full info. Reuse `lucide-react` icons.
 
 **Common Pitfalls** –
-- Forgetting to clean uploads on delete/update (use `removeFiles` / `removeFileSafe`).
+- Forgetting to clean file objects on delete/update (use existing cleanup helpers).
 - Not updating counters per company when adding numbering features.
 - Recharts requires type declaration (`src/types/recharts.d.ts`).
 - Recurring expense logic must guard against past dates and infinite loops in `computeNextDue`.
@@ -382,8 +382,8 @@ Each layout fetches company branding (`/companies/branding`) to display logos; i
 ## 17. Deployment Checklist
 
 - Configure `.env` with production Mongo, JWT, client origin.
-- Ensure `/uploads` has read/write permissions.
-- Consider mounting uploads or using S3 in production.
+- Ensure S3 credentials/bucket permissions are valid for read/write/delete.
+- Consider bucket lifecycle rules and backup/versioning in production.
 - Validate PDFKit dependencies installed on host.
 - Watch cron jobs (if enabled) in `jobs` directory.
 
@@ -410,7 +410,7 @@ Each layout fetches company branding (`/companies/branding`) to display logos; i
 
 ## 19. FAQ & Troubleshooting
 
-- **Uploads missing?** Check static route `app.use("/uploads", ...)` and permissions.
+- **Files missing?** Check API route `/files/*`, S3 object keys, and bucket permissions.
 - **Finance data empty?** Ensure user is ADMIN/HR; verify company ObjectId.
 - **Charts blank?** Install `recharts`, ensure TypeScript declaration exists.
 - **Voucher PDF missing?** Check server logs for `voucher pdf create err`.
@@ -423,7 +423,7 @@ Each layout fetches company branding (`/companies/branding`) to display logos; i
 - Add automated tests (unit + integration) for critical modules.
 - Introduce caching/state management (React Query) if API usage increases.
 - Enhance finance analytics (budget vs actuals, ledger entries).
-- Externalize uploads to cloud storage for scalability.
+- Add storage lifecycle policies for older files to optimize cost.
 - Consider using templating libraries for PDF exports.
 
 ---

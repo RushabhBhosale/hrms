@@ -42,14 +42,14 @@ export default function LandingPage() {
       <main>
         <section className="mx-auto max-w-6xl px-4 py-14 md:py-20 grid md:grid-cols-2 gap-10 items-center">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted-foreground">
               <span className="h-2 w-2 rounded-full bg-primary"></span>
               Go live in minutes with RBAC
             </div>
             <h1 className="mt-4 text-4xl md:text-5xl font-extrabold leading-tight">
               All-in-one HRMS for modern teams
             </h1>
-            <p className="mt-4 text-lg text-muted max-w-prose">
+            <p className="mt-4 text-lg text-muted-foreground max-w-prose">
               Attendance, leaves, payroll, projects, and documents in a clean,
               fast workflow. Built for small teams, scalable for enterprises.
             </p>
@@ -76,7 +76,7 @@ export default function LandingPage() {
           <div className="relative">
             <div className="rounded-xl border border-border bg-white shadow-sm p-4">
               <div className="h-56 md:h-72 rounded-lg border border-border bg-gradient-to-br from-bg to-white grid place-items-center">
-                <span className="text-muted text-sm">
+                <span className="text-muted-foreground text-sm">
                   Drop a dashboard screenshot/illustration here
                 </span>
               </div>
@@ -243,7 +243,7 @@ export default function LandingPage() {
         </section>
       </main>
 
-      <footer className="border-t border-border py-8 text-center text-sm text-muted">
+      <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground">
         © {new Date().getFullYear()} HRMS — All rights reserved.
       </footer>
     </div>
@@ -262,7 +262,7 @@ function Stat({ value, label }: { value: string; label: string }) {
   return (
     <div className="rounded-lg border border-border bg-white p-4">
       <div className="text-2xl font-bold">{value}</div>
-      <div className="text-xs text-muted mt-1">{label}</div>
+      <div className="text-xs text-muted-foreground mt-1">{label}</div>
     </div>
   );
 }
@@ -277,7 +277,9 @@ function SectionTitle({
   return (
     <div className="max-w-2xl">
       <h2 className="text-2xl md:text-3xl font-bold">{title}</h2>
-      {subtitle ? <p className="mt-2 text-muted">{subtitle}</p> : null}
+      {subtitle ? (
+        <p className="mt-2 text-muted-foreground">{subtitle}</p>
+      ) : null}
     </div>
   );
 }
@@ -289,7 +291,7 @@ function Feature({ title, desc }: { title: string; desc: string }) {
         <Dot />
         <h3 className="font-semibold">{title}</h3>
       </div>
-      <p className="mt-2 text-sm text-muted">{desc}</p>
+      <p className="mt-2 text-sm text-muted-foreground">{desc}</p>
     </div>
   );
 }
@@ -313,7 +315,7 @@ function Step({
         {num}
       </div>
       <h3 className="mt-3 font-semibold">{title}</h3>
-      <p className="mt-2 text-sm text-muted">{desc}</p>
+      <p className="mt-2 text-sm text-muted-foreground">{desc}</p>
       {cta && to ? (
         <div className="mt-3">
           <Link
@@ -361,11 +363,11 @@ function Plan({
       </div>
       <div className="mt-2 text-3xl font-extrabold">
         {price}
-        <span className="text-base font-medium text-muted">
+        <span className="text-base font-medium text-muted-foreground">
           {price === "Contact" ? "" : "/mo"}
         </span>
       </div>
-      <p className="mt-2 text-sm text-muted">{blurb}</p>
+      <p className="mt-2 text-sm text-muted-foreground">{blurb}</p>
       <ul className="mt-4 space-y-2 text-sm">
         {features.map((f) => (
           <li key={f} className="flex items-center gap-2">
@@ -388,7 +390,7 @@ function FAQ({ q, a }: { q: string; a: string }) {
   return (
     <details className="rounded-lg border border-border bg-white p-4">
       <summary className="cursor-pointer list-none font-medium">{q}</summary>
-      <p className="mt-2 text-sm text-muted">{a}</p>
+      <p className="mt-2 text-sm text-muted-foreground">{a}</p>
     </details>
   );
 }

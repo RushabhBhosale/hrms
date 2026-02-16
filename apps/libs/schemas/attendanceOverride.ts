@@ -12,6 +12,8 @@ export const attendanceOverrideSchema = z.object({
     .string()
     .regex(/^[a-f\d]{24}$/i, "Invalid ObjectId")
     .optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type AttendanceOverrideInput = z.infer<typeof attendanceOverrideSchema>;

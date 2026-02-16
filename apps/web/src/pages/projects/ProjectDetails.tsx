@@ -1,9 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../../lib/api";
+import { BackButton } from "../../components/utils/BackButton";
 import { toast } from "react-hot-toast";
-import { getEmployee } from "../../lib/auth";
+import { api } from "../../lib/api";
+import { getEmployee, hasPermission } from "../../lib/auth";
 import type { PrimaryRole } from "../../lib/auth";
+import ReportingPersonMultiSelect from "../../components/ReportingPersonMultiSelect";
+import { confirmToast } from "../../lib/confirmToast";
+import { Button } from "../../components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
+import { Pencil, Trash } from "lucide-react";
 
 type EmployeeLite = {
   id: string;
@@ -12,6 +24,7 @@ type EmployeeLite = {
   subRoles: string[];
   primaryRole: PrimaryRole;
 };
+type ClientLite = { _id: string; name: string; email?: string };
 type Project = {
   _id: string;
   title: string;
@@ -20,16 +33,19 @@ type Project = {
   teamLead: string;
   members: string[];
   estimatedTimeMinutes?: number;
+  monthlyEstimateMinutes?: number;
   startTime?: string;
   isPersonal?: boolean;
   active?: boolean;
+  isActive?: boolean;
+  isDeleted?: boolean;
 };
 
 type Task = {
   _id: string;
   title: string;
   description?: string;
-  assignedTo: string;
+  assignedTo: string | string[];
   createdBy: string;
   status: "PENDING" | "INPROGRESS" | "DONE";
   priority?: "URGENT" | "FIRST" | "SECOND" | "LEAST";
@@ -38,6 +54,7 @@ type Task = {
   estimatedTimeMinutes?: number;
   createdAt?: string;
   updatedAt?: string;
+  isMeetingDefault?: boolean;
 };
 
 export default function ProjectDetails() {
@@ -47,24 +64,17 @@ export default function ProjectDetails() {
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [timeTotalMinutes, setTimeTotalMinutes] = useState<number>(0);
+  const [selfTimeMinutes, setSelfTimeMinutes] = useState<number>(0);
   const [taskTotal, setTaskTotal] = useState<number>(0);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const [newTitle, setNewTitle] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [assignee, setAssignee] = useState("");
-  const [priority, setPriority] = useState<
-    "URGENT" | "FIRST" | "SECOND" | "LEAST"
-  >("SECOND");
-  const [estimatedHours, setEstimatedHours] = useState("");
 
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [timeEntry, setTimeEntry] = useState<Record<string, { hours: string }>>(
-    {}
+    {},
   );
   const [openCommentsFor, setOpenCommentsFor] = useState<string | null>(null);
   const [editEstimatedHours, setEditEstimatedHours] = useState<string>("");
+  const [editMonthlyHours, setEditMonthlyHours] = useState<string>("");
   const [savingEstimate, setSavingEstimate] = useState(false);
   const [editStartTime, setEditStartTime] = useState<string>("");
   const [savingStartTime, setSavingStartTime] = useState(false);
@@ -74,17 +84,11 @@ export default function ProjectDetails() {
   const [editTech, setEditTech] = useState("");
   const [editTeamLead, setEditTeamLead] = useState("");
   const [editMembers, setEditMembers] = useState<string[]>([]);
+  const [clients, setClients] = useState<ClientLite[]>([]);
+  const [editClientId, setEditClientId] = useState<string>("");
   const [savingProject, setSavingProject] = useState(false);
-  const [editTask, setEditTask] = useState<Task | null>(null);
-  const [taskEditForm, setTaskEditForm] = useState<{
-    title: string;
-    description: string;
-    assignedTo: string;
-    priority: NonNullable<Task["priority"]> | "";
-    estimatedHours: string;
-    status: Task["status"];
-  } | null>(null);
-  const [savingTaskEdit, setSavingTaskEdit] = useState(false);
+
+  const NO_CLIENT_VALUE = "__no_client__";
 
   const memberIds = useMemo(() => {
     if (!project) return [] as string[];
@@ -93,8 +97,29 @@ export default function ProjectDetails() {
 
   const members = useMemo(
     () => employees.filter((e) => memberIds.includes(e.id)),
-    [employees, memberIds]
+    [employees, memberIds],
   );
+
+  const employeeOptions = useMemo(
+    () => employees.map((e) => ({ value: e.id, label: e.name })),
+    [employees],
+  );
+
+  const taskAssigneeIds = (t: Task) => {
+    if (!t) return [];
+    return (Array.isArray(t.assignedTo) ? t.assignedTo : [t.assignedTo]).filter(
+      Boolean,
+    );
+  };
+
+  const formatAssignees = (t: Task) => {
+    const ids = taskAssigneeIds(t);
+    if (!ids.length) return "Member";
+    const names = ids
+      .map((id) => employees.find((e) => e.id === String(id))?.name || "Member")
+      .filter(Boolean);
+    return names.join(", ");
+  };
 
   function roleLabel(e: EmployeeLite) {
     return (
@@ -102,24 +127,41 @@ export default function ProjectDetails() {
       (e.primaryRole === "ADMIN"
         ? "admin"
         : e.primaryRole === "SUPERADMIN"
-        ? "superadmin"
-        : "member")
+          ? "superadmin"
+          : "member")
     );
   }
 
   const canCreateTask = useMemo(() => {
     if (!project || !me) return false;
+    const live = project.active !== false && project.isActive !== false;
+    if (!live) return false;
+
     const isAdmin =
       me.primaryRole === "ADMIN" || me.primaryRole === "SUPERADMIN";
-    const isMember = memberIds.includes(me.id);
-    return isAdmin || isMember;
+    if (isAdmin) return true;
+
+    const allowedByRole = hasPermission(me, "tasks", "write");
+    if (!allowedByRole) return false;
+
+    const isMember = memberIds.includes(String(me.id));
+    return isMember;
   }, [project, me, memberIds]);
 
   const canCollaborate = canCreateTask; // placeholder; will check per-task for assignee only
 
+  const canDeleteTask = useMemo(() => {
+    if (!me || !project) return false;
+    const live = project.active !== false && project.isActive !== false;
+    if (!live) return false;
+    const isAdmin =
+      me.primaryRole === "ADMIN" || me.primaryRole === "SUPERADMIN";
+    const isTeamLead = String(project.teamLead) === String(me.id);
+    return isAdmin || isTeamLead;
+  }, [me, project]);
+
   async function loadAll() {
     if (!id) return;
-    setLoading(true);
     try {
       const [proj, tlist, tsum] = await Promise.all([
         api.get(`/projects/${id}`),
@@ -130,12 +172,17 @@ export default function ProjectDetails() {
       setTasks(tlist.data.tasks || []);
       setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
       setTimeTotalMinutes(tsum.data.totalTimeSpentMinutes || 0);
+      setSelfTimeMinutes(tsum.data.userTimeSpentMinutes || 0);
       const est = proj?.data?.project?.estimatedTimeMinutes || 0;
       setEditEstimatedHours(
-        est ? String(Math.round((est / 60) * 10) / 10) : ""
+        est ? String(Math.round((est / 60) * 10) / 10) : "",
+      );
+      const monthly = proj?.data?.project?.monthlyEstimateMinutes || 0;
+      setEditMonthlyHours(
+        monthly ? String(Math.round((monthly / 60) * 10) / 10) : "",
       );
       const st = proj?.data?.project?.startTime;
-      setEditStartTime(st ? toInputDateTimeLocal(st) : "");
+      setEditStartTime(st ? toInputDate(st) : "");
       // Try to load full employees list (admin/hr/manager). Fallback to project members only.
       try {
         const emps = await api.get("/companies/employees");
@@ -152,9 +199,16 @@ export default function ProjectDetails() {
         setEditTech((P.techStack || []).join(", "));
         setEditTeamLead(String(P.teamLead || ""));
         setEditMembers((P.members || []).map(String));
+        setEditClientId(P.client ? String(P.client) : "");
       }
-    } finally {
-      setLoading(false);
+      try {
+        const cli = await api.get("/clients");
+        setClients(cli.data.clients || []);
+      } catch {}
+    } catch (e: any) {
+      toast.error(
+        e?.response?.data?.error || "Failed to load project information",
+      );
     }
   }
 
@@ -166,7 +220,7 @@ export default function ProjectDetails() {
     return Math.round((min / 60) * 10) / 10;
   }
 
-  function toInputDateTimeLocal(s?: string) {
+  function toInputDate(s?: string) {
     if (!s) return "";
     const d = new Date(s);
     if (isNaN(d.getTime())) return "";
@@ -174,9 +228,7 @@ export default function ProjectDetails() {
     const yyyy = d.getFullYear();
     const mm = pad(d.getMonth() + 1);
     const dd = pad(d.getDate());
-    const hh = pad(d.getHours());
-    const mi = pad(d.getMinutes());
-    return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+    return `${yyyy}-${mm}-${dd}`;
   }
 
   // Tiny donut chart copied inline (no external deps)
@@ -248,15 +300,32 @@ export default function ProjectDetails() {
     }
   }
 
-  async function saveEstimate() {
+  async function saveEstimates() {
     if (!id) return;
-    const h = parseFloat(editEstimatedHours || "0");
-    if (!isFinite(h) || h < 0) return;
+    const totalHours = parseFloat(editEstimatedHours || "0");
+    const monthlyHours = parseFloat(editMonthlyHours || "0");
+    if (!isFinite(totalHours) || totalHours < 0) return;
+    if (!isFinite(monthlyHours) || monthlyHours < 0) return;
     setSavingEstimate(true);
     try {
-      const payload: any = { estimatedTimeMinutes: Math.round(h * 60) };
+      const payload: any = {
+        estimatedTimeMinutes: Math.round(totalHours * 60),
+        monthlyEstimateMinutes: Math.round(monthlyHours * 60),
+      };
       const resp = await api.put(`/projects/${id}`, payload);
       setProject(resp.data.project);
+      const nextMonthly = resp?.data?.project?.monthlyEstimateMinutes;
+      const nextTotal = resp?.data?.project?.estimatedTimeMinutes;
+      if (Number.isFinite(nextMonthly)) {
+        setEditMonthlyHours(
+          nextMonthly ? String(Math.round((nextMonthly / 60) * 10) / 10) : "",
+        );
+      }
+      if (Number.isFinite(nextTotal)) {
+        setEditEstimatedHours(
+          nextTotal ? String(Math.round((nextTotal / 60) * 10) / 10) : "",
+        );
+      }
     } finally {
       setSavingEstimate(false);
     }
@@ -266,7 +335,15 @@ export default function ProjectDetails() {
     if (!id) return;
     setSavingStartTime(true);
     try {
-      const payload: any = { startTime: editStartTime || null };
+      const start = editStartTime
+        ? (() => {
+            const d = new Date(editStartTime);
+            if (isNaN(d.getTime())) return null;
+            d.setHours(0, 0, 0, 0);
+            return d.toISOString();
+          })()
+        : null;
+      const payload: any = { startTime: start };
       const resp = await api.put(`/projects/${id}`, payload);
       setProject(resp.data.project);
     } finally {
@@ -296,6 +373,7 @@ export default function ProjectDetails() {
           .filter(Boolean),
         teamLead: editTeamLead,
         members: editMembers,
+        client: editClientId || null,
       };
       const resp = await api.put(`/projects/${id}`, payload);
       setProject(resp.data.project);
@@ -307,7 +385,19 @@ export default function ProjectDetails() {
 
   async function deleteProject() {
     if (!id) return;
-    if (!confirm("Delete this project? This cannot be undone.")) return;
+    if (!canAdminProject) {
+      toast.error("Only admins can delete projects.");
+      return;
+    }
+    const yes = await confirmToast({
+      title: "Delete this project?",
+      message:
+        "This is a soft delete: the project will be removed from listings, but past logs/history remain.",
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      variant: "danger",
+    });
+    if (!yes) return;
     try {
       await api.delete(`/projects/${id}`);
       const base =
@@ -320,51 +410,25 @@ export default function ProjectDetails() {
     }
   }
 
-  function openEditTask(t: Task) {
-    setEditTask(t);
-    setTaskEditForm({
-      title: t.title || "",
-      description: t.description || "",
-      assignedTo: String(t.assignedTo || ""),
-      priority: (t.priority || "") as any,
-      estimatedHours: t.estimatedTimeMinutes
-        ? String(Math.round(((t.estimatedTimeMinutes || 0) / 60) * 10) / 10)
-        : "",
-      status: t.status,
-    });
-  }
-
-  async function saveTaskEdit() {
-    if (!id || !editTask || !taskEditForm) return;
-    setSavingTaskEdit(true);
-    try {
-      const payload: any = {
-        title: taskEditForm.title.trim(),
-        description: taskEditForm.description.trim(),
-        assignedTo: taskEditForm.assignedTo,
-        priority: taskEditForm.priority || undefined,
-        status: taskEditForm.status,
-      };
-      const h = parseFloat(taskEditForm.estimatedHours || "");
-      if (isFinite(h) && h >= 0) payload.estimatedHours = h;
-      await api.put(`/projects/${id}/tasks/${editTask._id}`, payload);
-      const tlist = await api.get(`/projects/${id}/tasks`, {
-        params: { page: 1, limit: 3 },
-      });
-      setTasks(tlist.data.tasks || []);
-      setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
-      setEditTask(null);
-      setTaskEditForm(null);
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error || "Failed to save task");
-    } finally {
-      setSavingTaskEdit(false);
-    }
-  }
-
   async function deleteTask(taskId: string) {
     if (!id) return;
-    if (!confirm("Delete this task?")) return;
+    if (project && (project.active === false || project.isActive === false)) {
+      toast.error("Project is inactive. You cannot delete tasks.");
+      return;
+    }
+    if (!canDeleteTask) {
+      toast.error("Only project lead or admin can delete tasks.");
+      return;
+    }
+    const yes = await confirmToast({
+      title: "Delete this task?",
+      message:
+        "This is a soft delete: the task will be removed from listings, but past logs/history remain.",
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      variant: "danger",
+    });
+    if (!yes) return;
     try {
       await api.delete(`/projects/${id}/tasks/${taskId}`);
       const tlist = await api.get(`/projects/${id}/tasks`, {
@@ -372,6 +436,7 @@ export default function ProjectDetails() {
       });
       setTasks(tlist.data.tasks || []);
       setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
+      toast.success("Task deleted");
     } catch (e: any) {
       toast.error(e?.response?.data?.error || "Failed to delete task");
     }
@@ -387,36 +452,11 @@ export default function ProjectDetails() {
     return list;
   }, [tasks]);
 
-  async function addTask(e: React.FormEvent) {
-    e.preventDefault();
-    if (!id || !newTitle || !assignee) return;
-    setLoading(true);
-    try {
-      const payload: any = {
-        title: newTitle,
-        description: newDesc,
-        assignedTo: assignee,
-        priority,
-      };
-      const h = parseFloat(estimatedHours || "");
-      if (isFinite(h) && h >= 0) payload.estimatedHours = h;
-      await api.post(`/projects/${id}/tasks`, payload);
-      setNewTitle("");
-      setNewDesc("");
-      setAssignee("");
-      setPriority("SECOND");
-      setEstimatedHours("");
-      const tlist = await api.get(`/projects/${id}/tasks`, {
-        params: { page: 1, limit: 3 },
-      });
-      setTasks(tlist.data.tasks || []);
-      setTaskTotal(tlist.data.total || (tlist.data.tasks || []).length || 0);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function addComment(taskId: string) {
+    if (project && (project.active === false || project.isActive === false)) {
+      toast.error("Project is inactive. You cannot add comments.");
+      return;
+    }
     const text = (commentText[taskId] || "").trim();
     if (!text) return;
     await api.post(`/projects/${id}/tasks/${taskId}/comments`, { text });
@@ -429,6 +469,10 @@ export default function ProjectDetails() {
   }
 
   async function saveTime(taskId: string) {
+    if (project && (project.active === false || project.isActive === false)) {
+      toast.error("Project is inactive. You cannot update time.");
+      return;
+    }
     const entry = timeEntry[taskId];
     const hours = parseFloat(entry?.hours || "0");
     if (isNaN(hours) || hours <= 0) return;
@@ -446,6 +490,10 @@ export default function ProjectDetails() {
   }
 
   async function updateStatus(taskId: string, status: Task["status"]) {
+    if (project && (project.active === false || project.isActive === false)) {
+      toast.error("Project is inactive. You cannot update status.");
+      return;
+    }
     await api.put(`/projects/${id}/tasks/${taskId}`, { status });
     try {
       const tlist = await api.get(`/projects/${id}/tasks`, {
@@ -464,37 +512,40 @@ export default function ProjectDetails() {
             <div>
               <div className="text-xl font-semibold">{project.title}</div>
               {project.description && (
-                <div className="text-sm text-muted mt-1">
+                <div className="text-sm text-muted-foreground mt-1">
                   {project.description}
                 </div>
               )}
               {!!project.techStack?.length && (
-                <div className="mt-2 text-xs text-muted">
+                <div className="mt-2 text-xs text-muted-foreground">
                   Tech: {project.techStack?.join(", ")}
                 </div>
               )}
               <div className="mt-2 text-xs flex items-center gap-2 flex-wrap">
-                <span className="text-muted">Start:</span>
-                <span className="text-muted">
+                <span className="text-muted-foreground">Start:</span>
+                <span className="text-muted-foreground">
                   {project.startTime
-                    ? new Date(project.startTime).toLocaleString()
+                    ? new Intl.DateTimeFormat("en-GB").format(
+                        new Date(project.startTime),
+                      )
                     : "—"}
                 </span>
                 {canEditEstimate && (
                   <>
                     <input
-                      type="datetime-local"
+                      type="date"
                       className="h-8 rounded border border-border bg-bg px-2 text-xs"
                       value={editStartTime}
                       onChange={(e) => setEditStartTime(e.target.value)}
                     />
-                    <button
+                    <Button
                       onClick={saveStartTime}
-                      className="h-8 px-3 rounded-md border border-border text-xs hover:bg-bg disabled:opacity-50"
+                      variant="outline"
+                      size="sm"
                       disabled={savingStartTime}
                     >
                       {savingStartTime ? "Saving…" : "Save Start"}
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
@@ -502,27 +553,23 @@ export default function ProjectDetails() {
             <div className="flex items-center gap-2">
               {canAdminProject && (
                 <>
-                  <button
+                  <Button
                     onClick={() => setEditOpen((v) => !v)}
-                    className="h-8 px-3 rounded-md border border-border text-sm hover:bg-bg"
+                    variant="outline"
+                    size="sm"
                   >
                     {editOpen ? "Close Edit" : "Edit Project"}
-                  </button>
-                  {/* <button
+                  </Button>
+                  <Button
                     onClick={deleteProject}
-                    className="h-8 px-3 rounded-md border border-error/30 text-error text-sm hover:bg-error/10"
+                    variant="destructive"
+                    size="sm"
                   >
-                    Delete
-                  </button> */}
+                    <Trash size={12} />
+                  </Button>
                 </>
               )}
-              <Link
-                to=".."
-                relative="path"
-                className="text-sm underline text-accent"
-              >
-                Back
-              </Link>
+              <BackButton to=".." />
             </div>
           </div>
           <div className="mt-3 text-sm">
@@ -534,7 +581,9 @@ export default function ProjectDetails() {
                   className="px-3 py-1 rounded border border-border bg-bg"
                 >
                   <div className="text-sm">{m.name}</div>
-                  <div className="text-xs text-muted">{roleLabel(m)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {roleLabel(m)}
+                  </div>
                 </div>
               ))}
             </div>
@@ -554,18 +603,39 @@ export default function ProjectDetails() {
                 </div>
                 <div>
                   <label className="block text-xs mb-1">Team Lead</label>
-                  <select
-                    className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
-                    value={editTeamLead}
-                    onChange={(e) => setEditTeamLead(e.target.value)}
+                  <Select value={editTeamLead} onValueChange={setEditTeamLead}>
+                    <SelectTrigger className="w-full h-9">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {employees.map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-xs mb-1">Client</label>
+                  <Select
+                    value={editClientId || NO_CLIENT_VALUE}
+                    onValueChange={(v) =>
+                      setEditClientId(v === NO_CLIENT_VALUE ? "" : v)
+                    }
                   >
-                    <option value="">Select</option>
-                    {employees.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="w-full h-9">
+                      <SelectValue placeholder="No client" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_CLIENT_VALUE}>No client</SelectItem>
+                      {clients.map((c) => (
+                        <SelectItem key={c._id} value={c._id}>
+                          {c.name} {c.email ? `(${c.email})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-xs mb-1">Description</label>
@@ -587,37 +657,22 @@ export default function ProjectDetails() {
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-xs mb-1">Members</label>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-auto border border-border rounded p-2 bg-bg">
-                    {employees.map((e) => (
-                      <label
-                        key={e.id}
-                        className="inline-flex items-center gap-2 text-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={editMembers.includes(e.id)}
-                          onChange={(ev) =>
-                            setEditMembers((prev) =>
-                              ev.target.checked
-                                ? [...prev, e.id]
-                                : prev.filter((id) => id !== e.id)
-                            )
-                          }
-                        />
-                        <span>{e.name}</span>
-                      </label>
-                    ))}
+                  <ReportingPersonMultiSelect
+                    options={employeeOptions}
+                    value={editMembers}
+                    onChange={setEditMembers}
+                    placeholder="Search employees and press Enter to add"
+                    emptyMessage="No employees available"
+                  />
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Add members one by one; selections show as pills.
                   </div>
                 </div>
               </div>
               <div className="mt-3 flex items-center gap-2">
-                <button
-                  onClick={saveProjectDetails}
-                  disabled={savingProject}
-                  className="h-9 px-4 rounded-md bg-primary text-white text-sm disabled:opacity-60"
-                >
+                <Button onClick={saveProjectDetails} disabled={savingProject}>
                   {savingProject ? "Saving…" : "Save Changes"}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -659,26 +714,36 @@ export default function ProjectDetails() {
                 })()}
                 <div className="space-y-2 text-sm min-w-[180px]">
                   <div className="flex items-center justify-between">
-                    <span className="text-muted">Estimated</span>
+                    <span className="text-muted-foreground">Estimated</span>
                     <span className="font-medium">
                       {minutesToHours(project.estimatedTimeMinutes || 0)} h
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-muted">Spent</span>
+                    <span className="text-muted-foreground">Monthly cap</span>
+                    <span className="font-medium">
+                      {project.monthlyEstimateMinutes
+                        ? `${minutesToHours(
+                            project.monthlyEstimateMinutes || 0,
+                          )} h/mo`
+                        : "No cap"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Spent</span>
                     <span className="font-medium">
                       {minutesToHours(spentMinutes)} h
                     </span>
                   </div>
                   {(project.estimatedTimeMinutes || 0) >= spentMinutes ? (
                     <div className="flex items-center justify-between">
-                      <span className="text-muted">Remaining</span>
+                      <span className="text-muted-foreground">Remaining</span>
                       <span className="font-medium">
                         {minutesToHours(
                           Math.max(
                             0,
-                            (project.estimatedTimeMinutes || 0) - spentMinutes
-                          )
+                            (project.estimatedTimeMinutes || 0) - spentMinutes,
+                          ),
                         )}{" "}
                         h
                       </span>
@@ -688,7 +753,7 @@ export default function ProjectDetails() {
                       <span>Over by</span>
                       <span className="font-medium">
                         {minutesToHours(
-                          spentMinutes - (project.estimatedTimeMinutes || 0)
+                          spentMinutes - (project.estimatedTimeMinutes || 0),
                         )}{" "}
                         h
                       </span>
@@ -701,7 +766,7 @@ export default function ProjectDetails() {
                       if (spent <= est) {
                         const pct = Math.min(
                           100,
-                          (spent / Math.max(1, est)) * 100
+                          (spent / Math.max(1, est)) * 100,
                         );
                         return (
                           <div
@@ -713,7 +778,7 @@ export default function ProjectDetails() {
                       // overshoot: show full bar for estimate, with small red cap indicator for overshoot
                       const overPct = Math.min(
                         100,
-                        ((spent - est) / Math.max(1, spent)) * 100
+                        ((spent - est) / Math.max(1, spent)) * 100,
                       );
                       return (
                         <div className="h-full w-full relative">
@@ -733,33 +798,60 @@ export default function ProjectDetails() {
               </div>
             </div>
 
-            <div className="rounded-md border border-border bg-bg p-4">
-              <div className="text-sm font-medium mb-3">Edit Estimate</div>
-              {canEditEstimate ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    className="h-10 rounded border border-border bg-surface px-3"
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    placeholder="Estimated hours"
-                    value={editEstimatedHours}
-                    onChange={(e) => setEditEstimatedHours(e.target.value)}
-                  />
-                  <button
-                    onClick={saveEstimate}
-                    disabled={savingEstimate}
-                    className="h-10 px-4 rounded-md border border-border hover:bg-surface disabled:opacity-50"
-                  >
-                    {savingEstimate ? "Saving…" : "Save"}
-                  </button>
+            {canEditEstimate ? (
+              <div className="rounded-md border border-border bg-bg p-4">
+                <div className="text-sm font-medium mb-3">Edit Estimates</div>
+                <div className="space-y-3">
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs mb-1">
+                        Total estimate (hours)
+                      </label>
+                      <input
+                        className="h-10 w-full rounded border border-border bg-surface px-3"
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        placeholder="Estimated hours"
+                        value={editEstimatedHours}
+                        onChange={(e) => setEditEstimatedHours(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs mb-1">
+                        Monthly cap (hours/month)
+                      </label>
+                      <input
+                        className="h-10 w-full rounded border border-border bg-surface px-3"
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        placeholder="e.g. 90"
+                        value={editMonthlyHours}
+                        onChange={(e) => setEditMonthlyHours(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 justify-end">
+                    <Button onClick={saveEstimates} disabled={savingEstimate}>
+                      {savingEstimate ? "Saving…" : "Save estimates"}
+                    </Button>
+                  </div>
                 </div>
-              ) : (
-                <div className="text-sm text-muted">
-                  Only admins can update the estimate.
+              </div>
+            ) : (
+              <div className="rounded-md border border-border bg-bg p-4">
+                <div className="text-sm font-medium mb-2">
+                  Your time on this project
                 </div>
-              )}
-            </div>
+                <div className="text-2xl font-semibold">
+                  {minutesToHours(selfTimeMinutes)} h
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Total minutes logged by you on tasks in this project.
+                </div>
+              </div>
+            )}
 
             {/* Active/Inactive toggle for admins (non-personal projects) */}
             {canAdminProject && project && !project.isPersonal && (
@@ -771,19 +863,20 @@ export default function ProjectDetails() {
                       className={`text-xs px-2 py-0.5 rounded border ${
                         project.active !== false
                           ? "border-secondary/30 text-secondary bg-secondary/10"
-                          : "border-muted/40 text-muted"
+                          : "border-muted/40 text-muted-foreground"
                       }`}
                     >
                       {project.active !== false ? "Active" : "Inactive"}
                     </span>
-                    <button
+                    <Button
                       onClick={() => toggleActive(!(project.active !== false))}
-                      className="h-9 px-3 rounded-md border border-border text-sm hover:bg-surface"
+                      variant="outline"
+                      size="sm"
                     >
                       {project.active !== false
                         ? "Mark Inactive"
                         : "Mark Active"}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -792,89 +885,28 @@ export default function ProjectDetails() {
         </div>
       )}
 
-      {/* Create Task */}
-      {canCreateTask && (
-        <form
-          onSubmit={addTask}
-          className="space-y-3 bg-surface border border-border rounded-md p-4"
-        >
-          <div className="font-medium">Add Task</div>
-          <div className="grid md:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-sm required-label">Task title</label>
-              <input
-                className="h-10 w-full rounded border border-border bg-bg px-3"
-                placeholder="Task title"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm required-label">Assignee</label>
-              <select
-                className="h-10 w-full rounded border border-border bg-bg px-3"
-                value={assignee}
-                onChange={(e) => setAssignee(e.target.value)}
-              >
-                <option value="">Assign to...</option>
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <select
-              className="h-10 rounded border border-border bg-bg px-3"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as any)}
-            >
-              <option value="URGENT">Urgent</option>
-              <option value="FIRST">First Priority</option>
-              <option value="SECOND">Second Priority</option>
-              <option value="LEAST">Least Priority</option>
-            </select>
-            <input
-              className="h-10 rounded border border-border bg-bg px-3"
-              type="number"
-              min={0}
-              step={0.1}
-              placeholder="Estimated hours (optional)"
-              value={estimatedHours}
-              onChange={(e) => setEstimatedHours(e.target.value)}
-            />
-            <div className="md:col-span-2">
-              <textarea
-                className="w-full rounded border border-border bg-bg px-3 py-2 min-h-20"
-                placeholder="Description (optional)"
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-              />
-            </div>
-          </div>
-          <div>
-            <button
-              className="h-10 px-4 rounded-md bg-primary text-white disabled:opacity-50"
-              disabled={loading}
-            >
-              {loading ? "Adding…" : "Add Task"}
-            </button>
-          </div>
-        </form>
+      {canCreateTask && id && (
+        <div className="flex items-center justify-end">
+          <Link
+            to="tasks/new"
+            relative="path"
+            className="h-10 px-4 rounded-md bg-primary text-white text-sm inline-flex items-center justify-center"
+          >
+            Add Task
+          </Link>
+        </div>
       )}
 
       {/* Tasks list (recent 3) */}
       <div className="space-y-3">
         {sortedTasks.slice(0, 3).map((t) => {
-          const assigneeName = employees.find(
-            (e) => e.id === String(t.assignedTo)
-          )?.name;
+          const assigneeNames = formatAssignees(t);
           const statusLabel =
             t.status === "PENDING"
               ? "Pending"
               : t.status === "INPROGRESS"
-              ? "In Progress"
-              : "Done";
+                ? "In Progress"
+                : "Done";
           const totalHours =
             Math.round(((t.timeSpentMinutes || 0) / 60) * 100) / 100;
           return (
@@ -891,20 +923,20 @@ export default function ProjectDetails() {
                         {t.priority === "URGENT"
                           ? "Urgent"
                           : t.priority === "FIRST"
-                          ? "First Priority"
-                          : t.priority === "SECOND"
-                          ? "Second Priority"
-                          : "Least Priority"}
+                            ? "First Priority"
+                            : t.priority === "SECOND"
+                              ? "Second Priority"
+                              : "Least Priority"}
                       </span>
                     )}
                   </div>
                   {t.description && (
-                    <div className="text-sm text-muted mt-1">
+                    <div className="text-sm text-muted-foreground mt-1">
                       {t.description}
                     </div>
                   )}
-                  <div className="mt-2 text-xs text-muted flex gap-4">
-                    <span>Assigned to: {assigneeName || "Member"}</span>
+                  <div className="mt-2 text-xs text-muted-foreground flex gap-4">
+                    <span>Assigned to: {assigneeNames || "Member"}</span>
                     <span>Status: {statusLabel}</span>
                     <span>Time spent: {totalHours} h</span>
                     {!!t.estimatedTimeMinutes && (
@@ -926,18 +958,29 @@ export default function ProjectDetails() {
                   </button>
                   {canCollaborate && (
                     <>
-                      <button
-                        onClick={() => openEditTask(t)}
-                        className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
-                      >
-                        Edit
-                      </button>
-                      {/* <button
-                        onClick={() => deleteTask(t._id)}
-                        className="h-9 rounded-md border border-error/30 text-error px-3 text-sm hover:bg-error/10"
-                      >
-                        Delete
-                      </button> */}
+                      {!t.isMeetingDefault && (
+                        <button
+                          onClick={() =>
+                            nav(`tasks/new?taskId=${t._id}`, { replace: false })
+                          }
+                          className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      )}
+                      {canDeleteTask &&
+                        (t.isMeetingDefault ? (
+                          <span className="text-[11px] text-muted-foreground">
+                            Default meeting task
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => deleteTask(t._id)}
+                            className="h-9 rounded-md border border-error/30 text-error px-3 text-sm hover:bg-error/10"
+                          >
+                            <Trash size={12} />
+                          </button>
+                        ))}
                     </>
                   )}
                 </div>
@@ -960,9 +1003,9 @@ export default function ProjectDetails() {
                       }))
                     }
                   />
-                  <button
+                  <Button
                     onClick={() => saveTime(t._id)}
-                    className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg disabled:opacity-50"
+                    variant="outline"
                     disabled={
                       timeEntry[t._id]?.hours === undefined ||
                       timeEntry[t._id]?.hours === "" ||
@@ -970,24 +1013,22 @@ export default function ProjectDetails() {
                     }
                   >
                     Save Time
-                  </button>
+                  </Button>
                 </div>
               )} */}
             </div>
           );
         })}
         {tasks.length === 0 && (
-          <div className="text-sm text-muted">No tasks yet.</div>
+          <div className="text-sm text-muted-foreground">No tasks yet.</div>
         )}
-        {taskTotal > 3 && (
+        {taskTotal > 0 && (
           <div>
-            <Link
-              to="tasks"
-              relative="path"
-              className="h-10 px-4 rounded-md border border-border hover:bg-bg text-sm inline-flex items-center"
-            >
-              View All Tasks
-            </Link>
+            <Button asChild variant="outline" className="h-10">
+              <Link to="tasks" relative="path">
+                View All Tasks
+              </Link>
+            </Button>
           </div>
         )}
       </div>
@@ -1002,12 +1043,13 @@ export default function ProjectDetails() {
           <div className="relative z-10 w-[min(640px,92vw)] max-h-[80vh] overflow-hidden rounded-md border border-border bg-surface">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <div className="font-semibold text-sm">Comments</div>
-              <button
-                className="h-8 px-3 rounded-md border border-border text-sm hover:bg-bg"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setOpenCommentsFor(null)}
               >
                 Close
-              </button>
+              </Button>
             </div>
             {(() => {
               const task = tasks.find((x) => x._id === openCommentsFor);
@@ -1017,7 +1059,9 @@ export default function ProjectDetails() {
                   <div className="text-sm font-medium mb-2">{task.title}</div>
                   <div className="max-h-[48vh] overflow-y-auto space-y-2 pr-1">
                     {(task.comments || []).length === 0 && (
-                      <div className="text-xs text-muted">No comments yet.</div>
+                      <div className="text-xs text-muted-foreground">
+                        No comments yet.
+                      </div>
                     )}
                     {(task.comments || []).slice(-100).map((c, idx) => {
                       const isMe = String(me?.id) === String(c.author);
@@ -1056,6 +1100,9 @@ export default function ProjectDetails() {
                       className="flex-1 h-9 rounded border border-border bg-bg px-3 text-sm"
                       placeholder="Write a comment…"
                       value={commentText[task._id] || ""}
+                      disabled={
+                        project?.active === false || project?.isActive === false
+                      }
                       onChange={(e) =>
                         setCommentText((s) => ({
                           ...s,
@@ -1073,7 +1120,10 @@ export default function ProjectDetails() {
                       onClick={() => addComment(task._id)}
                       className="h-9 rounded-md border border-border px-3 text-sm hover:bg-bg"
                       disabled={
-                        !commentText[task._id] || !commentText[task._id].trim()
+                        project?.active === false ||
+                        project?.isActive === false ||
+                        !commentText[task._id] ||
+                        !commentText[task._id].trim()
                       }
                     >
                       Send
@@ -1082,136 +1132,6 @@ export default function ProjectDetails() {
                 </div>
               );
             })()}
-          </div>
-        </div>
-      )}
-
-      {/* Edit task modal */}
-      {editTask && taskEditForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => {
-              setEditTask(null);
-              setTaskEditForm(null);
-            }}
-          />
-          <div className="relative z-10 w-[min(700px,92vw)] max-h-[85vh] overflow-auto rounded-md border border-border bg-surface p-4">
-            <div className="flex items-center justify-between">
-              <div className="font-semibold">Edit Task</div>
-              <button
-                className="h-8 px-3 rounded-md border border-border text-sm"
-                onClick={() => {
-                  setEditTask(null);
-                  setTaskEditForm(null);
-                }}
-              >
-                Close
-              </button>
-            </div>
-            <div className="mt-3 grid md:grid-cols-2 gap-3">
-              <div className="md:col-span-2">
-                <label className="block text-xs mb-1">Title</label>
-                <input
-                  className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
-                  value={taskEditForm.title}
-                  onChange={(e) =>
-                    setTaskEditForm((f) =>
-                      f ? { ...f, title: e.target.value } : f
-                    )
-                  }
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-xs mb-1">Description</label>
-                <textarea
-                  className="w-full rounded border border-border bg-bg px-2 py-2 text-sm min-h-24"
-                  value={taskEditForm.description}
-                  onChange={(e) =>
-                    setTaskEditForm((f) =>
-                      f ? { ...f, description: e.target.value } : f
-                    )
-                  }
-                />
-              </div>
-              <div>
-                <label className="block text-xs mb-1">Assignee</label>
-                <select
-                  className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
-                  value={taskEditForm.assignedTo}
-                  onChange={(e) =>
-                    setTaskEditForm((f) =>
-                      f ? { ...f, assignedTo: e.target.value } : f
-                    )
-                  }
-                >
-                  <option value="">Select</option>
-                  {employees.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs mb-1">Priority</label>
-                <select
-                  className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
-                  value={taskEditForm.priority}
-                  onChange={(e) =>
-                    setTaskEditForm((f) =>
-                      f ? { ...f, priority: e.target.value as any } : f
-                    )
-                  }
-                >
-                  <option value="">None</option>
-                  <option value="URGENT">Urgent</option>
-                  <option value="FIRST">First</option>
-                  <option value="SECOND">Second</option>
-                  <option value="LEAST">Least</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs mb-1">Estimated Hours</label>
-                <input
-                  className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={taskEditForm.estimatedHours}
-                  onChange={(e) =>
-                    setTaskEditForm((f) =>
-                      f ? { ...f, estimatedHours: e.target.value } : f
-                    )
-                  }
-                />
-              </div>
-              <div>
-                <label className="block text-xs mb-1">Status</label>
-                <select
-                  className="w-full h-9 rounded border border-border bg-bg px-2 text-sm"
-                  value={taskEditForm.status}
-                  onChange={(e) =>
-                    setTaskEditForm((f) =>
-                      f ? { ...f, status: e.target.value as any } : f
-                    )
-                  }
-                >
-                  <option value="PENDING">Pending</option>
-                  <option value="INPROGRESS">In Progress</option>
-                  <option value="DONE">Done</option>
-                </select>
-              </div>
-            </div>
-            <div className="mt-3 flex items-center gap-2">
-              <button
-                onClick={saveTaskEdit}
-                disabled={savingTaskEdit}
-                className="h-9 px-4 rounded-md bg-primary text-white text-sm disabled:opacity-60"
-              >
-                {savingTaskEdit ? "Saving…" : "Save Changes"}
-              </button>
-            </div>
           </div>
         </div>
       )}

@@ -1,14 +1,15 @@
-import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { clearAuth, getEmployee, hasPermission } from "../lib/auth";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentType } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { clearAuth, hasPermission } from "../lib/auth";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
+import { resolveMediaUrl } from "../lib/utils";
 import {
   Home,
   Clock8,
   CalendarCheck2,
+  CalendarRange,
   LogOut,
-  Menu,
-  X,
   User,
   FileText,
   ClipboardList,
@@ -16,18 +17,32 @@ import {
   ListChecks,
   Wallet,
   Megaphone,
-  ChevronDown,
-  ChevronRight,
-  PanelLeftClose,
-  PanelLeftOpen,
-  MailQuestion,
+  UserCircle2Icon,
+  X,
+  Target,
 } from "lucide-react";
+import LayoutSidebar from "../components/LayoutSidebar";
+import LayoutNavbar, { ProfileMenuItem } from "../components/LayoutNavbar";
+import { useSidebarOpenSections } from "../hooks/useSidebarSections";
 import AnnouncementsPopup from "../components/AnnouncementsPopup";
+import { useCurrentEmployee } from "../hooks/useCurrentEmployee";
+
+type Item = {
+  to: string;
+  label: string;
+  icon: ComponentType<{ size?: number | string }>;
+};
+
+type Section = {
+  key: string;
+  label: string;
+  items: Item[];
+};
 
 export default function EmployeeLayout() {
   const nav = useNavigate();
   const { pathname } = useLocation();
-  const u = getEmployee();
+  const { employee: u } = useCurrentEmployee();
 
   const [desktopOpen, setDesktopOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -39,23 +54,15 @@ export default function EmployeeLayout() {
   const [companyLogoWideUrl, setCompanyLogoWideUrl] = useState<string | null>(
     null
   );
+  const resolveLogoUrl = (value?: string | null) => resolveMediaUrl(value);
 
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get("/companies/branding");
-        const base = import.meta.env.VITE_API_URL || "http://localhost:4000";
         const b = res?.data?.branding || {};
-        const square = b.logoSquare
-          ? `${base}/uploads/${b.logoSquare}`
-          : b.logo
-          ? `${base}/uploads/${b.logo}`
-          : null;
-        const wide = b.logoHorizontal
-          ? `${base}/uploads/${b.logoHorizontal}`
-          : b.logo
-          ? `${base}/uploads/${b.logo}`
-          : null;
+        const square = resolveLogoUrl(b.logoSquare) || resolveLogoUrl(b.logo);
+        const wide = resolveLogoUrl(b.logoHorizontal) || resolveLogoUrl(b.logo);
         setCompanyLogoSquareUrl(square);
         setCompanyLogoWideUrl(wide);
       } catch {}
@@ -66,19 +73,17 @@ export default function EmployeeLayout() {
   const canManageAttendance = hasPermission(u, "attendance", "write");
   const canViewReports = hasPermission(u, "reports", "read");
   const canManageLeaves = hasPermission(u, "leaves", "write");
-  const canViewLeaveQueue = hasPermission(u, "leaves", "read") || canManageLeaves;
-  const canViewFinance = hasPermission(u, "finance", "read") || hasPermission(u, "finance", "write");
+  const canViewLeaveQueue =
+    hasPermission(u, "leaves", "read") || canManageLeaves;
+  const canViewFinance =
+    hasPermission(u, "finance", "read") || hasPermission(u, "finance", "write");
   const canManageFinance = hasPermission(u, "finance", "write");
   const canManageSalaries = hasPermission(u, "salary", "write");
+  const isManager =
+    (u?.subRoles || []).includes("manager") ||
+    (u?.subRoles || []).includes("hr");
 
-  type Item = {
-    to: string;
-    label: string;
-    icon: React.ComponentType<{ size?: number | string }>;
-  };
-  type Section = { key: string; label: string; items: Item[] };
-
-  const sections = useMemo(() => {
+  const sections = useMemo<Section[]>(() => {
     const itemsAttendance: Item[] = [
       { to: "/app/attendance", label: "My Attendance", icon: Clock8 },
     ];
@@ -94,13 +99,6 @@ export default function EmployeeLayout() {
         to: "/app/report",
         label: "Reports",
         icon: FileText,
-      });
-    }
-    if (canManageAttendance) {
-      itemsAttendance.push({
-        to: "/app/attendance/manual-requests",
-        label: "Manual Attendance",
-        icon: MailQuestion,
       });
     }
 
@@ -127,7 +125,7 @@ export default function EmployeeLayout() {
       });
     }
 
-    return [
+    const sections: Section[] = [
       {
         key: "overview",
         label: "Overview",
@@ -137,7 +135,7 @@ export default function EmployeeLayout() {
         key: "work",
         label: "Work",
         items: [
-          { to: "/app/tasks", label: "My Tasks", icon: ListChecks },
+          { to: "/app/tasks", label: "Tasks", icon: ListChecks },
           { to: "/app/projects", label: "Projects", icon: Users },
         ],
       },
@@ -152,9 +150,21 @@ export default function EmployeeLayout() {
         items: [
           { to: "/app/leave", label: "My Requests", icon: CalendarCheck2 },
           ...(canManageLeaves
-            ? [{ to: "/app/approvals", label: "Approvals", icon: ClipboardList }]
+            ? [
+                {
+                  to: "/app/approvals",
+                  label: "Approvals",
+                  icon: ClipboardList,
+                },
+              ]
             : canViewLeaveQueue
-            ? [{ to: "/app/approvals", label: "Team Requests", icon: ClipboardList }]
+            ? [
+                {
+                  to: "/app/approvals",
+                  label: "Team Requests",
+                  icon: ClipboardList,
+                },
+              ]
             : []),
         ],
       },
@@ -168,22 +178,40 @@ export default function EmployeeLayout() {
           ]
         : []),
       {
+        key: "performance",
+        label: "Performance",
+        items: [
+          { to: "/app/kras", label: "My KRAs", icon: Target },
+          ...(isManager
+            ? [{ to: "/app/kras/team", label: "Team KRAs", icon: Users }]
+            : []),
+        ],
+      },
+      {
         key: "paydocs",
         label: "Pay & Docs",
         items: [
           { to: "/app/salary-slip", label: "Salary Slip", icon: FileText },
           { to: "/app/documents", label: "Documents", icon: FileText },
+          { to: "/app/reimbursements", label: "Reimbursements", icon: Wallet },
         ],
       },
       {
         key: "company",
         label: "Company",
         items: [
-          { to: "/app/announcements", label: "Announcements", icon: Megaphone },
+          {
+            to: "/app/announcements",
+            label: "Announcements",
+            icon: Megaphone,
+          },
+          { to: "/app/holidays", label: "Holidays", icon: CalendarRange },
           { to: "/app/profile", label: "Profile", icon: User },
         ],
       },
     ];
+
+    return sections;
   }, [
     canManageAttendance,
     canViewTeamAttendance,
@@ -193,6 +221,7 @@ export default function EmployeeLayout() {
     canViewFinance,
     canManageFinance,
     canManageSalaries,
+    isManager,
   ]);
 
   const title = useMemo(() => {
@@ -217,42 +246,24 @@ export default function EmployeeLayout() {
       )
         return s.key;
     }
-    return sections[0].key;
+    return sections[0]?.key ?? "overview";
   }, [pathname, sections]);
 
-  const [openSections, setOpenSections] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return new Set(JSON.parse(raw));
-    } catch {}
-    return new Set([autoOpenKey]);
-  });
+  const { openSections, toggleSection } = useSidebarOpenSections(
+    STORAGE_KEY,
+    autoOpenKey
+  );
 
-  useEffect(() => {
-    setOpenSections((prev) => {
-      if (prev.has(autoOpenKey)) return prev;
-      const next = new Set(prev);
-      next.add(autoOpenKey);
-      return next;
-    });
-  }, [autoOpenKey]);
+  const itemIsActive = (to: string) => {
+    if (to === "/app") return pathname === "/app";
+    return pathname === to || pathname.startsWith(to + "/");
+  };
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(Array.from(openSections))
-      );
-    } catch {}
-  }, [openSections]);
-
-  const toggleSection = (key: string) =>
-    setOpenSections((s) => {
-      const n = new Set(s);
-      if (n.has(key)) n.delete(key);
-      else n.add(key);
-      return n;
-    });
+  const desktopSidebarWidthClass = desktopOpen ? "w-56" : "w-14";
+  const desktopContentOffsetClass = desktopOpen ? "md:pl-56" : "md:pl-14";
+  const desktopHeaderOffsetClasses = desktopOpen
+    ? "md:w-[calc(100%-14rem)]"
+    : "md:w-[calc(100%-3.5rem)]";
 
   const initials = (u?.name || "Employee")
     .split(" ")
@@ -261,143 +272,30 @@ export default function EmployeeLayout() {
     .join("")
     .toUpperCase();
 
-  const SidebarInner = ({ compact = false }: { compact?: boolean }) => {
-    const itemIsActive = (to: string) => {
-      if (to === "/app") return pathname === "/app";
-      return pathname === to || pathname.startsWith(to + "/");
-    };
+  const headerClassName =
+    "bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80 border-b border-border shadow-sm";
 
-    return (
-      <div
-        className={`flex h-full ${compact ? "w-16" : "w-64"} transition-all`}
-      >
-        <div className="flex flex-col w-full">
-          <div className="flex items-center justify-center h-[66px] border-b border-border">
-            <div className="font-bold text-sidebar-active tracking-wide">
-              {compact ? (
-                <img
-                  src={companyLogoSquareUrl || "/logo.png"}
-                  alt="logo"
-                  className="max-w-none size-10 object-contain"
-                />
-              ) : (
-                <img
-                  src={companyLogoWideUrl || "/logo-horizontal.png"}
-                  alt="logo"
-                  className="h-6 object-contain"
-                />
-              )}
-            </div>
-          </div>
-
-          <nav
-            className="flex-1 overflow-y-auto px-2 py-3 space-y-2 scrollbar-thin scrollbar-thumb-border/60 scrollbar-track-transparent"
-            role="navigation"
-            aria-label="Primary"
-          >
-            {sections.map((section) => {
-              const isOpen = compact ? false : openSections.has(section.key);
-              const maxH = isOpen ? section.items.length * 44 + 8 : 0;
-
-              return (
-                <div key={section.key} className="rounded-md">
-                  <button
-                    type="button"
-                    onClick={() => !compact && toggleSection(section.key)}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition"
-                    aria-expanded={isOpen}
-                    aria-controls={`sect-${section.key}`}
-                    title={section.label}
-                  >
-                    <span className="inline-flex items-center justify-center h-5 w-5 text-muted">
-                      {isOpen ? (
-                        <ChevronDown size={16} />
-                      ) : (
-                        <ChevronRight size={16} />
-                      )}
-                    </span>
-                    {!compact && (
-                      <span className="text-[11px] uppercase tracking-wide">
-                        {section.label}
-                      </span>
-                    )}
-                    {compact && (
-                      <span className="sr-only">{section.label}</span>
-                    )}
-                  </button>
-
-                  <div
-                    id={`sect-${section.key}`}
-                    className="overflow-hidden transition-[max-height] duration-300 ease-in-out"
-                    style={{ maxHeight: compact ? 0 : maxH }}
-                    role="group"
-                    aria-label={section.label}
-                  >
-                    <div className="mt-1 space-y-1">
-                      {section.items.map(({ to, label, icon: Icon }) => {
-                        const active = itemIsActive(to);
-                        return (
-                          <NavLink
-                            key={to}
-                            to={to}
-                            className={[
-                              "relative group flex items-center gap-3 rounded-md px-3 py-2 transition",
-                              active
-                                ? "bg-primary/10 text-sidebar-active font-semibold"
-                                : "hover:bg-sidebar-hover",
-                            ].join(" ")}
-                            title={label}
-                          >
-                            {active && (
-                              <span
-                                className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-0.5 rounded bg-primary"
-                                aria-hidden
-                              />
-                            )}
-                            <Icon size={18} />
-                            {!compact && (
-                              <span className="truncate">{label}</span>
-                            )}
-                            {compact && (
-                              <span className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap rounded-md border border-border bg-surface px-2 py-1 text-xs shadow-lg">
-                                {label}
-                              </span>
-                            )}
-                          </NavLink>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </nav>
-        </div>
-      </div>
-    );
-  };
-
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const profileRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (profileRef.current && !profileRef.current.contains(e.target as Node))
-        setProfileMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setProfileMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, []);
+  const profileMenuItems = useMemo<ProfileMenuItem[]>(
+    () => [
+      {
+        label: "Profile",
+        icon: <UserCircle2Icon size={16} />,
+        onClick: () => nav("/app/profile"),
+      },
+      {
+        label: "Logout",
+        icon: <LogOut size={16} />,
+        onClick: () => {
+          clearAuth();
+          nav("/login");
+        },
+      },
+    ],
+    [nav, clearAuth]
+  );
 
   return (
-    <div className="min-h-screen bg-bg text-text">
+    <div className="min-h-screen bg-bg text-text overflow-x-hidden">
       <div
         className={`fixed inset-0 bg-black/40 z-40 md:hidden transition-opacity ${
           mobileOpen ? "opacity-100" : "opacity-0 pointer-events-none"
@@ -405,12 +303,23 @@ export default function EmployeeLayout() {
         onClick={() => setMobileOpen(false)}
       />
 
-      <div className="flex">
+      <div
+        className={`flex w-full ${desktopContentOffsetClass} transition-all`}
+      >
         <aside
-          className="hidden md:block bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm sticky top-0 h-screen"
+          className={`hidden md:block fixed inset-y-0 left-0 bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm transition-[width] duration-200 ${desktopSidebarWidthClass}`}
           aria-label="Sidebar"
         >
-          <SidebarInner compact={!desktopOpen} />
+          <LayoutSidebar
+            sections={sections}
+            pathname={pathname}
+            compact={!desktopOpen}
+            logoSquareUrl={companyLogoSquareUrl}
+            logoWideUrl={companyLogoWideUrl}
+            openSections={openSections}
+            toggleSection={toggleSection}
+            itemIsActive={itemIsActive}
+          />
         </aside>
 
         <aside
@@ -432,94 +341,36 @@ export default function EmployeeLayout() {
             </button>
           </div>
           <div className="h-[calc(100%-3.5rem)]">
-            <SidebarInner compact={false} />
+            <LayoutSidebar
+              sections={sections}
+              pathname={pathname}
+              compact={false}
+              logoSquareUrl={companyLogoSquareUrl}
+              logoWideUrl={companyLogoWideUrl}
+              openSections={openSections}
+              toggleSection={toggleSection}
+              itemIsActive={itemIsActive}
+            />
           </div>
         </aside>
 
-        <div className="flex-1 grid grid-rows-[auto_1fr] min-h-screen">
-          <header className="sticky top-0 z-30 bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80 border-b border-border shadow-sm">
-            <div className="h-16 px-3 md:px-6 flex items-center gap-3">
-              <button
-                onClick={() => setMobileOpen(true)}
-                className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-surface hover:bg-bg"
-                aria-label="Open sidebar"
-                aria-expanded={mobileOpen}
-              >
-                <Menu size={18} />
-              </button>
+        <div className="flex-1 min-w-0 flex flex-col min-h-screen">
+          <LayoutNavbar
+            title={title}
+            desktopOpen={desktopOpen}
+            onDesktopToggle={() => setDesktopOpen((v) => !v)}
+            mobileOpen={mobileOpen}
+            onMobileToggle={() => setMobileOpen(true)}
+            initials={initials}
+            headerOffsetClass={desktopHeaderOffsetClasses}
+            headerClassName={headerClassName}
+            profileMenuItems={profileMenuItems}
+          />
 
-              <button
-                onClick={() => setDesktopOpen((v) => !v)}
-                className="hidden md:inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-surface hover:bg-bg"
-                aria-label={desktopOpen ? "Collapse sidebar" : "Expand sidebar"}
-                title={desktopOpen ? "Collapse sidebar" : "Expand sidebar"}
-              >
-                {desktopOpen ? (
-                  <PanelLeftClose size={18} />
-                ) : (
-                  <PanelLeftOpen size={18} />
-                )}
-              </button>
-
-              <h1 className="text-lg md:text-xl font-semibold">{title}</h1>
-
-              <div className="ml-auto flex items-center gap-3">
-                <div className="hidden md:block">
-                  <input
-                    placeholder="Search…"
-                    className="h-9 w-56 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-                    aria-label="Search"
-                  />
-                </div>
-
-                <div className="relative" ref={profileRef}>
-                  <button
-                    onClick={() => setProfileMenuOpen((o) => !o)}
-                    className="flex items-center gap-2 rounded-full border border-border bg-surface pl-2 pr-2.5 h-9"
-                    aria-haspopup="menu"
-                    aria-expanded={profileMenuOpen}
-                    title={u?.name || "Account"}
-                  >
-                    <div className="grid place-items-center h-7 w-7 rounded-full bg-primary/15 text-primary text-xs font-semibold">
-                      {initials}
-                    </div>
-                    <ChevronDown size={16} className="text-muted" />
-                  </button>
-
-                  {profileMenuOpen && (
-                    <div
-                      className="absolute right-0 mt-2 w-44 rounded-md border border-border bg-surface shadow-lg z-50 py-1"
-                      role="menu"
-                    >
-                      <button
-                        onClick={() => {
-                          setProfileMenuOpen(false);
-                          nav("/app/profile");
-                        }}
-                        className="w-full px-4 py-2 text-left hover:bg-sidebar-hover text-sm"
-                        role="menuitem"
-                      >
-                        Profile
-                      </button>
-                      <button
-                        onClick={() => {
-                          clearAuth();
-                          nav("/login");
-                        }}
-                        className="w-full px-4 py-2 text-left hover:bg-sidebar-hover text-sm text-accent inline-flex items-center gap-2"
-                        role="menuitem"
-                      >
-                        <LogOut size={16} />
-                        Logout
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </header>
-
-          <main id="main" className="p-4 md:p-8 bg-bg">
+          <main
+            id="main"
+            className="flex-1 p-4 pt-24 md:p-8 md:pt-24 bg-bg min-w-0 overflow-x-auto"
+          >
             <AnnouncementsPopup />
             <Outlet />
           </main>

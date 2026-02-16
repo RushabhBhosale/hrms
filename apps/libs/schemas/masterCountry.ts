@@ -10,6 +10,8 @@ export const masterCountrySchema = z.object({
   phoneCode: z.string().optional(),
   createdBy: objectId.optional(),
   updatedBy: objectId.optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type MasterCountryInput = z.infer<typeof masterCountrySchema>;

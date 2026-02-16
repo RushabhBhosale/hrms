@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
-import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
-import { StatusBadge } from "../../components/ui/StatusBadge";
+import { formatDateDisplay } from "../../lib/utils";
+import {
+  Th,
+  Td,
+  SkeletonRows,
+  PaginationFooter,
+} from "../../components/utils/Table";
+import { StatusBadge } from "../../components/utils/StatusBadge";
 
 type Leave = {
   _id: string;
@@ -9,18 +16,25 @@ type Leave = {
   startDate: string;
   endDate: string;
   type: "CASUAL" | "PAID" | "UNPAID" | "SICK";
+  allocations?: {
+    paid?: number;
+    casual?: number;
+    sick?: number;
+    unpaid?: number;
+  };
   status: "PENDING" | "APPROVED" | "REJECTED";
   adminMessage?: string;
 };
 
 export default function LeaveApprovals() {
+  const [searchParams] = useSearchParams();
   const [rows, setRows] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState<"ALL" | Leave["type"]>("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | Leave["status"]>(
-    "ALL"
+    "ALL",
   );
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
@@ -52,13 +66,23 @@ export default function LeaveApprovals() {
     load();
   }, []);
 
+  useEffect(() => {
+    const id = searchParams.get("leave");
+    if (!id) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById(`leave-${id}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [rows, searchParams]);
+
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     return rows.filter(
       (r) =>
         (statusFilter === "ALL" || r.status === statusFilter) &&
         (typeFilter === "ALL" || r.type === typeFilter) &&
-        (!term || r.employee.name.toLowerCase().includes(term))
+        (!term || r.employee.name.toLowerCase().includes(term)),
     );
   }, [rows, q, statusFilter, typeFilter]);
 
@@ -95,7 +119,7 @@ export default function LeaveApprovals() {
   const end = Math.min(total, page * limit);
   const pageRows = useMemo(
     () => sorted.slice((page - 1) * limit, (page - 1) * limit + limit),
-    [sorted, page, limit]
+    [sorted, page, limit],
   );
 
   function toggleSort(k: typeof sortKey) {
@@ -104,6 +128,26 @@ export default function LeaveApprovals() {
       setSortKey(k);
       setSortDir(k === "start" ? "desc" : "asc");
     }
+  }
+
+  function formatType(l: Leave) {
+    const parts: string[] = [];
+    const fmt = (n?: number) =>
+      Number.isFinite(n)
+        ? Math.abs((n ?? 0) % 1) < 1e-4
+          ? `${Math.round(n!)}`
+          : `${Math.round((n || 0) * 100) / 100}`
+        : null;
+    const add = (label: string, val?: number) => {
+      const num = fmt(val);
+      if (num && Number(num) > 0) parts.push(`${num} ${label}`);
+    };
+    add("Paid", l.allocations?.paid);
+    add("Casual", l.allocations?.casual);
+    add("Sick", l.allocations?.sick);
+    add("Unpaid", l.allocations?.unpaid);
+    if (parts.length) return parts.join(" + ");
+    return l.type;
   }
 
   async function confirmAction() {
@@ -123,7 +167,7 @@ export default function LeaveApprovals() {
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Leave Approvals</h2>
-        <p className="text-sm text-muted">
+        <p className="text-sm text-muted-foreground">
           Review leave requests from your team.
         </p>
       </div>
@@ -155,12 +199,6 @@ export default function LeaveApprovals() {
           placeholder="Search by name"
           className="h-10 w-64 rounded-md border border-border bg-surface px-3"
         />
-        <button
-          onClick={load}
-          className="h-10 rounded-md bg-primary px-4 text-white"
-        >
-          Refresh
-        </button>
       </div>
 
       {err && (
@@ -170,8 +208,8 @@ export default function LeaveApprovals() {
       )}
 
       <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
-        <div className="border-b border-border px-4 py-3 flex items-center justify-between">
-          <div className="text-sm text-muted">
+        <div className="border-b border-border px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm text-muted-foreground">
             {loading
               ? "Loading…"
               : `Showing ${start}-${end} of ${total} requests`}
@@ -239,17 +277,27 @@ export default function LeaveApprovals() {
               <SkeletonRows rows={6} cols={6} />
             ) : pageRows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-muted">
+                <td
+                  colSpan={6}
+                  className="px-4 py-6 text-center text-muted-foreground"
+                >
                   No leave requests.
                 </td>
               </tr>
             ) : (
               pageRows.map((l) => (
-                <tr key={l._id} className="border-t border-border/70">
+                <tr
+                  key={l._id}
+                  id={`leave-${l._id}`}
+                  className={[
+                    "border-t border-border/70",
+                    searchParams.get("leave") === l._id ? "bg-primary/5" : "",
+                  ].join(" ")}
+                >
                   <Td>{l.employee?.name || "-"}</Td>
-                  <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
-                  <Td>{new Date(l.endDate).toLocaleDateString()}</Td>
-                  <Td>{l.type}</Td>
+                  <Td>{formatDateDisplay(l.startDate)}</Td>
+                  <Td>{formatDateDisplay(l.endDate)}</Td>
+                  <Td>{formatType(l)}</Td>
                   <Td>
                     <StatusBadge status={l.status} />
                   </Td>
@@ -282,31 +330,30 @@ export default function LeaveApprovals() {
             )}
           </tbody>
         </table>
+        <div className="border-t border-border px-4 py-3">
+          <PaginationFooter
+            page={page}
+            pages={pages}
+            onFirst={() => setPage(1)}
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => Math.min(pages, p + 1))}
+            onLast={() => setPage(pages)}
+            disabled={loading}
+          />
+        </div>
       </section>
-
-      <div className="flex items-center justify-end">
-        <Pagination
-          page={page}
-          pages={pages}
-          onFirst={() => setPage(1)}
-          onPrev={() => setPage((p) => Math.max(1, p - 1))}
-          onNext={() => setPage((p) => Math.min(pages, p + 1))}
-          onLast={() => setPage(pages)}
-          disabled={loading}
-        />
-      </div>
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-black/40 -mt-[32px]"
             onClick={() => setModal(null)}
           />
           <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
             <h4 className="text-lg font-semibold mb-2">
               {modal.action === "approve" ? "Approve Leave" : "Reject Leave"}
             </h4>
-            <p className="text-sm text-muted mb-3">
+            <p className="text-sm text-muted-foreground mb-3">
               Add a short message (optional).
             </p>
             <textarea
@@ -334,8 +381,8 @@ export default function LeaveApprovals() {
                 {submitting
                   ? "Saving…"
                   : modal.action === "approve"
-                  ? "Approve"
-                  : "Reject"}
+                    ? "Approve"
+                    : "Reject"}
               </button>
             </div>
           </div>

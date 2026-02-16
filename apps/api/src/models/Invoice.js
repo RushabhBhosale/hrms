@@ -21,6 +21,7 @@ const InvoiceSchema = new mongoose.Schema(
     partyType: { type: String, enum: ['client', 'employee', 'vendor'], required: true },
     project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project' },
     partyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }, // optional for employee
+    client: { type: mongoose.Schema.Types.ObjectId, ref: 'Client' }, // optional for stored clients
     partyName: { type: String },
     partyEmail: { type: String },
     partyAddress: { type: String },
@@ -43,9 +44,11 @@ const InvoiceSchema = new mongoose.Schema(
     totalAmount: { type: Number, default: 0, index: true },
 
     notes: { type: String },
-    attachments: { type: [String], default: [] }, // filenames stored under /uploads
-    pdfFile: { type: String }, // generated PDF filename under /uploads
-    partyLogo: { type: String }, // optional client logo (filename under /uploads)
+    attachments: { type: [String], default: [] }, // file keys for attachments
+    pdfFile: { type: String }, // generated voucher/PDF file key
+    partyLogo: { type: String }, // optional client logo file key
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

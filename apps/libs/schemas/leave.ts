@@ -27,6 +27,8 @@ export const leaveSchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
   adminMessage: z.string().optional(),
   allocations: leaveAllocationsSchema,
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type LeaveAllocationsInput = z.infer<typeof leaveAllocationsSchema>;

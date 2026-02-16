@@ -5,7 +5,9 @@ import { api } from "../../lib/api";
 import { formatMinutesLabel } from "../../lib/time";
 import { resolveLocationLabel } from "../../lib/location";
 import RoleGuard from "../../components/RoleGuard";
-import { getEmployee } from "../../lib/auth";
+import { Edit, Trash, Users, Eye } from "lucide-react";
+import { Button } from "../../components/ui/button";
+import ConfirmDialog from "../../components/utils/ConfirmDialog";
 
 type Attendance = {
   firstPunchIn?: string;
@@ -36,6 +38,11 @@ export default function EmployeeDash() {
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<"in" | "out" | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [locationPrompt, setLocationPrompt] = useState<{
+    open: boolean;
+    permission: "granted" | "denied" | "prompt" | "unavailable";
+    action: "in" | "out";
+  }>({ open: false, permission: "prompt", action: "in" });
   type MissingIssue = {
     date: string;
     type: "missingPunchOut" | "autoPunch" | "noAttendance";
@@ -47,7 +54,6 @@ export default function EmployeeDash() {
   const [missingLoading, setMissingLoading] = useState(false);
   const [missingErr, setMissingErr] = useState<string | null>(null);
   const [showMissing, setShowMissing] = useState(false);
-  const [requestingManual, setRequestingManual] = useState<string | null>(null);
   const [leaveModal, setLeaveModal] = useState({
     open: false,
     date: null as string | null,
@@ -61,7 +67,17 @@ export default function EmployeeDash() {
   const timerRef = useRef<number | null>(null);
   const refreshRef = useRef<number | null>(null);
   const midnightRef = useRef<number | null>(null);
-  const me = getEmployee();
+  const punchedIn = Boolean(
+    attendance?.lastPunchIn && !attendance?.lastPunchOut,
+  );
+
+  const dateKeyLocal = (d: Date | string) => {
+    const x = new Date(d);
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, "0");
+    const day = String(x.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
 
   function fmtDateKey(key: string) {
     const [y, m, d] = key.split("-").map((x) => parseInt(x, 10));
@@ -91,7 +107,7 @@ export default function EmployeeDash() {
     if (issue.type === "autoPunch") {
       const time = fmtShortTime(issue.autoPunchOutAt);
       return (
-        <div className="text-xs text-muted">
+        <div className="text-xs text-muted-foreground">
           {time
             ? `System closed the day at ${time}. Confirm the actual punch-out time.`
             : "System closed the day automatically. Confirm the actual punch-out time."}
@@ -100,16 +116,34 @@ export default function EmployeeDash() {
     }
     if (issue.type === "noAttendance") {
       return (
-        <div className="text-xs text-muted">
+        <div className="text-xs text-muted-foreground">
           Apply leave or notify an admin to record the punches for that day.
         </div>
       );
     }
     return (
-      <div className="text-xs text-muted">
+      <div className="text-xs text-muted-foreground">
         Set the punch-out time and log the tasks you worked on.
       </div>
     );
+  }
+
+  function renderLocationHint(permission: string) {
+    if (permission === "denied") {
+      return "Location access is blocked for this site. Allow location in your browser settings, then try Punch In again.";
+    }
+    if (permission === "unavailable") {
+      return "We couldn’t read your location. Turn on device location services, allow the browser, then try Punch In again.";
+    }
+    return "Turn on location permission in your browser to punch in, then retry.";
+  }
+
+  function getTimezonePayload() {
+    const offset = -new Date().getTimezoneOffset();
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone
+      ? { timezoneOffsetMinutes: offset, timezone: zone }
+      : { timezoneOffsetMinutes: offset };
   }
 
   // My projects (assigned to me as member or team lead)
@@ -130,39 +164,26 @@ export default function EmployeeDash() {
     status: "PENDING" | "INPROGRESS" | "DONE";
     timeSpentMinutes?: number;
     project: { _id: string; title: string } | string;
+    parentTask?: string | null;
     updatedAt?: string;
+    isMeetingDefault?: boolean;
   };
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksErr, setTasksErr] = useState<string | null>(null);
 
-  // Punch-out modal state
+  // Punch-out / log modal state
   const [showPunchOut, setShowPunchOut] = useState(false);
+  const [punchModalMode, setPunchModalMode] = useState<"punch" | "log">(
+    "punch",
+  );
   type Assigned = Task & {
     projectId: string;
     projectTitle: string;
-    checked?: boolean;
     hours?: string; // user input hours, e.g. 1.5
     minutes?: string; // user input minutes, e.g. 30
+    note?: string;
   };
-  function statusBadge(status: Task["status"]) {
-    if (status === "DONE") {
-      return {
-        label: "Done",
-        className: "bg-green-500/10 text-green-600 border-green-500/20",
-      };
-    }
-    if (status === "INPROGRESS") {
-      return {
-        label: "In Progress",
-        className: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-      };
-    }
-    return {
-      label: "Pending",
-      className: "bg-muted/20 text-muted border-border/60",
-    };
-  }
   const [assigned, setAssigned] = useState<Assigned[]>([]);
   const [assignedLoading, setAssignedLoading] = useState(false);
   const [assignedErr, setAssignedErr] = useState<string | null>(null);
@@ -171,19 +192,156 @@ export default function EmployeeDash() {
   >("ACTIVE");
   const filteredAssigned = useMemo(
     () =>
-      assigned.filter((t) =>
-        assignedStatusView === "DONE"
-          ? t.status === "DONE"
-          : t.status !== "DONE"
-      ),
-    [assigned, assignedStatusView]
+      assigned.filter((t) => {
+        const statusOk =
+          assignedStatusView === "DONE"
+            ? t.status === "DONE"
+            : t.status !== "DONE";
+        return statusOk;
+      }),
+    [assigned, assignedStatusView],
   );
+  const [logProjectId, setLogProjectId] = useState<string>("");
+  const [logMainTaskId, setLogMainTaskId] = useState<string>("");
+  const [logSubTaskId, setLogSubTaskId] = useState<string>("");
+  const [logNote, setLogNote] = useState("");
+  const [logHours, setLogHours] = useState("");
+  const [logMinutesInput, setLogMinutesInput] = useState("");
+  const [meetingMinutesInput, setMeetingMinutesInput] = useState("");
+  const [logEntryMode, setLogEntryMode] = useState<"task" | "meeting">("task");
+  const [editingLog, setEditingLog] = useState<{
+    context: "today" | "backfill";
+    logId: string;
+  } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{
+    context: "today" | "backfill";
+    logId: string | null;
+    open: boolean;
+  }>({ context: "today", logId: null, open: false });
+  const logEligibleTasks = useMemo(
+    () => assigned.filter((t) => t.status !== "DONE"),
+    [assigned],
+  );
+  const [showTodayLogs, setShowTodayLogs] = useState(true);
+  const tasksByProject = useMemo(() => {
+    const map = new Map<string, Assigned[]>();
+    logEligibleTasks.forEach((t) => {
+      const pid = t.projectId || "";
+      if (!pid) return;
+      const list = map.get(pid) || [];
+      list.push(t);
+      map.set(pid, list);
+    });
+    return map;
+  }, [logEligibleTasks]);
+  const logProjectOptions = useMemo(
+    () =>
+      Array.from(tasksByProject.entries()).map(([value, tasks]) => ({
+        value,
+        label: tasks[0]?.projectTitle || "Project",
+      })),
+    [tasksByProject],
+  );
+  const mainTaskOptions = useMemo(() => {
+    const list = tasksByProject.get(logProjectId) || [];
+    const roots = list.filter((t) => !t.parentTask);
+    const source = roots.length ? roots : list; // fallback: allow selecting any task if no top-level task exists
+    return source.map((t) => ({ value: t._id, label: t.title || "Task" }));
+  }, [tasksByProject, logProjectId]);
+  const subTaskOptions = useMemo(() => {
+    if (!logMainTaskId) return [];
+    const list = tasksByProject.get(logProjectId) || [];
+    return list
+      .filter((t) => String(t.parentTask) === String(logMainTaskId))
+      .map((t) => ({ value: t._id, label: t.title || "Task" }));
+  }, [tasksByProject, logProjectId, logMainTaskId]);
+  const meetingTaskByProject = useMemo(() => {
+    const map = new Map<string, Assigned>();
+    [...logEligibleTasks, ...assigned].forEach((t) => {
+      if (t.isMeetingDefault) map.set(t.projectId, t);
+    });
+    return map;
+  }, [logEligibleTasks, assigned]);
+  const selectedTaskForLog = useMemo(() => {
+    const targetId = logSubTaskId || logMainTaskId;
+    if (!targetId) return null;
+    return (
+      logEligibleTasks.find((t) => String(t._id) === String(targetId)) || null
+    );
+  }, [logEligibleTasks, logMainTaskId, logSubTaskId]);
+  const selectedMainHasSubtasks = useMemo(() => {
+    if (!logMainTaskId) return false;
+    const list = tasksByProject.get(logProjectId) || [];
+    return list.some((t) => String(t.parentTask) === String(logMainTaskId));
+  }, [tasksByProject, logProjectId, logMainTaskId]);
+  const selectedMinutes = useMemo(
+    () => computeMinutes({ hours: logHours, minutes: logMinutesInput }),
+    [logHours, logMinutesInput],
+  );
+  const hasTaskMinutes = selectedMinutes > 0;
+  const meetingMinutes = useMemo(() => {
+    const m = parseInt(meetingMinutesInput || "0", 10);
+    if (!Number.isFinite(m) || m <= 0) return 0;
+    return m;
+  }, [meetingMinutesInput]);
+  const hasMeetingMinutes = meetingMinutes > 0;
+  const hasMeetingProject =
+    hasMeetingMinutes &&
+    !!logProjectId &&
+    meetingTaskByProject.has(logProjectId);
+  const hasLogTarget = Boolean(selectedTaskForLog);
+  const activeMinutes =
+    logEntryMode === "task" ? selectedMinutes : meetingMinutes;
+  const canSubmitLog =
+    !assignedLoading &&
+    (logEntryMode === "task"
+      ? hasLogTarget && hasTaskMinutes
+      : hasMeetingProject);
   function computeMinutes(entry: { hours?: string; minutes?: string }) {
     const hours = parseFloat(entry.hours || "0");
     const extraMinutes = parseInt(entry.minutes || "0", 10);
     const fromHours = Number.isFinite(hours) ? Math.round(hours * 60) : 0;
     const fromMinutes = Number.isFinite(extraMinutes) ? extraMinutes : 0;
     return Math.max(0, fromHours + fromMinutes);
+  }
+  function changeLogEntryMode(next: "task" | "meeting") {
+    if (next === logEntryMode) return;
+    setPunchOutErr(null);
+    setEditingLog(null);
+    if (next === "meeting") {
+      setLogHours("");
+      setLogMinutesInput("");
+      setLogNote("");
+      setLogMainTaskId("");
+      setLogSubTaskId("");
+      if (!logProjectId) {
+        const first = logProjectOptions[0]?.value;
+        if (first) setLogProjectId(first);
+      }
+    } else {
+      setMeetingMinutesInput("");
+    }
+    setLogEntryMode(next);
+  }
+
+  function changeBackfillEntryMode(next: "task" | "meeting") {
+    if (next === backfillEntryMode) return;
+    setBackfillErr(null);
+    if (next === "meeting") {
+      setAssigned((prev) =>
+        prev.map((t) => ({
+          ...t,
+          hours: "",
+          minutes: "",
+        })),
+      );
+      if (!backfillMeetingProjectId && meetingProjectOptions.length) {
+        setBackfillMeetingProjectId(meetingProjectOptions[0].value);
+      }
+    } else {
+      setBackfillMeetingMinutes("");
+    }
+    setBackfillEntryMode(next);
   }
   const [workedToday, setWorkedToday] = useState<{
     minutes: number;
@@ -208,21 +366,36 @@ export default function EmployeeDash() {
     error?: string | null;
   };
   const [todayLogs, setTodayLogs] = useState<WorkedLog[]>([]);
-  const [projects, setProjects] = useState<{ _id: string; title: string }[]>(
-    []
-  );
-  // Add new task form
-  const [newTaskProjectId, setNewTaskProjectId] = useState<string>("");
-  const [newTaskTitle, setNewTaskTitle] = useState<string>("");
-  const [newTaskStatus, setNewTaskStatus] = useState<"PENDING" | "DONE">(
-    "PENDING"
-  );
-  const [addingTask, setAddingTask] = useState(false);
+  const [logOnlySubmitting, setLogOnlySubmitting] = useState(false);
   const [submittingPunchOut, setSubmittingPunchOut] = useState(false);
   const [punchOutErr, setPunchOutErr] = useState<string | null>(null);
-  // Personal task support
-  const [usePersonal, setUsePersonal] = useState(false);
-  const [personalProjectId, setPersonalProjectId] = useState<string>("");
+  const hasExistingLogsToday =
+    todayLogs.length > 0 || workedTasksToday.length > 0;
+  const [backfillMeetingProjectId, setBackfillMeetingProjectId] =
+    useState<string>("");
+  const [backfillMeetingMinutes, setBackfillMeetingMinutes] = useState("");
+  const [backfillLogs, setBackfillLogs] = useState<WorkedLog[]>([]);
+  const canSubmitPunchOut = canSubmitLog || hasExistingLogsToday;
+  const meetingProjectOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          assigned
+            .filter((t) => t.isMeetingDefault)
+            .map((t) => [t.projectId, t.projectTitle || "Project"]),
+        ).entries(),
+      ).map(([value, label]) => ({ value, label })),
+    [assigned],
+  );
+  const backfillMeetingMinutesValue = useMemo(() => {
+    const m = parseInt(backfillMeetingMinutes || "0", 10);
+    return Number.isFinite(m) && m > 0 ? m : 0;
+  }, [backfillMeetingMinutes]);
+  useEffect(() => {
+    if (!backfillMeetingProjectId && meetingProjectOptions.length) {
+      setBackfillMeetingProjectId(meetingProjectOptions[0].value);
+    }
+  }, [backfillMeetingProjectId, meetingProjectOptions]);
 
   // Backfill (log tasks for a past missing punch-out day)
   const [showBackfill, setShowBackfill] = useState(false);
@@ -238,10 +411,13 @@ export default function EmployeeDash() {
   const [backfillSavingOut, setBackfillSavingOut] = useState(false);
   const [backfillAttendance, setBackfillAttendance] = useState<{
     firstPunchIn?: string;
+    lastPunchIn?: string;
     lastPunchOut?: string;
     workedMs?: number;
   } | null>(null);
-  const [backfillLogs, setBackfillLogs] = useState<WorkedLog[]>([]);
+  const [backfillEntryMode, setBackfillEntryMode] = useState<
+    "task" | "meeting"
+  >("task");
 
   // Set punch-out for a past day
   const [showSetOut, setShowSetOut] = useState(false);
@@ -255,7 +431,7 @@ export default function EmployeeDash() {
     const total = Math.round(elapsed / 60000); // minutes
     const alreadyLogged = workedTasksToday.reduce(
       (acc, t) => acc + (t.minutes || 0),
-      0
+      0,
     );
     // Enforce 60 min break: only allow total - 60
     const cap = Math.max(0, total - 60);
@@ -278,18 +454,25 @@ export default function EmployeeDash() {
     loadMissingOut();
   }
 
-  async function punch(action: "in" | "out") {
+  async function punch(
+    action: "in" | "out",
+    options?: { triggerDailyStatusEmail?: boolean },
+  ) {
     if (pending) return false;
     let success = false;
     try {
       setPending(action);
       let locationLabel: string | null = null;
-      if (action === "in") {
-        locationLabel = await resolveLocationLabel();
+      const loc = await resolveLocationLabel({ requestPermission: false });
+      if (loc.permission === "granted" && loc.label) {
+        locationLabel = loc.label;
       }
       await api.post("/attendance/punch", {
         action,
         ...(locationLabel ? { location: locationLabel } : {}),
+        ...(options?.triggerDailyStatusEmail
+          ? { triggerDailyStatusEmail: true }
+          : {}),
       });
       await load();
       success = true;
@@ -305,7 +488,7 @@ export default function EmployeeDash() {
         setErr(
           `You still have ${count || "some"} pending attendance ${
             count === 1 ? "issue" : "issues"
-          }. Select Resolve Attendance Issues to continue.`
+          }. Select Resolve Attendance Issues to continue.`,
         );
         try {
           await loadMissingOut();
@@ -329,7 +512,7 @@ export default function EmployeeDash() {
       const now = new Date();
       const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
         2,
-        "0"
+        "0",
       )}`;
       const res = await api.get("/attendance/missing-out", {
         params: { scope: "all", month: ym },
@@ -365,28 +548,10 @@ export default function EmployeeDash() {
       setMissingIssues(issues);
     } catch (e: any) {
       setMissingErr(
-        e?.response?.data?.error || "Failed to load attendance issues"
+        e?.response?.data?.error || "Failed to load attendance issues",
       );
     } finally {
       setMissingLoading(false);
-    }
-  }
-
-  async function requestManualAttendance(dateKey: string) {
-    if (requestingManual) return;
-    try {
-      setMissingErr(null);
-      setRequestingManual(dateKey);
-      await api.post("/attendance/manual-request", { date: dateKey });
-      await loadMissingOut();
-      setShowMissing(false);
-    } catch (e: any) {
-      setMissingErr(
-        e?.response?.data?.error ||
-          "Failed to notify admin for manual attendance entry"
-      );
-    } finally {
-      setRequestingManual(null);
     }
   }
 
@@ -394,19 +559,19 @@ export default function EmployeeDash() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
       2,
-      "0"
+      "0",
     )}-${String(now.getDate()).padStart(2, "0")}`;
   }, []);
   const blockingIssues = useMemo(
     () => missingIssues.filter((issue) => issue.date !== todayKey),
-    [missingIssues, todayKey]
+    [missingIssues, todayKey],
   );
   const hasBlockingIssues = blockingIssues.length > 0;
 
   function updateLogState(
     context: "today" | "backfill",
     logId: string,
-    patch: Partial<WorkedLog>
+    patch: Partial<WorkedLog>,
   ) {
     const setter = context === "today" ? setTodayLogs : setBackfillLogs;
     setter((prev) =>
@@ -416,8 +581,8 @@ export default function EmployeeDash() {
               ...log,
               ...patch,
             }
-          : log
-      )
+          : log,
+      ),
     );
   }
 
@@ -425,23 +590,23 @@ export default function EmployeeDash() {
     try {
       setAssignedErr(null);
       setAssignedLoading(true);
-      const [assignedRes, workedRes, projectsRes] = await Promise.all([
+      const [assignedRes, workedRes] = await Promise.all([
         api.get("/projects/tasks/assigned"),
         api.get("/projects/tasks/worked"),
-        api.get("/projects"),
       ]);
       const list: Task[] = assignedRes.data.tasks || [];
       const normalized: Assigned[] = list.map((t) => ({
         ...t,
+        parentTask: t.parentTask ? String(t.parentTask) : null,
         projectId:
           typeof t.project === "string"
             ? (t.project as string)
             : (t.project?._id as string),
         projectTitle:
           typeof t.project === "string" ? "" : t.project?.title || "",
-        checked: false,
         hours: "",
         minutes: "",
+        note: "",
       }));
       setAssigned(normalized);
       setAssignedStatusView("ACTIVE");
@@ -465,7 +630,7 @@ export default function EmployeeDash() {
         (tasksToday.tasks || []).map((t) => ({
           taskId: t._id,
           minutes: t.minutes || 0,
-        }))
+        })),
       );
 
       setTodayLogs(
@@ -487,7 +652,7 @@ export default function EmployeeDash() {
             saving: false,
             error: null,
           }));
-        })
+        }),
       );
 
       const now = new Date();
@@ -495,19 +660,9 @@ export default function EmployeeDash() {
         minutes: Math.round(elapsed / 60000),
         dateKey: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
           2,
-          "0"
+          "0",
         )}-${String(now.getDate()).padStart(2, "0")}`,
       });
-
-      setProjects(
-        (projectsRes.data.projects || []).map((p: any) => ({
-          _id: p._id,
-          title: p.title,
-        }))
-      );
-      if (!newTaskProjectId && (projectsRes.data.projects || []).length > 0) {
-        setNewTaskProjectId(projectsRes.data.projects[0]._id);
-      }
     } catch (e: any) {
       setAssignedErr(e?.response?.data?.error || "Failed to load tasks");
     } finally {
@@ -519,23 +674,23 @@ export default function EmployeeDash() {
     try {
       setBackfillErr(null);
       setBackfillLoading(true);
-      const [assignedRes, workedRes, projectsRes] = await Promise.all([
+      const [assignedRes, workedRes] = await Promise.all([
         api.get("/projects/tasks/assigned"),
         api.get("/projects/tasks/worked", { params: { date: dateKey } }),
-        api.get("/projects"),
       ]);
       const list: Task[] = assignedRes.data.tasks || [];
       const normalized: Assigned[] = list.map((t) => ({
         ...t,
+        parentTask: t.parentTask ? String(t.parentTask) : null,
         projectId:
           typeof t.project === "string"
             ? (t.project as string)
             : (t.project?._id as string),
         projectTitle:
           typeof t.project === "string" ? "" : t.project?.title || "",
-        checked: false,
         hours: "",
         minutes: "",
+        note: "",
       }));
       setAssigned(normalized);
       setAssignedStatusView("ACTIVE");
@@ -559,7 +714,7 @@ export default function EmployeeDash() {
         (tasksDay.tasks || []).map((t) => ({
           taskId: t._id,
           minutes: t.minutes || 0,
-        }))
+        })),
       );
 
       setBackfillLogs(
@@ -581,18 +736,8 @@ export default function EmployeeDash() {
             saving: false,
             error: null,
           }));
-        })
+        }),
       );
-
-      setProjects(
-        (projectsRes.data.projects || []).map((p: any) => ({
-          _id: p._id,
-          title: p.title,
-        }))
-      );
-      if (!newTaskProjectId && (projectsRes.data.projects || []).length > 0) {
-        setNewTaskProjectId(projectsRes.data.projects[0]._id);
-      }
     } catch (e: any) {
       setBackfillErr(e?.response?.data?.error || "Failed to load tasks");
     } finally {
@@ -600,9 +745,54 @@ export default function EmployeeDash() {
     }
   }
 
+  async function loadBackfillAttendance(dateKey: string) {
+    try {
+      const res = await api.get("/attendance/history");
+      const records: {
+        date?: string;
+        firstPunchIn?: string;
+        lastPunchIn?: string;
+        lastPunchOut?: string;
+        workedMs?: number;
+      }[] = res.data?.attendance || [];
+      const match = records.find(
+        (r) => r.date && dateKeyLocal(r.date) === dateKey,
+      );
+      if (match) {
+        setBackfillAttendance((prev) => ({ ...prev, ...match }));
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function openPunchOutModal() {
     if (pending) return;
     setPunchOutErr(null);
+    setPunchModalMode("punch");
+    setLogEntryMode("task");
+    setLogProjectId("");
+    setLogMainTaskId("");
+    setLogSubTaskId("");
+    setLogNote("");
+    setLogHours("");
+    setLogMinutesInput("");
+    setMeetingMinutesInput("");
+    setShowPunchOut(true);
+    await loadTodayTaskData();
+  }
+
+  async function openLogTasksModal() {
+    setPunchOutErr(null);
+    setPunchModalMode("log");
+    setLogEntryMode("task");
+    setLogProjectId("");
+    setLogMainTaskId("");
+    setLogSubTaskId("");
+    setLogNote("");
+    setLogHours("");
+    setLogMinutesInput("");
+    setMeetingMinutesInput("");
     setShowPunchOut(true);
     await loadTodayTaskData();
   }
@@ -612,76 +802,30 @@ export default function EmployeeDash() {
     setBackfillErr(null);
     setBackfillDate(dateKey);
     setShowBackfill(true);
+    setBackfillEntryMode("task");
     setBackfillOutTime("");
     setBackfillAttendance(null);
-    await loadBackfillData(dateKey);
+    setBackfillMeetingMinutes("");
+    setBackfillMeetingProjectId("");
+    await Promise.all([loadBackfillData(dateKey), loadBackfillAttendance(dateKey)]);
   }
 
-  async function addNewTask() {
-    const targetProjectId = usePersonal ? personalProjectId : newTaskProjectId;
-    if (!newTaskTitle.trim() || !targetProjectId || !me?.id) return;
-    try {
-      setAddingTask(true);
-      const res = await api.post(`/projects/${targetProjectId}/tasks`, {
-        title: newTaskTitle.trim(),
-        description: "",
-        assignedTo: me.id,
-      });
-      const t: Task = res.data.task;
-      // If user selected DONE, immediately set status to DONE (assignee-only action)
-      if (newTaskStatus === "DONE") {
-        try {
-          await api.put(`/projects/${targetProjectId}/tasks/${t._id}`, {
-            status: "DONE",
-          });
-          t.status = "DONE";
-        } catch (e) {
-          // Ignore status update failure; keep default PENDING
-        }
-      }
-      const a: Assigned = {
-        ...t,
-        projectId: targetProjectId,
-        projectTitle: usePersonal
-          ? "Personal"
-          : projects.find((p) => p._id === targetProjectId)?.title || "",
-        checked: true,
-        // Prefer remaining for active modal (backfill vs today)
-        hours:
-          showBackfill && backfillAttendance
-            ? (() => {
-                const worked = Math.max(
-                  0,
-                  Math.floor((backfillAttendance.workedMs || 0) / 60000)
-                );
-                const cap = Math.max(0, worked - 60);
-                const already = workedTasksForDay.reduce(
-                  (acc, t) => acc + (t.minutes || 0),
-                  0
-                );
-                const remain = Math.max(0, cap - already);
-                return remain > 0 ? (remain / 60).toFixed(2) : "1";
-              })()
-            : remainingMinutes > 0
-            ? (remainingMinutes / 60).toFixed(2)
-            : "1",
-      };
-      setAssigned((prev) => {
-        if (prev.some((x) => x._id === a._id)) {
-          return prev.map((x) => (x._id === a._id ? { ...x, ...a } : x));
-        }
-        return [a, ...prev];
-      });
-      if (t.status === "DONE") {
-        setAssignedStatusView("DONE");
-      }
-      setNewTaskTitle("");
-      setNewTaskStatus("PENDING");
-    } catch (e: any) {
-      setPunchOutErr(e?.response?.data?.error || "Failed to add task");
-    } finally {
-      setAddingTask(false);
-    }
+  function populateLogFormFromLog(log: {
+    projectId?: string;
+    taskId: string;
+    minutes: number;
+    note?: string;
+  }) {
+    setPunchModalMode("log");
+    setLogProjectId(log.projectId || "");
+    setLogMainTaskId(log.taskId || "");
+    setLogSubTaskId("");
+    setLogNote(log.note || "");
+    const hours = Math.floor((log.minutes || 0) / 60);
+    const mins = (log.minutes || 0) % 60;
+    setLogHours(hours ? String(hours) : "");
+    setLogMinutesInput(mins ? String(mins) : "");
+    setMeetingMinutesInput("");
   }
 
   function startLogEdit(context: "today" | "backfill", logId: string) {
@@ -698,6 +842,8 @@ export default function EmployeeDash() {
         editingMinutes: String(current.minutes || 0),
         editingNote: current.note || "",
       });
+      populateLogFormFromLog(current);
+      setEditingLog({ context, logId });
     }
   }
 
@@ -711,13 +857,28 @@ export default function EmployeeDash() {
       error: null,
       saving: false,
     });
+    setEditingLog((prev) =>
+      prev && prev.logId === logId && prev.context === context ? null : prev,
+    );
+    if (
+      editingLog &&
+      editingLog.logId === logId &&
+      editingLog.context === context
+    ) {
+      setLogProjectId("");
+      setLogMainTaskId("");
+      setLogSubTaskId("");
+      setLogNote("");
+      setLogHours("");
+      setLogMinutesInput("");
+    }
   }
 
   function onLogFieldChange(
     context: "today" | "backfill",
     logId: string,
     field: "minutes" | "note",
-    value: string
+    value: string,
   ) {
     updateLogState(context, logId, {
       [field === "minutes" ? "editingMinutes" : "editingNote"]: value,
@@ -742,7 +903,7 @@ export default function EmployeeDash() {
         {
           minutes,
           note: log.editingNote?.trim() ? log.editingNote : undefined,
-        }
+        },
       );
       toast.success("Time log updated");
       if (context === "today") {
@@ -766,7 +927,7 @@ export default function EmployeeDash() {
     updateLogState(context, logId, { saving: true, error: null });
     try {
       await api.delete(
-        `/projects/${log.projectId}/tasks/${log.taskId}/time-log/${log.logId}`
+        `/projects/${log.projectId}/tasks/${log.taskId}/time-log/${log.logId}`,
       );
       toast.success("Time log removed");
       if (context === "today") {
@@ -782,120 +943,93 @@ export default function EmployeeDash() {
       });
     }
   }
+  function confirmDeleteLog(context: "today" | "backfill", logId: string) {
+    setConfirmDelete({ context, logId, open: true });
+  }
+  async function handleConfirmDelete() {
+    if (!confirmDelete.logId) {
+      setConfirmDelete((p) => ({ ...p, open: false }));
+      return;
+    }
+    await deleteLog(confirmDelete.context, confirmDelete.logId);
+    setConfirmDelete((p) => ({ ...p, open: false, logId: null }));
+  }
 
   function renderLogList(context: "today" | "backfill") {
     const logs = context === "today" ? todayLogs : backfillLogs;
     if (!logs.length) return null;
     return (
-      <div className="rounded border border-border p-3 bg-white">
+      <div className="rounded border border-border p-3 bg-white my-2">
         <div className="mb-2 text-sm font-medium">Existing logs</div>
         <ul className="space-y-2 max-h-64 overflow-auto pr-1">
           {logs.map((log) => (
             <li
               key={log.logId}
-              className="border border-border rounded px-3 py-2 text-sm"
+              className="border border-border rounded px-3 py-2 text-sm flex justify-between items-center"
             >
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="font-medium">{log.taskTitle}</div>
-                  <div className="text-xs text-muted">
+                  <div className="text-xs text-muted-foreground">
                     {log.projectTitle || ""}
+                    {log.createdAt && (
+                      <span className="text-xs text-muted-foreground ml-4">
+                        {new Date(log.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    )}
                   </div>
                 </div>
-                {log.createdAt && (
-                  <span className="text-xs text-muted">
-                    {new Date(log.createdAt).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
+              </div>
+              <div className="mt-2 text-sm">
+                <span className="font-medium">
+                  {formatMinutesLabel(log.minutes)}
+                </span>
+                {log.note && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {log.note}
+                  </div>
+                )}
+                {log.isEditing && (
+                  <div className="mt-1 text-[11px] text-secondary font-medium">
+                    Editing via form above
+                  </div>
                 )}
               </div>
-              {log.isEditing ? (
-                <div className="mt-2 space-y-2">
-                  <label className="flex items-center gap-2 text-xs">
-                    <span className="text-muted">Minutes</span>
-                    <input
-                      type="number"
-                      min={1}
-                      className="h-8 w-24 rounded-md border border-border bg-surface px-2"
-                      value={log.editingMinutes || ""}
-                      onChange={(e) =>
-                        onLogFieldChange(
-                          context,
-                          log.logId,
-                          "minutes",
-                          e.target.value
-                        )
-                      }
-                      disabled={log.saving}
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs">
-                    <span className="text-muted">Note (optional)</span>
-                    <textarea
-                      className="min-h-[60px] rounded-md border border-border bg-surface px-2 py-1"
-                      value={log.editingNote || ""}
-                      onChange={(e) =>
-                        onLogFieldChange(
-                          context,
-                          log.logId,
-                          "note",
-                          e.target.value
-                        )
-                      }
-                      disabled={log.saving}
-                    />
-                  </label>
-                </div>
-              ) : (
-                <div className="mt-2 text-sm">
-                  <span className="font-medium">
-                    {formatMinutesLabel(log.minutes)}
-                  </span>
-                  {log.note && (
-                    <div className="mt-1 text-xs text-muted">{log.note}</div>
-                  )}
-                </div>
-              )}
               {log.error && (
                 <div className="mt-2 text-xs text-error">{log.error}</div>
               )}
               <div className="mt-3 flex items-center gap-2 text-xs">
-                {log.isEditing ? (
-                  <>
-                    <button
-                      className="rounded-md bg-secondary px-3 py-1 text-white disabled:opacity-60"
-                      onClick={() => saveLog(context, log.logId)}
-                      disabled={log.saving}
-                    >
-                      {log.saving ? "Saving…" : "Save"}
-                    </button>
-                    <button
-                      className="rounded-md border border-border px-3 py-1"
-                      onClick={() => cancelLogEdit(context, log.logId)}
-                      disabled={log.saving}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      className="rounded-md border border-border px-3 py-1"
-                      onClick={() => startLogEdit(context, log.logId)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="rounded-md border border-error/40 bg-error/10 px-3 py-1 text-error disabled:opacity-60"
-                      onClick={() => deleteLog(context, log.logId)}
-                      disabled={log.saving}
-                    >
-                      Delete
-                    </button>
-                  </>
+                <button
+                  className="rounded-md border border-border px-3 py-1 disabled:opacity-60"
+                  onClick={() => startLogEdit(context, log.logId)}
+                  disabled={log.saving || context === "backfill"}
+                  title={
+                    context === "backfill"
+                      ? "Editing via form is disabled in backfill"
+                      : "Edit in the form above"
+                  }
+                >
+                  <Edit size={12} />
+                </button>
+                {log.isEditing && (
+                  <button
+                    className="rounded-md border border-border px-3 py-1"
+                    onClick={() => cancelLogEdit(context, log.logId)}
+                    disabled={log.saving}
+                  >
+                    Clear
+                  </button>
                 )}
+                <button
+                  className="rounded-md border border-error/40 bg-error/10 px-3 py-1 text-error disabled:opacity-60"
+                  onClick={() => confirmDeleteLog(context, log.logId)}
+                  disabled={log.saving}
+                >
+                  <Trash size={12} color="red" />
+                </button>
               </div>
             </li>
           ))}
@@ -958,43 +1092,275 @@ export default function EmployeeDash() {
     }
   }
 
+  function buildSelectedEntry() {
+    if (!selectedMinutes) return null;
+    if (!logEligibleTasks.length) {
+      setPunchOutErr("No assigned tasks available to log time.");
+      return null;
+    }
+    if (!logProjectId) {
+      setPunchOutErr("Select a project to log time.");
+      return null;
+    }
+    if (!logMainTaskId) {
+      setPunchOutErr("Select a main task to log time.");
+      return null;
+    }
+    if (selectedMainHasSubtasks && !logSubTaskId) {
+      setPunchOutErr("Select a subtask for this main task.");
+      return null;
+    }
+    const targetTaskId = logSubTaskId || logMainTaskId;
+    const task =
+      logEligibleTasks.find((t) => String(t._id) === String(targetTaskId)) ||
+      null;
+    if (!task) {
+      setPunchOutErr("Selected task is unavailable.");
+      return null;
+    }
+    const minutes = selectedMinutes;
+    const totalMinutes = minutes + meetingMinutes;
+    if (minutes <= 0) {
+      setPunchOutErr("Enter a positive time value.");
+      return null;
+    }
+    if (totalMinutes > remainingMinutes) {
+      setPunchOutErr(
+        `You're ${totalMinutes - remainingMinutes} minutes over the limit.`,
+      );
+      return null;
+    }
+    return {
+      task,
+      minutes,
+      note: logNote.trim(),
+    };
+  }
+
+  async function logMeetingForProject(
+    projectId: string,
+    minutes: number,
+    date?: string,
+    setError?: (msg: string) => void,
+  ) {
+    if (!minutes || minutes <= 0) return true;
+    const meetingTask = meetingTaskByProject.get(projectId);
+    if (!meetingTask) {
+      const setter = setError || setPunchOutErr;
+      setter("Meeting task is unavailable for the selected project.");
+      return false;
+    }
+    const payload: { minutes: number; note: string; date?: string } = {
+      minutes,
+      note: "Meetings",
+    };
+    let url = `/projects/${projectId}/tasks/${meetingTask._id}/time`;
+    if (date) {
+      url = `/projects/${projectId}/tasks/${meetingTask._id}/time-at`;
+      payload.date = date;
+    }
+    await api.post(url, payload);
+    return true;
+  }
+
+  async function saveExistingLogFromForm() {
+    if (!editingLog) return false;
+    const logs = editingLog.context === "today" ? todayLogs : backfillLogs;
+    const log = logs.find((l) => l.logId === editingLog.logId);
+    if (!log) return false;
+    const minutes = selectedMinutes;
+    if (!minutes || minutes <= 0) {
+      setPunchOutErr("Enter time to update the log.");
+      return false;
+    }
+    const payloadNote = logNote.trim();
+    updateLogState(editingLog.context, log.logId, {
+      saving: true,
+      error: null,
+    });
+    try {
+      await api.put(
+        `/projects/${log.projectId}/tasks/${log.taskId}/time-log/${log.logId}`,
+        {
+          minutes,
+          note: payloadNote || undefined,
+        },
+      );
+      toast.success("Time log updated");
+      if (editingLog.context === "today") {
+        await loadTodayTaskData();
+      } else if (backfillDate) {
+        await loadBackfillData(backfillDate);
+      }
+      await loadMissingOut();
+      setEditingLog(null);
+      setLogProjectId("");
+      setLogMainTaskId("");
+      setLogSubTaskId("");
+      setLogNote("");
+      setLogHours("");
+      setLogMinutesInput("");
+      return true;
+    } catch (e: any) {
+      updateLogState(editingLog.context, log.logId, {
+        saving: false,
+        error: e?.response?.data?.error || "Failed to update time log",
+      });
+      return false;
+    }
+  }
+
+  async function logTasksOnly() {
+    if (logOnlySubmitting || submittingPunchOut) return;
+    setPunchOutErr(null);
+    if (logEntryMode === "task") {
+      if (!hasLogTarget || !hasTaskMinutes) {
+        setPunchOutErr("Add time to a task to save logs.");
+        return;
+      }
+    } else {
+      if (!hasMeetingProject) {
+        setPunchOutErr("Select a project and minutes for the meeting.");
+        return;
+      }
+    }
+    if (!editingLog && activeMinutes > remainingMinutes) {
+      setPunchOutErr(
+        `You're ${activeMinutes - remainingMinutes} minutes over the limit.`,
+      );
+      return;
+    }
+    try {
+      setLogOnlySubmitting(true);
+      if (logEntryMode === "task") {
+        if (editingLog) {
+          const ok = await saveExistingLogFromForm();
+          if (!ok) return;
+        } else {
+          const entry = selectedMinutes > 0 ? buildSelectedEntry() : null;
+          if (selectedMinutes > 0 && !entry) return;
+          if (entry) {
+            await api.post(
+              `/projects/${entry.task.projectId}/tasks/${entry.task._id}/time`,
+              {
+                minutes: entry.minutes,
+                note: entry.note || undefined,
+              },
+            );
+          }
+        }
+      } else {
+        const meetingProjectId = logProjectId || "";
+        const ok = await logMeetingForProject(
+          meetingProjectId,
+          meetingMinutes,
+          undefined,
+        );
+        if (!ok) return;
+      }
+      setLogNote("");
+      setLogHours("");
+      setLogMinutesInput("");
+      setMeetingMinutesInput("");
+      await loadTodayTaskData();
+      toast.success("Task time logged");
+    } catch (e: any) {
+      setPunchOutErr(
+        e?.response?.data?.error || "Failed to log tasks. Please try again.",
+      );
+    } finally {
+      setLogOnlySubmitting(false);
+    }
+  }
+
   async function submitPunchOutWithTasks() {
     if (submittingPunchOut) return;
     setPunchOutErr(null);
-    try {
-      setSubmittingPunchOut(true);
-      // Pre-validate total requested minutes against remaining cap
-      const selected = assigned.filter((t) => t.checked);
-      const requested = selected.reduce(
-        (acc, t) => acc + computeMinutes({ hours: t.hours, minutes: t.minutes }),
-        0
-      );
-      if (requested > remainingMinutes) {
-        const over = requested - remainingMinutes;
-        setPunchOutErr(
-          `Selected time exceeds allowed by ${over} minutes. Reduce to at most ${remainingMinutes} minutes.`
-        );
-        setSubmittingPunchOut(false);
+    if (logEntryMode === "task") {
+      // Only force a new task entry when nothing is logged for today yet.
+      if (!editingLog && !hasExistingLogsToday && (!hasLogTarget || !hasTaskMinutes)) {
+        setPunchOutErr("Add time to a task before punching out, or skip.");
         return;
       }
-      // For each selected task, log time if any minutes > 0
-      for (const t of selected) {
-        const minutes = computeMinutes({ hours: t.hours, minutes: t.minutes });
-        if (!minutes || minutes <= 0) continue; // skip empty entries
-        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time`, {
-          minutes,
-        });
+    } else {
+      if (!hasMeetingProject) {
+        setPunchOutErr("Select a project and minutes for the meeting.");
+        return;
+      }
+    }
+    if (!editingLog && activeMinutes > remainingMinutes) {
+      setPunchOutErr(
+        `You're ${activeMinutes - remainingMinutes} minutes over the limit.`,
+      );
+      return;
+    }
+    try {
+      setSubmittingPunchOut(true);
+      let entry: ReturnType<typeof buildSelectedEntry> | null = null;
+
+      // If editing an existing log, update it first
+      if (editingLog && logEntryMode === "task") {
+        const ok = await saveExistingLogFromForm();
+        if (!ok) {
+          setSubmittingPunchOut(false);
+          return;
+        }
+      }
+
+      // If user entered time, create a new log; otherwise allow punch-out if logs already exist
+      if (logEntryMode === "task") {
+        if (selectedMinutes > 0) {
+          entry = buildSelectedEntry();
+          if (!entry) {
+            setSubmittingPunchOut(false);
+            return;
+          }
+          await api.post(
+            `/projects/${entry.task.projectId}/tasks/${entry.task._id}/time`,
+            {
+              minutes: entry.minutes,
+              note: entry.note || undefined,
+            },
+          );
+        } else if (!hasExistingLogsToday) {
+          // No prior logs: still require a valid entry to ensure at least one task is logged
+          entry = buildSelectedEntry();
+          if (!entry) {
+            setSubmittingPunchOut(false);
+            return;
+          }
+          await api.post(
+            `/projects/${entry.task.projectId}/tasks/${entry.task._id}/time`,
+            {
+              minutes: entry.minutes,
+              note: entry.note || undefined,
+            },
+          );
+        }
+      } else {
+        const meetingProjectId = logProjectId || "";
+        const okMeeting = await logMeetingForProject(
+          meetingProjectId,
+          meetingMinutes,
+          undefined,
+        );
+        if (!okMeeting) {
+          setSubmittingPunchOut(false);
+          return;
+        }
       }
       // Finally punch out
-      const ok = await punch("out");
+      const ok = await punch("out", { triggerDailyStatusEmail: true });
       if (ok) {
         setShowPunchOut(false);
+        setPunchModalMode("punch");
+        setMeetingMinutesInput("");
       } else {
         setPunchOutErr("Failed to punch out. Please try again.");
       }
     } catch (e: any) {
       setPunchOutErr(
-        e?.response?.data?.error || "Failed to punch out with tasks"
+        e?.response?.data?.error || "Failed to punch out with tasks",
       );
     } finally {
       setSubmittingPunchOut(false);
@@ -1006,9 +1372,10 @@ export default function EmployeeDash() {
     setPunchOutErr(null);
     try {
       setSubmittingPunchOut(true);
-      const ok = await punch("out");
+      const ok = await punch("out", { triggerDailyStatusEmail: true });
       if (ok) {
         setShowPunchOut(false);
+        setPunchModalMode("punch");
       } else {
         setPunchOutErr("Failed to punch out. Please try again.");
       }
@@ -1030,44 +1397,93 @@ export default function EmployeeDash() {
       // Compute remaining cap = worked - 60 - alreadyLogged
       const worked = Math.max(
         0,
-        Math.floor((backfillAttendance.workedMs || 0) / 60000)
+        Math.floor((backfillAttendance.workedMs || 0) / 60000),
       );
       const cap = Math.max(0, worked - 60);
       const already = workedTasksForDay.reduce(
         (acc, t) => acc + (t.minutes || 0),
-        0
+        0,
       );
       const remainingForDay = Math.max(0, cap - already);
 
+      const isMeetingMode = backfillEntryMode === "meeting";
+
       // Pre-validate selected minutes against remaining cap
-      const selected = assigned.filter((t) => t.checked);
-      const requested = selected.reduce(
-        (acc, t) => acc + computeMinutes({ hours: t.hours, minutes: t.minutes }),
-        0
-      );
+      const entries = isMeetingMode
+        ? []
+        : assigned
+            .map((t) => ({
+              task: t,
+              minutes: computeMinutes({ hours: t.hours, minutes: t.minutes }),
+              note: (t.note || "").trim(),
+            }))
+            .filter((t) => t.minutes > 0);
+
+      const meetingTarget =
+        isMeetingMode &&
+        backfillMeetingMinutesValue > 0 &&
+        backfillMeetingProjectId
+          ? meetingTaskByProject.get(backfillMeetingProjectId)
+          : null;
+
+      if (isMeetingMode) {
+        if (backfillMeetingMinutesValue <= 0) {
+          setBackfillErr("Enter meeting minutes to log.");
+          return;
+        }
+        if (!meetingTarget) {
+          setBackfillErr("Select a project to log meeting time.");
+          return;
+        }
+      } else {
+        if (entries.some((e) => !e.note)) {
+          setBackfillErr("Add a short description for each logged task.");
+          return;
+        }
+      }
+
+      const requested = isMeetingMode
+        ? backfillMeetingMinutesValue
+        : entries.reduce((acc, t) => acc + t.minutes, 0);
+
       if (requested > remainingForDay) {
-        const over = requested - remainingForDay;
         setBackfillErr(
-          `Selected time exceeds allowed by ${over} minutes. Reduce to at most ${remainingForDay} minutes.`
+          `You're ${requested - remainingForDay} minutes over the limit.`,
         );
         return;
       }
 
       setBackfillSubmitting(true);
-      for (const t of selected) {
-        const minutes = computeMinutes({ hours: t.hours, minutes: t.minutes });
-        if (!minutes || minutes <= 0) continue;
-        await api.post(`/projects/${t.projectId}/tasks/${t._id}/time-at`, {
-          minutes,
-          date: backfillDate,
-        });
+      if (!isMeetingMode) {
+        for (const entry of entries) {
+          await api.post(
+            `/projects/${entry.task.projectId}/tasks/${entry.task._id}/time-at`,
+            {
+              minutes: entry.minutes,
+              date: backfillDate,
+              note: entry.note,
+            },
+          );
+        }
+      }
+      if (isMeetingMode && meetingTarget) {
+        const ok = await logMeetingForProject(
+          backfillMeetingProjectId,
+          backfillMeetingMinutesValue,
+          backfillDate,
+          setBackfillErr,
+        );
+        if (!ok) {
+          setBackfillSubmitting(false);
+          return;
+        }
       }
       setShowBackfill(false);
       // Refresh worked summary for that bucket and missing list
       await loadMissingOut();
     } catch (e: any) {
       setBackfillErr(
-        e?.response?.data?.error || "Failed to log tasks for the day"
+        e?.response?.data?.error || "Failed to log tasks for the day",
       );
     } finally {
       setBackfillSubmitting(false);
@@ -1120,6 +1536,57 @@ export default function EmployeeDash() {
     load();
   }, []);
 
+  // When opening the punch/log modal, default to the first available project/task
+  useEffect(() => {
+    if (!showPunchOut) return;
+    if (!logEligibleTasks.length || !logProjectOptions.length) {
+      if (logProjectId || logMainTaskId || logSubTaskId) {
+        setLogProjectId("");
+        setLogMainTaskId("");
+        setLogSubTaskId("");
+      }
+      return;
+    }
+    if (
+      !logProjectId ||
+      !logProjectOptions.some((p) => p.value === logProjectId)
+    ) {
+      const nextProject = logProjectOptions[0]?.value || "";
+      setLogProjectId(nextProject);
+      setLogMainTaskId("");
+      setLogSubTaskId("");
+      return;
+    }
+    if (
+      !logMainTaskId ||
+      !mainTaskOptions.some((m) => m.value === logMainTaskId)
+    ) {
+      const nextMain = mainTaskOptions[0]?.value || "";
+      setLogMainTaskId(nextMain);
+      setLogSubTaskId("");
+      return;
+    }
+    if (!subTaskOptions.length) {
+      if (logSubTaskId) setLogSubTaskId("");
+      return;
+    }
+    if (
+      !logSubTaskId ||
+      !subTaskOptions.some((s) => s.value === logSubTaskId)
+    ) {
+      setLogSubTaskId(subTaskOptions[0]?.value || "");
+    }
+  }, [
+    logEligibleTasks,
+    logMainTaskId,
+    logProjectId,
+    logProjectOptions,
+    logSubTaskId,
+    mainTaskOptions,
+    showPunchOut,
+    subTaskOptions,
+  ]);
+
   // While punched-in, periodically refresh attendance so UI stops the timer
   // when backend auto punch-out (or manual punch-out elsewhere) occurs.
   useEffect(() => {
@@ -1129,7 +1596,7 @@ export default function EmployeeDash() {
       refreshRef.current = null;
     }
     const isPunchedIn = Boolean(
-      attendance?.lastPunchIn && !attendance?.lastPunchOut
+      attendance?.lastPunchIn && !attendance?.lastPunchOut,
     );
     if (isPunchedIn) {
       refreshRef.current = window.setInterval(() => {
@@ -1171,7 +1638,7 @@ export default function EmployeeDash() {
         setProjLoading(true);
         const res = await api.get("/projects");
         const list: MyProject[] = (res.data.projects || []).filter(
-          (p: MyProject) => !p.isPersonal
+          (p: MyProject) => !p.isPersonal,
         );
         setMyProjects(list);
       } catch (e: any) {
@@ -1212,15 +1679,14 @@ export default function EmployeeDash() {
     })();
   }, []);
 
-  const punchedIn = Boolean(
-    attendance?.lastPunchIn && !attendance?.lastPunchOut
-  );
+  const punchInLabel = "Punch In";
+  const punchInLoadingLabel = "Punching In…";
 
   return (
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Employee Area</h2>
-        <p className="text-sm text-muted">
+        <p className="text-sm text-muted-foreground">
           Track today’s time and quick actions.
         </p>
       </div>
@@ -1234,7 +1700,9 @@ export default function EmployeeDash() {
       <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
         <div className="flex items-center justify-between">
           <div className="space-y-1">
-            <div className="text-sm text-muted">Time worked today</div>
+            <div className="text-sm text-muted-foreground">
+              Time worked today
+            </div>
             <div className="text-4xl font-semibold tabular-nums">
               {format(elapsed)}
             </div>
@@ -1261,7 +1729,7 @@ export default function EmployeeDash() {
                 attendance?.firstPunchInLocation;
               if (!location) return null;
               return (
-                <div className="mt-2 text-xs text-muted">
+                <div className="mt-2 text-xs text-muted-foreground">
                   Last punched in from {location}
                 </div>
               );
@@ -1269,21 +1737,23 @@ export default function EmployeeDash() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={load}
-              disabled={loading || !!pending}
-              className="rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
-            >
-              {loading ? "Loading…" : "Refresh"}
-            </button>
             {punchedIn ? (
-              <button
-                className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
-                onClick={openPunchOutModal}
-                disabled={pending === "out"}
-              >
-                {pending === "out" ? "Punching Out…" : "Punch Out"}
-              </button>
+              <>
+                <button
+                  className="rounded-md border border-border px-4 py-2 text-sm disabled:opacity-60"
+                  onClick={openLogTasksModal}
+                  disabled={pending === "out" || submittingPunchOut}
+                >
+                  Log Tasks
+                </button>
+                <button
+                  className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
+                  onClick={openPunchOutModal}
+                  disabled={pending === "out"}
+                >
+                  {pending === "out" ? "Punching Out…" : "Punch Out"}
+                </button>
+              </>
             ) : (
               <>
                 {hasBlockingIssues && (
@@ -1305,7 +1775,7 @@ export default function EmployeeDash() {
                       : undefined
                   }
                 >
-                  {pending === "in" ? "Punching In…" : "Punch In"}
+                  {pending === "in" ? punchInLoadingLabel : punchInLabel}
                 </button>
               </>
             )}
@@ -1313,80 +1783,68 @@ export default function EmployeeDash() {
         </div>
       </section>
 
-      {/* My Projects */}
-      <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold">My Projects</h3>
-            <p className="text-sm text-muted">Projects you're assigned to</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              className="rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
-              onClick={async () => {
-                try {
-                  setProjLoading(true);
-                  const res = await api.get("/projects");
-                  const list: MyProject[] = (res.data.projects || []).filter(
-                    (p: MyProject) => !p.isPersonal
-                  );
-                  setMyProjects(list);
-                } finally {
-                  setProjLoading(false);
-                }
-              }}
-              disabled={projLoading}
-            >
-              {projLoading ? "Refreshing…" : "Refresh"}
-            </button>
-            <Link
-              to="/app/projects"
-              className="rounded-md border border-border px-3 py-2 text-sm"
-            >
-              View all
-            </Link>
-          </div>
-        </div>
-
-        {projErr && (
-          <div className="mt-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
-            {projErr}
-          </div>
-        )}
-
-        <div className="mt-4">
-          {projLoading ? (
-            <div className="text-sm text-muted">Loading projects…</div>
-          ) : myProjects.length === 0 ? (
-            <div className="text-sm text-muted">No project assignments.</div>
-          ) : (
-            <ul className="divide-y divide-border/60">
-              {myProjects.slice(0, 6).map((p) => (
-                <li key={p._id} className="py-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-medium leading-5">{p.title}</div>
-                      {p.description && (
-                        <div className="text-xs text-muted mt-0.5 line-clamp-2">
-                          {p.description}
-                        </div>
-                      )}
-                    </div>
-                    <Link
-                      to={`/app/projects/${p._id}`}
-                      className="text-xs underline whitespace-nowrap self-center"
-                    >
-                      Open
-                    </Link>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
       <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+        {/* My Projects */}
+        <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold">My Projects</h3>
+              <p className="text-sm text-muted-foreground">
+                Projects you're assigned to
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                to="/app/projects"
+                className="rounded-md border border-border px-3 py-2 text-sm"
+              >
+                View all
+              </Link>
+            </div>
+          </div>
+
+          {projErr && (
+            <div className="mt-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
+              {projErr}
+            </div>
+          )}
+
+          <div className="mt-4">
+            {projLoading ? (
+              <div className="text-sm text-muted-foreground">
+                Loading projects…
+              </div>
+            ) : myProjects.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                No project assignments.
+              </div>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {myProjects.slice(0, 6).map((p) => (
+                  <li key={p._id} className="py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium leading-5">{p.title}</div>
+                        {p.description && (
+                          <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                            {p.description}
+                          </div>
+                        )}
+                      </div>
+                      <Link
+                        to={`/app/projects/${p._id}`}
+                        className="text-xs underline whitespace-nowrap self-center"
+                      >
+                        Open
+                      </Link>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+
         <div className="p-4 rounded-lg border border-border bg-surface shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <div className="font-semibold">My Tasks</div>
@@ -1400,9 +1858,11 @@ export default function EmployeeDash() {
             </div>
           )}
           {tasksLoading ? (
-            <div className="text-sm text-muted">Loading…</div>
+            <div className="text-sm text-muted-foreground">Loading…</div>
           ) : tasks.length === 0 ? (
-            <div className="text-sm text-muted">No tasks assigned.</div>
+            <div className="text-sm text-muted-foreground">
+              No tasks assigned.
+            </div>
           ) : (
             <ul className="space-y-2">
               {tasks.map((t) => (
@@ -1410,19 +1870,19 @@ export default function EmployeeDash() {
                   key={t._id}
                   className="border border-border rounded px-3 py-2"
                 >
-                  <div className="text-xs text-muted">
+                  <div className="text-xs text-muted-foreground">
                     {typeof t.project === "string"
                       ? t.project
                       : t.project?.title}
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-sm font-medium">{t.title}</div>
-                    <span className="text-xs text-muted">
+                    <span className="text-xs text-muted-foreground">
                       {t.status === "PENDING"
                         ? "Pending"
                         : t.status === "INPROGRESS"
-                        ? "In Progress"
-                        : "Done"}
+                          ? "In Progress"
+                          : "Done"}
                     </span>
                   </div>
                 </li>
@@ -1430,305 +1890,346 @@ export default function EmployeeDash() {
             </ul>
           )}
         </div>
-        <RoleGuard sub={["hr"]}>
-          <HRPanel />
-        </RoleGuard>
-        <RoleGuard sub={["manager"]}>
-          <div className="p-4 rounded-lg border border-border bg-surface shadow-sm">
-            Manager Panel
-          </div>
+        <RoleGuard permission={{ module: "presence", action: "read" }}>
+          <TeamPresenceCard />
         </RoleGuard>
       </div>
 
+      <ConfirmDialog
+        open={confirmDelete.open}
+        destructive
+        title="Delete time log?"
+        message="This will remove the log permanently."
+        confirmLabel="Delete"
+        onConfirm={handleConfirmDelete}
+        onCancel={() =>
+          setConfirmDelete((p) => ({
+            ...p,
+            open: false,
+          }))
+        }
+      />
+
+      {locationPrompt.open && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center !mt-0">
+          <div
+            className="absolute inset-0 bg-black/40 -mt-[32px]"
+            onClick={() =>
+              setLocationPrompt((prev) => ({ ...prev, open: false }))
+            }
+          />
+          <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg space-y-4">
+            <div className="space-y-1">
+              <h4 className="text-lg font-semibold">Enable location</h4>
+              <p className="text-sm text-muted-foreground">
+                {renderLocationHint(locationPrompt.permission)}
+              </p>
+            </div>
+            <div className="flex justify-end">
+              <button
+                className="rounded-md border border-border px-3 py-2 text-sm"
+                onClick={() =>
+                  setLocationPrompt((prev) => ({ ...prev, open: false }))
+                }
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Punch-out modal */}
       {showPunchOut && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center !mt-0">
           <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setShowPunchOut(false)}
+            className="absolute inset-0 bg-black/40 -mt-[32px] min-h-screen"
+            onClick={() => {
+              setShowPunchOut(false);
+              setPunchModalMode("punch");
+            }}
           />
-          <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg">
+          <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-lg font-semibold">Log today’s tasks</h4>
-              <button
-                className="text-sm underline"
-                onClick={() => setShowPunchOut(false)}
+              <h4 className="text-lg font-semibold">
+                {punchModalMode === "log"
+                  ? "Log tasks"
+                  : "Log today’s tasks & punch out"}
+              </h4>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowPunchOut(false);
+                  setPunchModalMode("punch");
+                }}
               >
                 Close
-              </button>
+              </Button>
             </div>
             {punchOutErr && (
               <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                 {punchOutErr}
               </div>
             )}
-            <div className="text-xs text-muted mb-3">
-              {workedToday ? (
-                <>
-                  Total today: {formatMinutesLabel(Math.round(elapsed / 60000))}{" "}
-                  • Logged:{" "}
-                  {formatMinutesLabel(
-                    workedTasksToday.reduce((a, b) => a + b.minutes, 0)
-                  )}{" "}
-                  • Remaining: {formatMinutesLabel(remainingMinutes)}
-                </>
-              ) : (
-                <>Today: {new Date().toLocaleDateString()}</>
-              )}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="rounded-full bg-bg px-2 py-1 border border-border/60">
+                Today {formatMinutesLabel(Math.round(elapsed / 60000))}
+              </span>
+              <span className="rounded-full bg-bg px-2 py-1 border border-border/60">
+                Logged{" "}
+                {formatMinutesLabel(
+                  workedTasksToday.reduce((a, b) => a + b.minutes, 0),
+                )}
+              </span>
+              <span className="rounded-full bg-bg px-2 py-1 border border-border/60">
+                Left {formatMinutesLabel(remainingMinutes)}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto"
+                onClick={() => setShowTodayLogs((v) => !v)}
+              >
+                {showTodayLogs ? "Hide logs" : "View logs"}
+              </Button>
             </div>
 
-            {/* Add new task */}
-            <div className="mb-4 rounded border border-border p-3 bg-white">
-              <div className="mb-2 text-sm font-medium">Add a task</div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={usePersonal}
-                    onChange={async (e) => {
-                      const v = e.target.checked;
-                      setUsePersonal(v);
-                      if (v && !personalProjectId) {
-                        try {
-                          const resp = await api.get("/projects/personal");
-                          setPersonalProjectId(resp.data.project?._id || "");
-                        } catch {}
-                      }
-                    }}
-                  />
-                  <span>Personal task</span>
-                </label>
-                <select
-                  className="h-9 rounded-md border border-border bg-surface px-2 disabled:opacity-50"
-                  value={newTaskProjectId}
-                  onChange={(e) => setNewTaskProjectId(e.target.value)}
-                  disabled={usePersonal}
-                >
-                  {projects.map((p) => (
-                    <option key={p._id} value={p._id}>
-                      {p.title}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="h-9 flex-1 min-w-[160px] rounded-md border border-border bg-surface px-2"
-                  placeholder="Task title"
-                  value={newTaskTitle}
-                  onChange={(e) => setNewTaskTitle(e.target.value)}
-                />
-                <select
-                  className="h-9 rounded-md border border-border bg-surface px-2"
-                  value={newTaskStatus}
-                  onChange={(e) => setNewTaskStatus(e.target.value as any)}
-                  title="Set initial status"
-                >
-                  <option value="PENDING">Pending</option>
-                  <option value="DONE">Done</option>
-                </select>
+            <div className="flex items-center gap-2 mt-3">
+              {/* <div className="inline-flex rounded-md border border-border overflow-hidden">
                 <button
-                  className="h-9 rounded-md bg-secondary px-3 text-white disabled:opacity-60"
-                  onClick={addNewTask}
-                  disabled={
-                    addingTask ||
-                    !newTaskTitle.trim() ||
-                    (!usePersonal && !newTaskProjectId) ||
-                    (usePersonal && !personalProjectId)
-                  }
+                  className={`px-3 py-2 text-xs ${
+                    logEntryMode === "task"
+                      ? "bg-primary text-white"
+                      : "bg-surface text-foreground"
+                  }`}
+                  onClick={() => changeLogEntryMode("task")}
                 >
-                  {addingTask ? "Adding…" : "Add"}
+                  Task log
                 </button>
-              </div>
+                <button
+                  className={`px-3 py-2 text-xs border-l border-border ${
+                    logEntryMode === "meeting"
+                      ? "bg-primary text-white"
+                      : "bg-surface text-foreground"
+                  }`}
+                  onClick={() => changeLogEntryMode("meeting")}
+                >
+                  Meeting log
+                </button>
+              </div> */}
             </div>
 
-            {renderLogList("today")}
-
-            {/* Assigned tasks list */}
             {assignedErr && (
               <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                 {assignedErr}
               </div>
             )}
             {assignedLoading ? (
-              <div className="text-sm text-muted">Loading tasks…</div>
+              <div className="text-sm text-muted-foreground">
+                Loading tasks…
+              </div>
             ) : (
               <>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-medium">Assigned tasks</div>
-                  <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
-                    <button
-                      type="button"
-                      className={`px-3 py-1 font-medium transition-colors ${
-                        assignedStatusView === "ACTIVE"
-                          ? "bg-secondary text-white"
-                          : "bg-surface text-muted"
-                      }`}
-                      onClick={() => setAssignedStatusView("ACTIVE")}
-                      aria-pressed={assignedStatusView === "ACTIVE"}
-                    >
-                      Active
-                    </button>
-                    <button
-                      type="button"
-                      className={`px-3 py-1 font-medium border-l border-border transition-colors ${
-                        assignedStatusView === "DONE"
-                          ? "bg-secondary text-white"
-                          : "bg-surface text-muted"
-                      }`}
-                      onClick={() => setAssignedStatusView("DONE")}
-                      aria-pressed={assignedStatusView === "DONE"}
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-                <div className="max-h-80 overflow-auto pr-1">
-                  {assigned.length === 0 ? (
-                    <div className="text-sm text-muted">No assigned tasks.</div>
-                  ) : filteredAssigned.length === 0 ? (
-                    <div className="text-sm text-muted">
-                      {assignedStatusView === "DONE"
-                        ? "No tasks marked done."
-                        : "No active tasks."}
+                {logEntryMode === "task" ? (
+                  logEligibleTasks.length === 0 ? (
+                    <div className="rounded-md border border-border bg-white px-3 py-2 text-sm text-muted-foreground">
+                      No assigned tasks to log right now. You can punch out
+                      without logging or add time later.
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {Array.from(
-                        filteredAssigned.reduce(
-                          (map, t) => {
-                            const key = t.projectId || "misc";
-                            if (!map.has(key))
-                              map.set(key, {
-                                title: t.projectTitle || "(No project)",
-                                items: [] as Assigned[],
-                              });
-                            map.get(key)!.items.push(t);
-                            return map;
-                          },
-                          new Map<string, { title: string; items: Assigned[] }>()
-                        )
-                      ).map(([pid, group]) => (
-                        <div key={pid}>
-                          <div className="text-sm font-medium mb-1">
-                            {group.title}
-                          </div>
-                          <ul className="space-y-2">
-                            {group.items.map((t) => {
-                              const badge = statusBadge(t.status);
-                              const hoursVal = parseFloat(t.hours || "0");
-                              const canAdd =
-                                Number.isFinite(hoursVal) && hoursVal > 0;
-                              const isSelected = !!t.checked;
-                              const addDisabled = !isSelected && !canAdd;
-                              const addTitle = addDisabled
-                                ? "Enter hours before adding"
-                                : isSelected
-                                ? "Remove from submission"
-                                : "Add to submission";
-                              return (
-                                <li
-                                  key={t._id}
-                                  className="border border-border rounded px-3 py-2"
-                                >
-                                  <div className="flex flex-wrap items-center gap-3">
-                                    <div className="flex-1 min-w-[200px]">
-                                      <div className="text-sm font-medium">
-                                        {t.title}
-                                      </div>
-                                      {t.projectTitle && (
-                                        <div className="text-xs text-muted">
-                                          {t.projectTitle}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <input
-                                        type="number"
-                                        step="0.25"
-                                        min="0"
-                                        className="h-8 w-24 rounded-md border border-border bg-surface px-2 text-sm"
-                                        placeholder="Hours"
-                                        value={t.hours || ""}
-                                        onChange={(e) =>
-                                          setAssigned((prev) =>
-                                            prev.map((x) =>
-                                              x._id === t._id
-                                                ? {
-                                                    ...x,
-                                                    hours: e.target.value,
-                                                    minutes: "",
-                                                  }
-                                                : x
-                                            )
-                                          )
-                                        }
-                                      />
-                                    </div>
-                                    <span
-                                      className={`text-xs px-2 py-0.5 rounded border ${badge.className}`}
-                                    >
-                                      {badge.label}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      className={`h-8 px-3 rounded-md text-xs font-medium transition-colors ${
-                                        isSelected
-                                          ? "bg-green-600 text-white hover:bg-green-700"
-                                          : "bg-secondary text-white hover:opacity-90"
-                                      } disabled:opacity-50`}
-                                      onClick={() =>
-                                        setAssigned((prev) =>
-                                          prev.map((x) =>
-                                            x._id === t._id
-                                              ? {
-                                                  ...x,
-                                                  checked: !isSelected,
-                                                }
-                                              : x
-                                          )
-                                        )
-                                      }
-                                      disabled={addDisabled}
-                                      title={addTitle}
-                                    >
-                                      {isSelected ? "Added" : "Add"}
-                                    </button>
-                                  </div>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                      ))}
+                    <div className="space-y-2 rounded-md border border-border bg-white p-3">
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <select
+                          className="h-10 rounded-md border border-border bg-surface px-2 text-sm"
+                          value={logProjectId}
+                          onChange={(e) => {
+                            setLogProjectId(e.target.value);
+                            setLogMainTaskId("");
+                            setLogSubTaskId("");
+                          }}
+                          disabled={!logProjectOptions.length}
+                        >
+                          <option value="">Select project</option>
+                          {logProjectOptions.map((p) => (
+                            <option key={p.value} value={p.value}>
+                              {p.label || "Project"}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          className="h-10 rounded-md border border-border bg-surface px-2 text-sm"
+                          value={logMainTaskId}
+                          onChange={(e) => {
+                            setLogMainTaskId(e.target.value);
+                            setLogSubTaskId("");
+                          }}
+                          disabled={!logProjectId || !mainTaskOptions.length}
+                        >
+                          <option value="">Select main task</option>
+                          {mainTaskOptions.map((t) => (
+                            <option key={t.value} value={t.value}>
+                              {t.label || "Task"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <select
+                        className="h-10 w-full rounded-md border border-border bg-surface px-2 text-sm"
+                        value={logSubTaskId}
+                        onChange={(e) => setLogSubTaskId(e.target.value)}
+                        disabled={!logMainTaskId || !subTaskOptions.length}
+                      >
+                        <option value="">
+                          {subTaskOptions.length
+                            ? "Select subtask"
+                            : "No subtask available"}
+                        </option>
+                        {subTaskOptions.map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label || "Task"}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        className="h-10 w-full rounded-md border border-border bg-bg px-3 text-sm"
+                        placeholder="What did you work on? (optional)"
+                        value={logNote}
+                        onChange={(e) => setLogNote(e.target.value)}
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.25"
+                          min="0"
+                          className="h-10 w-24 rounded-md border border-border bg-surface px-2 text-sm"
+                          placeholder="Hours"
+                          value={logHours}
+                          onChange={(e) => setLogHours(e.target.value)}
+                        />
+                        <input
+                          type="number"
+                          step="5"
+                          min="0"
+                          className="h-10 w-24 rounded-md border border-border bg-surface px-2 text-sm"
+                          placeholder="Min"
+                          value={logMinutesInput}
+                          onChange={(e) => setLogMinutesInput(e.target.value)}
+                        />
+                        <span className="text-[11px] text-muted-foreground">
+                          {selectedMinutes
+                            ? `${selectedMinutes} min`
+                            : "Enter time"}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {selectedTaskForLog
+                          ? `Logging to ${selectedTaskForLog.title}`
+                          : "Pick a task to continue."}
+                      </div>
                     </div>
-                  )}
-                </div>
+                  )
+                ) : (
+                  <div className="rounded-md border border-border bg-white p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-medium">Meeting time</div>
+                      <span className="text-[11px] text-muted-foreground">
+                        Logs to the project’s Meetings task
+                      </span>
+                    </div>
+                    {meetingTaskByProject.size === 0 ? (
+                      <div className="text-xs text-muted-foreground">
+                        No meeting tasks available. Switch to task log or skip.
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
+                          value={logProjectId}
+                          onChange={(e) => {
+                            setLogProjectId(e.target.value);
+                            setLogMainTaskId("");
+                            setLogSubTaskId("");
+                          }}
+                          disabled={!logProjectOptions.length}
+                        >
+                          <option value="">Select project</option>
+                          {logProjectOptions.map((p) => (
+                            <option key={p.value} value={p.value}>
+                              {p.label || "Project"}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          step="5"
+                          min="0"
+                          className="h-9 w-28 rounded-md border border-border bg-surface px-2 text-sm"
+                          placeholder="Meeting min"
+                          value={meetingMinutesInput}
+                          onChange={(e) =>
+                            setMeetingMinutesInput(e.target.value)
+                          }
+                        />
+                        <span className="text-[11px] text-muted-foreground">
+                          {meetingMinutes
+                            ? `${meetingMinutes} min`
+                            : "Enter meeting minutes"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
+            )}
+
+            {showTodayLogs && (
+              <div className="mt-4">{renderLogList("today")}</div>
             )}
 
             <div className="mt-4 flex items-center justify-between">
               <button
                 className="rounded-md border border-border px-4 py-2 text-sm"
-                onClick={() => setShowPunchOut(false)}
-                disabled={submittingPunchOut}
+                onClick={() => {
+                  setShowPunchOut(false);
+                  setPunchModalMode("punch");
+                }}
+                disabled={submittingPunchOut || logOnlySubmitting}
               >
                 Cancel
               </button>
               <div className="flex items-center gap-2">
-                <button
-                  className="rounded-md border border-border px-4 py-2 text-sm disabled:opacity-60"
-                  onClick={skipPunchOutWithoutTasks}
-                  disabled={submittingPunchOut}
-                  title="Punch out without logging tasks"
-                >
-                  {submittingPunchOut ? "Processing…" : "Skip & Punch Out"}
-                </button>
-                <button
-                  className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
-                  onClick={submitPunchOutWithTasks}
-                  disabled={submittingPunchOut}
-                >
-                  {submittingPunchOut ? "Submitting…" : "Submit & Punch Out"}
-                </button>
+                {punchModalMode === "log" ? (
+                  <button
+                    className="rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+                    onClick={logTasksOnly}
+                    disabled={
+                      logOnlySubmitting || submittingPunchOut || !canSubmitLog
+                    }
+                  >
+                    {logOnlySubmitting ? "Saving…" : "Save Logs"}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="rounded-md border border-border px-4 py-2 text-sm disabled:opacity-60"
+                      onClick={skipPunchOutWithoutTasks}
+                      disabled={submittingPunchOut}
+                      title="Punch out without logging tasks"
+                    >
+                      {submittingPunchOut ? "Processing…" : "Skip & Punch Out"}
+                    </button>
+                    <button
+                      className="rounded-md bg-accent px-4 py-2 text-white disabled:opacity-60"
+                      onClick={submitPunchOutWithTasks}
+                      disabled={submittingPunchOut || !canSubmitPunchOut}
+                    >
+                      {submittingPunchOut
+                        ? "Submitting…"
+                        : "Submit & Punch Out"}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1739,7 +2240,7 @@ export default function EmployeeDash() {
       {showBackfill && backfillDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-black/40 -mt-[32px]"
             onClick={() => setShowBackfill(false)}
           />
           <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg max-h-[85vh] overflow-y-auto">
@@ -1747,12 +2248,13 @@ export default function EmployeeDash() {
               <h4 className="text-lg font-semibold">
                 Resolve {fmtDateKey(backfillDate)}
               </h4>
-              <button
-                className="text-sm underline"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setShowBackfill(false)}
               >
                 Close
-              </button>
+              </Button>
             </div>
             {backfillErr && (
               <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
@@ -1783,13 +2285,14 @@ export default function EmployeeDash() {
                       const resp = await api.post("/attendance/punchout-at", {
                         date: backfillDate,
                         time: backfillOutTime,
+                        ...getTimezonePayload(),
                       });
                       setBackfillAttendance(resp.data.attendance || null);
                       await loadMissingOut();
                     } catch (e: any) {
                       setBackfillErr(
                         e?.response?.data?.error ||
-                          "Failed to set punch-out time"
+                          "Failed to set punch-out time",
                       );
                     } finally {
                       setBackfillSavingOut(false);
@@ -1800,27 +2303,41 @@ export default function EmployeeDash() {
                   {backfillSavingOut
                     ? "Saving…"
                     : backfillAttendance
-                    ? "Saved"
-                    : "Save"}
+                      ? "Saved"
+                      : "Save"}
                 </button>
               </div>
-              <div className="text-xs text-muted">
+              <div className="text-xs text-muted-foreground">
+                {backfillAttendance?.firstPunchIn ||
+                backfillAttendance?.lastPunchIn ? (
+                  <>
+                    Punch-in:{" "}
+                    {fmtShortTime(
+                      backfillAttendance.lastPunchIn ||
+                        backfillAttendance.firstPunchIn,
+                    )}
+                  </>
+                ) : (
+                  <>Punch-in time not available.</>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
                 Example: 18:00. Total available after break will be calculated
                 from your first punch-in to this time minus 60 minutes.
               </div>
             </div>
 
-            <div className="text-xs text-muted mb-3">
+            <div className="text-xs text-muted-foreground mb-3">
               {backfillAttendance ? (
                 <>
                   {(() => {
                     const worked = Math.max(
                       0,
-                      Math.floor((backfillAttendance.workedMs || 0) / 60000)
+                      Math.floor((backfillAttendance.workedMs || 0) / 60000),
                     );
                     const already = workedTasksForDay.reduce(
                       (acc, t) => acc + (t.minutes || 0),
-                      0
+                      0,
                     );
                     const cap = Math.max(0, worked - 60);
                     const remaining = Math.max(0, cap - already);
@@ -1838,221 +2355,220 @@ export default function EmployeeDash() {
               )}
             </div>
             {backfillLoading ? (
-              <div className="text-sm text-muted">Loading…</div>
+              <div className="text-sm text-muted-foreground">Loading…</div>
             ) : (
               <div className="space-y-3">
-                {/* Add new task (same as punch-out modal) */}
-                <div className="mb-2 rounded border border-border p-3 bg-white">
-                  <div className="mb-2 text-sm font-medium">Add a task</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={usePersonal}
-                        onChange={async (e) => {
-                          const v = e.target.checked;
-                          setUsePersonal(v);
-                          if (v && !personalProjectId) {
-                            try {
-                              const resp = await api.get("/projects/personal");
-                              setPersonalProjectId(
-                                resp.data.project?._id || ""
-                              );
-                            } catch {}
-                          }
-                        }}
-                        disabled={!backfillAttendance}
-                        title={
-                          !backfillAttendance
-                            ? "Set punch-out time first"
-                            : undefined
-                        }
-                      />
-                      <span>Personal task</span>
-                    </label>
-                    <select
-                      className="h-9 rounded-md border border-border bg-surface px-2 disabled:opacity-50"
-                      value={newTaskProjectId}
-                      onChange={(e) => setNewTaskProjectId(e.target.value)}
-                      disabled={usePersonal || !backfillAttendance}
-                      title={
-                        !backfillAttendance
-                          ? "Set punch-out time first"
-                          : undefined
-                      }
-                    >
-                      {projects.map((p) => (
-                        <option key={p._id} value={p._id}>
-                          {p.title}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="h-9 flex-1 min-w-[160px] rounded-md border border-border bg-surface px-2"
-                      placeholder="Task title"
-                      value={newTaskTitle}
-                      onChange={(e) => setNewTaskTitle(e.target.value)}
-                      disabled={!backfillAttendance}
-                    />
-                    <select
-                      className="h-9 rounded-md border border-border bg-surface px-2"
-                      value={newTaskStatus}
-                      onChange={(e) => setNewTaskStatus(e.target.value as any)}
-                      title="Set initial status"
-                      disabled={!backfillAttendance}
-                    >
-                      <option value="PENDING">Pending</option>
-                      <option value="DONE">Done</option>
-                    </select>
+                {/* <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium">Step 2: Log work</div>
+                  <div className="inline-flex rounded-md border border-border overflow-hidden">
                     <button
-                      className="h-9 rounded-md bg-secondary px-3 text-white disabled:opacity-60"
-                      onClick={addNewTask}
-                      disabled={
-                        addingTask ||
-                        !newTaskTitle.trim() ||
-                        (!usePersonal && !newTaskProjectId) ||
-                        (usePersonal && !personalProjectId) ||
-                        !backfillAttendance
-                      }
-                      title={
-                        !backfillAttendance
-                          ? "Set punch-out time first"
-                          : undefined
-                      }
-                    >
-                      {addingTask ? "Adding…" : "Add"}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Assigned tasks (grouped) */}
-                {renderLogList("backfill")}
-
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-medium">Assigned tasks</div>
-                  <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
-                    <button
-                      type="button"
-                      className={`px-3 py-1 font-medium transition-colors ${
-                        assignedStatusView === "ACTIVE"
-                          ? "bg-secondary text-white"
-                          : "bg-surface text-muted"
+                      className={`px-3 py-1 text-xs ${
+                        backfillEntryMode === "task"
+                          ? "bg-primary text-white"
+                          : "bg-surface text-foreground"
                       }`}
-                      onClick={() => setAssignedStatusView("ACTIVE")}
-                      aria-pressed={assignedStatusView === "ACTIVE"}
+                      onClick={() => changeBackfillEntryMode("task")}
                     >
-                      Active
+                      Task log
                     </button>
                     <button
-                      type="button"
-                      className={`px-3 py-1 font-medium border-l border-border transition-colors ${
-                        assignedStatusView === "DONE"
-                          ? "bg-secondary text-white"
-                          : "bg-surface text-muted"
+                      className={`px-3 py-1 text-xs border-l border-border ${
+                        backfillEntryMode === "meeting"
+                          ? "bg-primary text-white"
+                          : "bg-surface text-foreground"
                       }`}
-                      onClick={() => setAssignedStatusView("DONE")}
-                      aria-pressed={assignedStatusView === "DONE"}
+                      onClick={() => changeBackfillEntryMode("meeting")}
                     >
-                      Done
+                      Meeting log
                     </button>
                   </div>
-                </div>
-                {assigned.length === 0 ? (
-                  <div className="text-sm text-muted">No assigned tasks.</div>
-                ) : filteredAssigned.length === 0 ? (
-                  <div className="text-sm text-muted">
-                    {assignedStatusView === "DONE"
-                      ? "No tasks marked done."
-                      : "No active tasks."}
-                  </div>
-                ) : (
-                  <ul className="space-y-2 max-h-72 overflow-auto pr-1">
-                    {filteredAssigned.map((t) => {
-                      const badge = statusBadge(t.status);
-                      const hoursVal = parseFloat(t.hours || "0");
-                      const canAdd = Number.isFinite(hoursVal) && hoursVal > 0;
-                      const isSelected = !!t.checked;
-                      const addDisabled =
-                        !backfillAttendance || (!isSelected && !canAdd);
-                      const addTitle = !backfillAttendance
-                        ? "Set punch-out time first"
-                        : addDisabled
-                        ? "Enter hours before adding"
-                        : isSelected
-                        ? "Remove from submission"
-                        : "Add to submission";
-                      return (
-                        <li
-                          key={t._id}
-                          className="border border-border rounded px-3 py-2"
+                </div> */}
+
+                {backfillEntryMode === "task" ? (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-sm font-medium">Assigned tasks</div>
+                      <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
+                        <button
+                          type="button"
+                          className={`px-3 py-1 font-medium transition-colors ${
+                            assignedStatusView === "ACTIVE"
+                              ? "bg-secondary text-white"
+                              : "bg-surface text-muted-foreground"
+                          }`}
+                          onClick={() => setAssignedStatusView("ACTIVE")}
+                          aria-pressed={assignedStatusView === "ACTIVE"}
                         >
-                          <div className="flex flex-wrap items-center gap-3">
-                            <div className="flex-1 min-w-[200px]">
-                              <div className="text-sm font-medium">{t.title}</div>
-                              {t.projectTitle && (
-                                <div className="text-xs text-muted">
-                                  {t.projectTitle}
+                          Active
+                        </button>
+                        <button
+                          type="button"
+                          className={`px-3 py-1 font-medium border-l border-border transition-colors ${
+                            assignedStatusView === "DONE"
+                              ? "bg-secondary text-white"
+                              : "bg-surface text-muted-foreground"
+                          }`}
+                          onClick={() => setAssignedStatusView("DONE")}
+                          aria-pressed={assignedStatusView === "DONE"}
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground mb-2">
+                      Add a brief description and time for tasks you worked on.
+                      Only entries with time will be logged when you submit.
+                    </div>
+                    {assigned.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">
+                        No assigned tasks.
+                      </div>
+                    ) : filteredAssigned.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">
+                        {assignedStatusView === "DONE"
+                          ? "No tasks marked done."
+                          : "No active tasks."}
+                      </div>
+                    ) : (
+                      <ul className="space-y-2 max-h-72 overflow-auto pr-1">
+                        {filteredAssigned.map((t) => {
+                          const minutesVal = computeMinutes({
+                            hours: t.hours,
+                            minutes: t.minutes,
+                          });
+                          return (
+                            <li
+                              key={t._id}
+                              className="border border-border rounded px-3 py-2"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium">
+                                    {t.title}
+                                  </div>
+                                  {t.projectTitle && (
+                                    <div className="text-xs text-muted-foreground">
+                                      {t.projectTitle}
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                step="0.25"
-                                min="0"
-                                className="h-8 w-24 rounded-md border border-border bg-surface px-2 text-sm"
-                                placeholder="Hours"
-                                value={t.hours || ""}
-                                onChange={(e) =>
-                                  setAssigned((prev) =>
-                                    prev.map((x) =>
-                                      x._id === t._id
-                                        ? {
-                                            ...x,
-                                            hours: e.target.value,
-                                            minutes: "",
-                                          }
-                                        : x
+                                <span className="text-[11px] text-muted-foreground uppercase">
+                                  {t.status === "DONE"
+                                    ? "Done"
+                                    : t.status === "INPROGRESS"
+                                      ? "In progress"
+                                      : "Pending"}
+                                </span>
+                              </div>
+                              <div className="mt-2 space-y-2">
+                                <input
+                                  className="w-full h-10 rounded-md border border-border bg-bg px-3 text-sm"
+                                  placeholder="What did you work on?"
+                                  value={t.note || ""}
+                                  disabled={!backfillAttendance}
+                                  onChange={(e) =>
+                                    setAssigned((prev) =>
+                                      prev.map((x) =>
+                                        x._id === t._id
+                                          ? { ...x, note: e.target.value }
+                                          : x,
+                                      ),
                                     )
-                                  )
-                                }
-                                disabled={!backfillAttendance}
-                              />
-                            </div>
-                            <span
-                              className={`text-xs px-2 py-0.5 rounded border ${badge.className}`}
-                            >
-                              {badge.label}
-                            </span>
-                            <button
-                              type="button"
-                              className={`h-8 px-3 rounded-md text-xs font-medium transition-colors ${
-                                isSelected
-                                  ? "bg-green-600 text-white hover:bg-green-700"
-                                  : "bg-secondary text-white hover:opacity-90"
-                              } disabled:opacity-50`}
-                              onClick={() =>
-                                setAssigned((prev) =>
-                                  prev.map((x) =>
-                                    x._id === t._id
-                                      ? { ...x, checked: !isSelected }
-                                      : x
-                                  )
-                                )
-                              }
-                              disabled={addDisabled}
-                              title={addTitle}
-                            >
-                              {isSelected ? "Added" : "Add"}
-                            </button>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                                  }
+                                />
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <input
+                                    type="number"
+                                    step="0.25"
+                                    min="0"
+                                    className="h-8 w-24 rounded-md border border-border bg-surface px-2 text-sm"
+                                    placeholder="Hours"
+                                    value={t.hours || ""}
+                                    disabled={!backfillAttendance}
+                                    onChange={(e) =>
+                                      setAssigned((prev) =>
+                                        prev.map((x) =>
+                                          x._id === t._id
+                                            ? { ...x, hours: e.target.value }
+                                            : x,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                  <input
+                                    type="number"
+                                    step="5"
+                                    min="0"
+                                    className="h-8 w-20 rounded-md border border-border bg-surface px-2 text-sm"
+                                    placeholder="Min"
+                                    value={t.minutes || ""}
+                                    disabled={!backfillAttendance}
+                                    onChange={(e) =>
+                                      setAssigned((prev) =>
+                                        prev.map((x) =>
+                                          x._id === t._id
+                                            ? { ...x, minutes: e.target.value }
+                                            : x,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                  <span className="text-[11px] text-muted-foreground">
+                                    {minutesVal
+                                      ? `${minutesVal} min to log`
+                                      : "Fill time to log"}
+                                  </span>
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  <div className="rounded border border-border bg-white p-3">
+                    <div className="text-sm font-medium">Meetings</div>
+                    {meetingProjectOptions.length === 0 ? (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        No meeting tasks available to log.
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <select
+                          className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
+                          value={backfillMeetingProjectId}
+                          onChange={(e) =>
+                            setBackfillMeetingProjectId(e.target.value)
+                          }
+                        >
+                          {meetingProjectOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min="0"
+                          step="5"
+                          className="h-9 w-28 rounded-md border border-border bg-surface px-2 text-sm"
+                          placeholder="Meeting min"
+                          value={backfillMeetingMinutes}
+                          onChange={(e) =>
+                            setBackfillMeetingMinutes(e.target.value)
+                          }
+                        />
+                        <span className="text-[11px] text-muted-foreground">
+                          Quick meeting time log
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
+            {!backfillLoading && renderLogList("backfill")}
             <div className="mt-4 flex items-center justify-between">
               <button
                 className="rounded-md border border-border px-4 py-2 text-sm"
@@ -2080,7 +2596,7 @@ export default function EmployeeDash() {
       {showSetOut && setOutDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-black/40 -mt-[32px]"
             onClick={() => setShowSetOut(false)}
           />
           <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg max-h-[85vh] overflow-y-auto">
@@ -2088,12 +2604,13 @@ export default function EmployeeDash() {
               <h4 className="text-lg font-semibold">
                 Set punch-out for {fmtDateKey(setOutDate)}
               </h4>
-              <button
-                className="text-sm underline"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setShowSetOut(false)}
               >
                 Close
-              </button>
+              </Button>
             </div>
             {setOutErr && (
               <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
@@ -2110,7 +2627,9 @@ export default function EmployeeDash() {
                   onChange={(e) => setSetOutTime(e.target.value)}
                 />
               </label>
-              <div className="text-xs text-muted">Example: 18:00</div>
+              <div className="text-xs text-muted-foreground">
+                Example: 18:00
+              </div>
             </div>
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
@@ -2130,12 +2649,14 @@ export default function EmployeeDash() {
                     await api.post("/attendance/punchout-at", {
                       date: setOutDate,
                       time: setOutTime,
+                      ...getTimezonePayload(),
                     });
                     setShowSetOut(false);
                     await loadMissingOut();
                   } catch (e: any) {
                     setSetOutErr(
-                      e?.response?.data?.error || "Failed to set punch-out time"
+                      e?.response?.data?.error ||
+                        "Failed to set punch-out time",
                     );
                   } finally {
                     setSetOutSubmitting(false);
@@ -2153,7 +2674,7 @@ export default function EmployeeDash() {
       {showMissing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-black/40 -mt-[32px]"
             onClick={() => setShowMissing(false)}
           />
           <div className="relative w-full max-w-2xl rounded-lg border border-border bg-surface p-5 shadow-lg">
@@ -2161,19 +2682,20 @@ export default function EmployeeDash() {
               <h4 className="text-lg font-semibold">
                 Resolve Attendance Issues
               </h4>
-              <button
-                className="text-sm underline"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setShowMissing(false)}
               >
                 Close
-              </button>
+              </Button>
             </div>
-            <div className="text-sm text-muted mb-3">
+            <div className="text-sm text-muted-foreground mb-3">
               You must resolve past working days with incomplete attendance
               before punching in again.
             </div>
             {missingLoading ? (
-              <div className="text-sm text-muted">Loading…</div>
+              <div className="text-sm text-muted-foreground">Loading…</div>
             ) : missingErr ? (
               <div className="text-sm text-error">{missingErr}</div>
             ) : blockingIssues.length === 0 ? (
@@ -2199,25 +2721,12 @@ export default function EmployeeDash() {
                       </div>
                       <div className="flex items-center gap-2">
                         {issue.type === "noAttendance" ? (
-                          <>
-                            <button
-                              className="rounded-md border border-border px-3 py-1 text-sm"
-                              onClick={() => openLeaveModal(issue.date)}
-                            >
-                              Apply Leave
-                            </button>
-                            <button
-                              className="rounded-md bg-secondary px-3 py-1 text-sm text-white disabled:opacity-60"
-                              onClick={() =>
-                                requestManualAttendance(issue.date)
-                              }
-                              disabled={requestingManual === issue.date}
-                            >
-                              {requestingManual === issue.date
-                                ? "Requesting…"
-                                : "Notify Admin"}
-                            </button>
-                          </>
+                          <button
+                            className="rounded-md border border-border px-3 py-1 text-sm"
+                            onClick={() => openLeaveModal(issue.date)}
+                          >
+                            Apply Leave
+                          </button>
                         ) : (
                           <button
                             className="rounded-md border border-border px-3 py-1 text-sm"
@@ -2252,21 +2761,22 @@ export default function EmployeeDash() {
       {leaveModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-black/40 -mt-[32px]"
             onClick={() => (!leaveModal.saving ? closeLeaveModal() : null)}
           />
           <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-lg font-semibold">Apply Leave</h4>
-              <button
-                className="text-sm underline"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => (!leaveModal.saving ? closeLeaveModal() : null)}
                 disabled={leaveModal.saving}
               >
                 Close
-              </button>
+              </Button>
             </div>
-            <div className="text-sm text-muted mb-3">
+            <div className="text-sm text-muted-foreground mb-3">
               Mark the selected day as leave. This will bypass approval and
               close the attendance issue.
             </div>
@@ -2277,7 +2787,7 @@ export default function EmployeeDash() {
             )}
             <div className="space-y-3">
               <label className="flex items-center justify-between gap-3 text-sm">
-                <span className="w-28 text-muted">Start date</span>
+                <span className="w-28 text-muted-foreground">Start date</span>
                 <input
                   type="date"
                   className="h-9 rounded-md border border-border bg-surface px-2"
@@ -2292,7 +2802,7 @@ export default function EmployeeDash() {
                 />
               </label>
               <label className="flex items-center justify-between gap-3 text-sm">
-                <span className="w-28 text-muted">End date</span>
+                <span className="w-28 text-muted-foreground">End date</span>
                 <input
                   type="date"
                   className="h-9 rounded-md border border-border bg-surface px-2"
@@ -2307,7 +2817,7 @@ export default function EmployeeDash() {
                 />
               </label>
               <label className="flex items-center justify-between gap-3 text-sm">
-                <span className="w-28 text-muted">Type</span>
+                <span className="w-28 text-muted-foreground">Type</span>
                 <select
                   className="h-9 rounded-md border border-border bg-surface px-2"
                   value={leaveModal.type}
@@ -2326,7 +2836,7 @@ export default function EmployeeDash() {
                 </select>
               </label>
               <label className="flex flex-col gap-1 text-sm">
-                <span className="text-muted">Reason (optional)</span>
+                <span className="text-muted-foreground">Reason (optional)</span>
                 <textarea
                   className="min-h-[80px] rounded-md border border-border bg-surface px-2 py-1"
                   value={leaveModal.reason}
@@ -2363,80 +2873,244 @@ export default function EmployeeDash() {
   );
 }
 
-type CompanyEmployee = { id: string; name: string };
+type PresenceRow = {
+  employee: { id: string; name: string };
+  firstPunchIn?: string;
+  lastPunchOut?: string;
+  onLeaveToday?: boolean;
+  startingLeaveTomorrow?: boolean;
+  leaveTomorrowStatus?: "APPROVED" | "PENDING" | string | null;
+  nextLeaveInDays?: number | null;
+  nextLeaveStatus?: "APPROVED" | "PENDING" | string | null;
+  leaveTodayReason?: string | null;
+  leaveTodayType?: string | null;
+  leaveTomorrowReason?: string | null;
+  leaveTomorrowType?: string | null;
+  nextLeaveReason?: string | null;
+  nextLeaveType?: string | null;
+};
 
-function HRPanel() {
-  const [employees, setEmployees] = useState<CompanyEmployee[]>([]);
-  const [leaveMap, setLeaveMap] = useState<Record<string, boolean>>({});
+function fmtTime(value?: string) {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function presenceStatus(row: PresenceRow) {
+  if (row.firstPunchIn && row.lastPunchOut) return "Punched out";
+  if (row.firstPunchIn) return "Punched in";
+  return "Not punched in";
+}
+
+function TeamPresenceCard() {
+  const [rows, setRows] = useState<PresenceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [runLoading, setRunLoading] = useState(false);
-  const [runErr, setRunErr] = useState<string | null>(null);
-  const [runResult, setRunResult] = useState<{
-    candidates: number;
-    closed: number;
-  } | null>(null);
-  const [lastRunAt, setLastRunAt] = useState<string | null>(null);
-  useEffect(() => {
-    async function load() {
-      try {
-        setErr(null);
-        setLoading(true);
-        const [emps, leaves] = await Promise.all([
-          api.get("/companies/employees"),
-          api.get("/leaves/company/today"),
-        ]);
-        setEmployees(emps.data.employees || []);
-        const map: Record<string, boolean> = {};
-        (leaves.data.leaves || []).forEach((l: any) => {
-          const id = l.employee.id || l.employee._id;
-          map[id] = true;
-        });
-        setLeaveMap(map);
-      } catch (e: any) {
-        setErr(e?.response?.data?.error || "Failed to load HR data");
-      } finally {
-        setLoading(false);
-      }
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
+  const [leaveDetail, setLeaveDetail] = useState<PresenceRow | null>(null);
+
+  async function load() {
+    try {
+      setLoading(true);
+      setErr(null);
+      const res = await api.get("/attendance/company/presence");
+      setRows(res.data.rows || []);
+      setRefreshedAt(new Date());
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || "Failed to load team presence");
+    } finally {
+      setLoading(false);
     }
+  }
+
+  useEffect(() => {
     load();
-    console.log("djsgh", leaveMap);
   }, []);
 
   return (
-    <div className="p-4 rounded-lg border border-border bg-surface shadow-sm">
-      <div className="mb-4 font-semibold">HR Panel</div>
+    <div className="p-4 rounded-lg border border-border bg-surface shadow-sm md:col-span-2">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Users size={18} />
+          <div className="font-semibold leading-none">Team Presence</div>
+        </div>
+      </div>
       {err && (
-        <div className="mb-4 rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
+        <div className="mb-3 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-xs text-error">
           {err}
         </div>
       )}
-      {runErr && (
-        <div className="mb-4 rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
-          {runErr}
-        </div>
-      )}
-      {loading ? (
-        <div>Loading…</div>
-      ) : (
+      <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left">
-              <th className="px-2 py-1">Employee</th>
+            <tr className="text-left text-xs text-muted-foreground">
+              <th className="px-2 py-1">Member</th>
+              <th className="px-2 py-1">Punch In</th>
+              <th className="px-2 py-1">Punch Out</th>
               <th className="px-2 py-1">Status</th>
+              <th className="px-2 py-1">Notes</th>
             </tr>
           </thead>
           <tbody>
-            {employees.map((e) => (
-              <tr key={e.id} className="border-t border-border/70">
-                <td className="px-2 py-1">{e.name}</td>
-                <td className="px-2 py-1">
-                  {leaveMap[e.id] ? "On Leave" : "Present"}
+            {loading ? (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="px-2 py-6 text-center text-muted-foreground text-sm"
+                >
+                  Loading…
                 </td>
               </tr>
-            ))}
+            ) : rows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="px-2 py-6 text-center text-muted-foreground text-sm"
+                >
+                  No employees found.
+                </td>
+              </tr>
+            ) : (
+              rows.map((row) => {
+                const status = presenceStatus(row);
+                const notes: string[] = [];
+                if (row.onLeaveToday) notes.push("On approved leave");
+                if (row.startingLeaveTomorrow) {
+                  notes.push(
+                    row.leaveTomorrowStatus === "APPROVED"
+                      ? "On leave tomorrow"
+                      : "On leave tomorrow (pending)",
+                  );
+                }
+                if (
+                  row.nextLeaveInDays !== null &&
+                  row.nextLeaveInDays !== undefined
+                ) {
+                  const days = row.nextLeaveInDays;
+                  const statusLabel =
+                    row.nextLeaveStatus === "APPROVED"
+                      ? "approved"
+                      : row.nextLeaveStatus === "PENDING"
+                        ? "pending"
+                        : "pending";
+                  if (days === 1) {
+                    if (!row.startingLeaveTomorrow) {
+                      notes.push(`On leave tomorrow (${statusLabel})`);
+                    }
+                  } else if (days > 1) {
+                    notes.push(`On leave in ${days} days (${statusLabel})`);
+                  }
+                }
+                return (
+                  <tr
+                    key={row.employee.id}
+                    className="border-t border-border/70 text-sm"
+                  >
+                    <td className="px-2 py-1">{row.employee.name}</td>
+                    <td className="px-2 py-1">{fmtTime(row.firstPunchIn)}</td>
+                    <td className="px-2 py-1">{fmtTime(row.lastPunchOut)}</td>
+                    <td className="px-2 py-1">
+                      <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px]">
+                        {status}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate">
+                          {notes.length ? notes.join(" • ") : "—"}
+                        </span>
+                        {notes.length > 0 && (
+                          <button
+                            className="h-7 w-7 inline-flex items-center justify-center rounded border border-border hover:bg-bg"
+                            title="View leave details"
+                            onClick={() => setLeaveDetail(row)}
+                          >
+                            <Eye size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
+      </div>
+      <div className="mt-2 text-[11px] text-muted-foreground">
+        {refreshedAt
+          ? `Updated ${refreshedAt.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}`
+          : "—"}
+      </div>
+
+      {leaveDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setLeaveDetail(null)}
+          />
+          <div className="relative z-10 w-[min(380px,92vw)] rounded-lg border border-border bg-surface p-4 shadow-lg space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold">Leave details</div>
+                <div className="text-xs text-muted-foreground">
+                  {leaveDetail.employee.name}
+                </div>
+              </div>
+              <button
+                className="text-sm text-muted-foreground hover:text-foreground"
+                onClick={() => setLeaveDetail(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="text-sm space-y-1">
+              {leaveDetail.leaveTodayReason && (
+                <div>
+                  <span className="text-muted-foreground">Today: </span>
+                  {leaveDetail.leaveTodayReason}
+                  {leaveDetail.leaveTodayType
+                    ? ` (${leaveDetail.leaveTodayType})`
+                    : ""}
+                </div>
+              )}
+              {leaveDetail.leaveTomorrowReason && (
+                <div>
+                  <span className="text-muted-foreground">Tomorrow: </span>
+                  {leaveDetail.leaveTomorrowReason}
+                  {leaveDetail.leaveTomorrowType
+                    ? ` (${leaveDetail.leaveTomorrowType})`
+                    : ""}
+                </div>
+              )}
+              {leaveDetail.nextLeaveReason && (
+                <div>
+                  <span className="text-muted-foreground">Next leave: </span>
+                  {leaveDetail.nextLeaveReason}
+                  {leaveDetail.nextLeaveType
+                    ? ` (${leaveDetail.nextLeaveType})`
+                    : ""}
+                  {leaveDetail.nextLeaveInDays !== null &&
+                  leaveDetail.nextLeaveInDays !== undefined
+                    ? ` in ${leaveDetail.nextLeaveInDays} day(s)`
+                    : ""}
+                </div>
+              )}
+              {!leaveDetail.leaveTodayReason &&
+                !leaveDetail.leaveTomorrowReason &&
+                !leaveDetail.nextLeaveReason && (
+                  <div className="text-muted-foreground text-sm">
+                    No leave reason available.
+                  </div>
+                )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

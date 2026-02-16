@@ -9,6 +9,8 @@ export const companyDayOverrideSchema = z.object({
   type: z.enum(["WORKING", "HOLIDAY", "HALF_DAY"]),
   note: z.string().optional(),
   updatedBy: objectId.optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type CompanyDayOverrideInput = z.infer<typeof companyDayOverrideSchema>;

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
+import { resolveMediaUrl } from "../../lib/utils";
+import { Button } from "../../components/ui/button";
 
 const fmtMoney = (n: number, currency = "INR", locale = "en-IN") =>
   new Intl.NumberFormat(locale, {
@@ -29,7 +31,7 @@ export default function InvoiceDetails() {
 
   const [invoice, setInvoice] = useState<any>(null);
   const [projects, setProjects] = useState<{ _id: string; title: string }[]>(
-    []
+    [],
   );
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -41,7 +43,7 @@ export default function InvoiceDetails() {
   const [saving, setSaving] = useState(false);
 
   const [partyType, setPartyType] = useState<"client" | "employee" | "vendor">(
-    "client"
+    "client",
   );
   const [projectId, setProjectId] = useState<string>("");
   const [partyName, setPartyName] = useState("");
@@ -77,7 +79,7 @@ export default function InvoiceDetails() {
           quantity: li.quantity,
           rate: li.rate,
           taxPercent: li.taxPercent,
-        }))
+        })),
       );
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Failed to load");
@@ -98,7 +100,7 @@ export default function InvoiceDetails() {
           (res.data.projects || []).map((p: any) => ({
             _id: p._id,
             title: p.title,
-          }))
+          })),
         );
       } catch {}
     })();
@@ -170,7 +172,7 @@ export default function InvoiceDetails() {
 
   function setLine(idx: number, patch: any) {
     setLineItems((prev) =>
-      prev.map((li, i) => (i === idx ? { ...li, ...patch } : li))
+      prev.map((li, i) => (i === idx ? { ...li, ...patch } : li)),
     );
   }
   function addLine() {
@@ -186,7 +188,7 @@ export default function InvoiceDetails() {
   const editTotals = useMemo(() => {
     const subtotal = lineItems.reduce(
       (s, li) => s + Number(li.quantity || 0) * Number(li.rate || 0),
-      0
+      0,
     );
     const tax = lineItems.reduce(
       (s, li) =>
@@ -194,7 +196,7 @@ export default function InvoiceDetails() {
         Number(li.quantity || 0) *
           Number(li.rate || 0) *
           (Math.min(Math.max(Number(li.taxPercent || 0), 0), 100) / 100),
-      0
+      0,
     );
     return { subtotal, tax, total: subtotal + tax };
   }, [lineItems]);
@@ -228,8 +230,6 @@ export default function InvoiceDetails() {
   if (loading) return <div>Loading…</div>;
   if (!invoice) return <div>Not found</div>;
 
-  const base = import.meta.env.VITE_API_URL || "http://localhost:4000";
-
   return (
     <div className="space-y-5 max-w-6xl mx-auto">
       <div className="flex items-start justify-between gap-2">
@@ -237,21 +237,21 @@ export default function InvoiceDetails() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Invoice {invoice.invoiceNumber}
           </h2>
-          <div className="mt-1 text-sm text-muted">
+          <div className="mt-1 text-sm text-muted-foreground">
             Issued{" "}
             {invoice.issueDate
               ? new Date(invoice.issueDate).toLocaleDateString("en-IN")
               : "-"}
             {invoice.dueDate
               ? ` • Due ${new Date(invoice.dueDate).toLocaleDateString(
-                  "en-IN"
+                  "en-IN",
                 )}`
               : ""}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            className="px-3 py-2 rounded-md border bg-accent text-white"
+          <Button
+            variant="secondary"
             onClick={async () => {
               const res = await api.get(`/invoices/${invoice._id}/pdf`, {
                 responseType: "blob",
@@ -271,13 +271,14 @@ export default function InvoiceDetails() {
             }}
           >
             Download PDF
-          </button>
-          <button
-            className="px-3 py-2 rounded-md border bg-accent text-white"
+          </Button>
+          <Button
+            variant="outline"
+            className="h-10"
             onClick={() => nav("/admin/invoices")}
           >
             Back
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -286,23 +287,23 @@ export default function InvoiceDetails() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border rounded-xl p-4 bg-surface space-y-2">
           <div className="flex items-center justify-between">
-            <div className="text-sm text-muted">Status</div>
+            <div className="text-sm text-muted-foreground">Status</div>
             <span className={statusClass(invoice.status)}>
               {String(invoice.status || "draft").toUpperCase()}
             </span>
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <div className="text-muted">Type</div>
+            <div className="text-muted-foreground">Type</div>
             <div className="font-medium capitalize">{invoice.type}</div>
             {invoice.project && (
               <>
-                <div className="text-muted">Project</div>
+                <div className="text-muted-foreground">Project</div>
                 <div className="break-words">
                   {invoice.project?.title || invoice.project}
                 </div>
               </>
             )}
-            <div className="text-muted">Currency</div>
+            <div className="text-muted-foreground">Currency</div>
             <div className="font-medium">{invoice.currency || "INR"}</div>
           </div>
           <div className="pt-2">
@@ -327,7 +328,7 @@ export default function InvoiceDetails() {
         <div className="border rounded-xl p-4 bg-surface">
           {!editing ? (
             <div className="space-y-1">
-              <div className="text-sm text-muted">Bill To</div>
+              <div className="text-sm text-muted-foreground">Bill To</div>
               <div className="font-semibold">{invoice.partyName || "-"}</div>
               {invoice.partyEmail && (
                 <div className="text-sm">{invoice.partyEmail}</div>
@@ -338,16 +339,20 @@ export default function InvoiceDetails() {
                 </div>
               )}
               <div className="mt-3">
-                <div className="text-sm text-muted mb-1">Client Logo</div>
+                <div className="text-sm text-muted-foreground mb-1">
+                  Client Logo
+                </div>
                 <div className="flex items-center gap-2">
                   {invoice.partyLogo ? (
                     <img
-                      src={`${base}/uploads/${invoice.partyLogo}`}
+                      src={resolveMediaUrl(invoice.partyLogo) || ""}
                       alt="client logo"
                       className="h-10 object-contain"
                     />
                   ) : (
-                    <span className="text-xs text-muted">No logo</span>
+                    <span className="text-xs text-muted-foreground">
+                      No logo
+                    </span>
                   )}
                   <input
                     type="file"
@@ -360,7 +365,9 @@ export default function InvoiceDetails() {
             </div>
           ) : (
             <div className="space-y-2">
-              <label className="text-xs text-muted">Party Type</label>
+              <label className="text-xs text-muted-foreground">
+                Party Type
+              </label>
               <select
                 value={partyType}
                 onChange={(e) => setPartyType(e.target.value as any)}
@@ -370,7 +377,7 @@ export default function InvoiceDetails() {
                 <option value="employee">Employee</option>
                 <option value="vendor">Vendor</option>
               </select>
-              <label className="text-xs text-muted mt-2">
+              <label className="text-xs text-muted-foreground mt-2">
                 Project (Client)
               </label>
               <select
@@ -385,14 +392,18 @@ export default function InvoiceDetails() {
                   </option>
                 ))}
               </select>
-              <label className="text-xs text-muted mt-2">Party Name</label>
+              <label className="text-xs text-muted-foreground mt-2">
+                Party Name
+              </label>
               <input
                 value={partyName}
                 onChange={(e) => setPartyName(e.target.value)}
                 placeholder="Company or person e.g. Acme Ltd."
                 className="w-full rounded-md border border-border bg-bg px-3 py-2"
               />
-              <label className="text-xs text-muted mt-2">Party Email</label>
+              <label className="text-xs text-muted-foreground mt-2">
+                Party Email
+              </label>
               <input
                 type="email"
                 value={partyEmail}
@@ -400,7 +411,9 @@ export default function InvoiceDetails() {
                 placeholder="billing@acme.com"
                 className="w-full rounded-md border border-border bg-bg px-3 py-2"
               />
-              <label className="text-xs text-muted mt-2">Party Address</label>
+              <label className="text-xs text-muted-foreground mt-2">
+                Party Address
+              </label>
               <textarea
                 value={partyAddress}
                 onChange={(e) => setPartyAddress(e.target.value)}
@@ -414,7 +427,7 @@ export default function InvoiceDetails() {
         <div className="border rounded-xl p-4 bg-surface">
           {!editing ? (
             <div className="space-y-1">
-              <div className="text-sm text-muted">Totals</div>
+              <div className="text-sm text-muted-foreground">Totals</div>
               <div className="flex justify-between">
                 <span>Subtotal</span>
                 <span>{fmtMoney(invoice.subtotal)}</span>
@@ -432,7 +445,9 @@ export default function InvoiceDetails() {
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-xs text-muted">Issue Date</label>
+                  <label className="text-xs text-muted-foreground">
+                    Issue Date
+                  </label>
                   <input
                     type="date"
                     value={issueDate}
@@ -441,7 +456,9 @@ export default function InvoiceDetails() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted">Due Date</label>
+                  <label className="text-xs text-muted-foreground">
+                    Due Date
+                  </label>
                   <input
                     type="date"
                     value={dueDate}
@@ -450,7 +467,9 @@ export default function InvoiceDetails() {
                   />
                 </div>
               </div>
-              <label className="text-xs text-muted">Payment Terms</label>
+              <label className="text-xs text-muted-foreground">
+                Payment Terms
+              </label>
               <input
                 value={paymentTerms}
                 onChange={(e) => setPaymentTerms(e.target.value)}
@@ -459,7 +478,9 @@ export default function InvoiceDetails() {
               />
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-xs text-muted">Currency</label>
+                  <label className="text-xs text-muted-foreground">
+                    Currency
+                  </label>
                   <select
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value)}
@@ -472,7 +493,7 @@ export default function InvoiceDetails() {
                   </select>
                 </div>
               </div>
-              <label className="text-xs text-muted">Notes</label>
+              <label className="text-xs text-muted-foreground">Notes</label>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -536,7 +557,7 @@ export default function InvoiceDetails() {
           </table>
         ) : (
           <div className="p-3 space-y-2">
-            <div className="hidden md:grid md:grid-cols-6 gap-2 text-xs text-muted px-1">
+            <div className="hidden md:grid md:grid-cols-6 gap-2 text-xs text-muted-foreground px-1">
               <div className="md:col-span-2">Description</div>
               <div>Qty (hrs)</div>
               <div>Rate ({currency === "INR" ? "INR" : currency}/hr)</div>
@@ -572,7 +593,7 @@ export default function InvoiceDetails() {
                       }
                       placeholder="0.00"
                     />
-                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                       hrs
                     </span>
                   </div>
@@ -586,7 +607,7 @@ export default function InvoiceDetails() {
                       }
                       placeholder="0.00"
                     />
-                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                       {currency === "INR" ? "INR" : currency}/hr
                     </span>
                   </div>
@@ -600,7 +621,7 @@ export default function InvoiceDetails() {
                       }
                       placeholder="0"
                     />
-                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                       %
                     </span>
                   </div>
@@ -700,7 +721,7 @@ export default function InvoiceDetails() {
             onChange={uploadFiles}
             disabled={uploading}
           />
-          <div className="text-xs text-muted">
+          <div className="text-xs text-muted-foreground">
             Upload vendor/client invoices or related files
           </div>
           <ul className="list-disc pl-5">
@@ -708,7 +729,7 @@ export default function InvoiceDetails() {
               <li key={idx}>
                 <a
                   className="underline"
-                  href={`${base}/uploads/${f}`}
+                  href={resolveMediaUrl(f) || "#"}
                   target="_blank"
                   rel="noreferrer"
                 >

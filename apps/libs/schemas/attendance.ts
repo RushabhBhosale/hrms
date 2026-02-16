@@ -26,6 +26,8 @@ export const attendanceSchema = z.object({
       resolvedBy: z.string().optional(),
     })
     .optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type AttendanceInput = z.infer<typeof attendanceSchema>;

@@ -11,6 +11,8 @@ const AttendanceOverrideSchema = new mongoose.Schema(
     ignoreHoliday: { type: Boolean, default: false },
     reason: { type: String },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
@@ -18,4 +20,3 @@ const AttendanceOverrideSchema = new mongoose.Schema(
 AttendanceOverrideSchema.index({ employee: 1, date: 1 }, { unique: true });
 
 module.exports = mongoose.model('AttendanceOverride', AttendanceOverrideSchema);
-

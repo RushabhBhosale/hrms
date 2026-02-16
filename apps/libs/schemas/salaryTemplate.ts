@@ -29,6 +29,8 @@ export const salaryTemplateSchema = z.object({
     })
     .optional(),
   updatedBy: objectId.optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type SalaryTemplateFieldInput = z.infer<

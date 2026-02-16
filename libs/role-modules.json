@@ -35,12 +35,30 @@
     ]
   },
   {
+    "key": "tasks",
+    "label": "Tasks",
+    "description": "Create and update project tasks",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Create & edit" },
+      { "key": "status", "label": "Change status" }
+    ]
+  },
+  {
     "key": "attendance",
     "label": "Attendance",
     "description": "Review and manage attendance records",
     "actions": [
       { "key": "read", "label": "View" },
       { "key": "write", "label": "Adjust" }
+    ]
+  },
+  {
+    "key": "presence",
+    "label": "Team Presence",
+    "description": "View team punch-in/out and leave status",
+    "actions": [
+      { "key": "read", "label": "View" }
     ]
   },
   {
@@ -112,6 +130,50 @@
     "actions": [
       { "key": "read", "label": "View" },
       { "key": "write", "label": "Upload" }
+    ]
+  },
+  {
+    "key": "kras",
+    "label": "KRAs",
+    "description": "Manage KRAs and ratings",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Create & edit" }
+    ]
+  },
+  {
+    "key": "appraisals",
+    "label": "Appraisals",
+    "description": "Create and view performance appraisals",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Create & edit" }
+    ]
+  },
+  {
+    "key": "onboarding",
+    "label": "Onboarding",
+    "description": "Manage onboarding pipeline and candidates",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Manage" }
+    ]
+  },
+  {
+    "key": "inventory",
+    "label": "Inventory",
+    "description": "Manage assets and inventory categories",
+    "actions": [
+      { "key": "read", "label": "View" },
+      { "key": "write", "label": "Manage" }
+    ]
+  },
+  {
+    "key": "daily_status",
+    "label": "Daily Status Email",
+    "description": "Send daily punch/time summary emails",
+    "actions": [
+      { "key": "send", "label": "Send email" }
     ]
   }
 ]

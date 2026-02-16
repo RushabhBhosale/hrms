@@ -13,6 +13,8 @@ const CompanyTypeMasterSchema = new mongoose.Schema(
     description: { type: String, trim: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

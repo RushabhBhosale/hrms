@@ -19,6 +19,8 @@ type LeaveRecord = {
     sick?: number;
     unpaid?: number;
   };
+  isAuto?: boolean;
+  autoPenalty?: string;
 };
 
 type EmployeeLite = {
@@ -35,7 +37,11 @@ type Portion = {
   total: number;
 };
 
-type SummaryRow = Portion & { employeeId: string };
+type AdjustmentInfo = {
+  deducted: number;
+};
+
+type SummaryRow = Portion & { employeeId: string; deducted: number };
 
 type DetailRow = {
   leaveId: string;
@@ -48,18 +54,41 @@ type DetailRow = {
   totalDays: number;
   portion?: Portion;
   reason?: string;
+  isAuto?: boolean;
 };
+
+type ViewMode = "MONTH" | "ALL";
+
+type AttendanceSummaryMap = Record<
+  string,
+  {
+    leaveDays: number;
+    halfDayLeaves?: number;
+  }
+>;
 
 export default function LeaveReportsPage() {
   const today = new Date();
-  const initialMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const initialMonth = `${today.getFullYear()}-${String(
+    today.getMonth() + 1,
+  ).padStart(2, "0")}`;
   const [month, setMonth] = useState<string>(initialMonth);
+  const [viewMode, setViewMode] = useState<ViewMode>("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [search, setSearch] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [attendanceSummary, setAttendanceSummary] =
+    useState<AttendanceSummaryMap>({});
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceError, setAttendanceError] = useState<string | null>(null);
+  const [adjustments, setAdjustments] = useState<
+    Record<string, AdjustmentInfo>
+  >({});
+  const [adjustmentsLoading, setAdjustmentsLoading] = useState(false);
+  const [adjustmentsError, setAdjustmentsError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -74,11 +103,13 @@ export default function LeaveReportsPage() {
         if (!alive) return;
         const leaveRows = (leavesRes.data.leaves || []) as LeaveRecord[];
         setLeaves(leaveRows);
-        const employeeRows = (employeesRes.data.employees || []).map((e: any) => ({
-          id: e.id,
-          name: e.name,
-          email: e.email,
-        }));
+        const employeeRows = (employeesRes.data.employees || []).map(
+          (e: any) => ({
+            id: e.id,
+            name: e.name,
+            email: e.email,
+          }),
+        );
         setEmployees(employeeRows);
       } catch (e: any) {
         if (!alive) return;
@@ -92,6 +123,125 @@ export default function LeaveReportsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setAttendanceLoading(true);
+        setAttendanceError(null);
+        const params: Record<string, string> = {};
+        if (viewMode === "ALL") {
+          params.scope = "all";
+        } else if (viewMode === "MONTH" && month) {
+          params.month = month;
+        }
+        const res = await api.get("/attendance/company/report", {
+          params,
+        });
+        if (!alive) return;
+        const summaries = res?.data?.summaries || res?.data?.report || [];
+        const next: AttendanceSummaryMap = {};
+        for (const entry of summaries) {
+          if (!entry) continue;
+          const employeeId =
+            entry.employeeId ||
+            entry.employee?.id ||
+            entry.employee?._id ||
+            entry.employee;
+          if (!employeeId) continue;
+          const leaveDays = Number(entry.leaveDays);
+          const halfDayLeaves =
+            entry.halfDayLeaves !== undefined
+              ? Number(entry.halfDayLeaves)
+              : undefined;
+          next[String(employeeId)] = {
+            leaveDays: Number.isFinite(leaveDays) ? leaveDays : 0,
+            halfDayLeaves:
+              halfDayLeaves !== undefined && Number.isFinite(halfDayLeaves || 0)
+                ? halfDayLeaves
+                : undefined,
+          };
+        }
+        setAttendanceSummary(next);
+      } catch (e: any) {
+        if (!alive) return;
+        setAttendanceSummary({});
+        setAttendanceError(
+          e?.response?.data?.error ||
+            "Failed to load attendance-adjusted leave summary",
+        );
+      } finally {
+        if (alive) setAttendanceLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [viewMode, month]);
+
+  useEffect(() => {
+    if (viewMode !== "MONTH") {
+      let alive = true;
+      (async () => {
+        try {
+          setAdjustmentsLoading(true);
+          setAdjustmentsError(null);
+          const res = await api.get("/unpaid-leaves/adjustments", {
+            params: { scope: "all" },
+          });
+          console.log("ckdec", res);
+          if (!alive) return;
+          const rows = res?.data?.rows || [];
+          const map: Record<string, AdjustmentInfo> = {};
+          for (const row of rows) {
+            map[row.employeeId] = { deducted: Number(row.deducted || 0) };
+          }
+          setAdjustments(map);
+        } catch (e: any) {
+          if (!alive) return;
+          setAdjustments({});
+          setAdjustmentsError(
+            e?.response?.data?.error ||
+              "Failed to load unpaid leave deductions",
+          );
+        } finally {
+          if (alive) setAdjustmentsLoading(false);
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }
+    let alive = true;
+    (async () => {
+      try {
+        setAdjustmentsLoading(true);
+        setAdjustmentsError(null);
+        const res = await api.get("/unpaid-leaves/adjustments", {
+          params: { month },
+        });
+        if (!alive) return;
+        const rows = res?.data?.rows || [];
+        const map: Record<string, AdjustmentInfo> = {};
+        for (const row of rows) {
+          map[row.employeeId] = { deducted: Number(row.deducted || 0) };
+        }
+        setAdjustments(map);
+      } catch (e: any) {
+        if (!alive) return;
+        setAdjustments({});
+        setAdjustmentsError(
+          e?.response?.data?.error || "Failed to load unpaid leave deductions",
+        );
+      } finally {
+        if (alive) setAdjustmentsLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [viewMode, month]);
+
   const employeeMap = useMemo(() => {
     const map = new Map<string, EmployeeLite>();
     for (const emp of employees) map.set(emp.id, emp);
@@ -101,14 +251,25 @@ export default function LeaveReportsPage() {
   const { summaryRows, summaryTotals, detailRows } = useMemo(() => {
     const summaries = new Map<string, Portion>();
     const details: DetailRow[] = [];
+    const selectedMonth = viewMode === "MONTH" ? month : null;
 
     for (const leave of leaves) {
       const employeeId = extractEmployeeId(leave.employee);
       if (!employeeId) continue;
 
       const distribution = distributeLeaveAcrossMonths(leave);
-      const portion = distribution[month];
-      const workingDaysInMonth = countWorkingDaysInMonth(leave, month);
+      const portion =
+        viewMode === "ALL"
+          ? sumPortions(Object.values(distribution))
+          : selectedMonth
+            ? distribution[selectedMonth]
+            : undefined;
+      const workingDaysForView =
+        viewMode === "ALL"
+          ? countWorkingDays(leave)
+          : selectedMonth
+            ? countWorkingDaysInMonth(leave, selectedMonth)
+            : 0;
 
       if (leave.status === "APPROVED" && portion && portion.total > 0) {
         const current = summaries.get(employeeId) || {
@@ -126,7 +287,7 @@ export default function LeaveReportsPage() {
         summaries.set(employeeId, current);
       }
 
-      if ((portion && portion.total > 0) || workingDaysInMonth > 0) {
+      if ((portion && portion.total > 0) || workingDaysForView > 0) {
         details.push({
           leaveId: leave._id,
           employeeId,
@@ -135,15 +296,31 @@ export default function LeaveReportsPage() {
           fallbackType: leave.fallbackType,
           startDate: leave.startDate,
           endDate: leave.endDate,
-          totalDays: portion?.total || workingDaysInMonth,
+          totalDays: portion?.total || workingDaysForView,
           portion,
           reason: leave.reason,
+          isAuto: Boolean(leave.isAuto),
         });
       }
     }
 
-    const summaryList: SummaryRow[] = Array.from(summaries.entries()).map(
-      ([employeeId, portion]) => ({ employeeId, ...portion })
+    const summaryMap = new Map<string, Portion>(summaries);
+
+    // Ensure employees with only deductions still appear in summary
+    for (const [employeeId, adj] of Object.entries(adjustments)) {
+      if (!summaryMap.has(employeeId)) {
+        summaryMap.set(employeeId, {
+          paid: 0,
+          casual: 0,
+          sick: 0,
+          unpaid: 0,
+          total: 0,
+        });
+      }
+    }
+
+    const summaryList: any[] = Array.from(summaryMap.entries()).map(
+      ([employeeId, portion]) => ({ employeeId, ...portion }),
     );
 
     summaryList.sort((a, b) => {
@@ -151,24 +328,34 @@ export default function LeaveReportsPage() {
       const nameB = employeeMap.get(b.employeeId)?.name || "";
       return nameA.localeCompare(nameB);
     });
+    const summaryWithDeducted = summaryList.map((row) => ({
+      ...row,
+      deducted: adjustments[row.employeeId]?.deducted || 0,
+    }));
 
-    const totals = summaryList.reduce(
+    const totals = summaryWithDeducted.reduce(
       (acc, row) => ({
         paid: acc.paid + row.paid,
         casual: acc.casual + row.casual,
         sick: acc.sick + row.sick,
         unpaid: acc.unpaid + row.unpaid,
+        deducted: acc.deducted + row.deducted,
         total: acc.total + row.total,
       }),
-      { paid: 0, casual: 0, sick: 0, unpaid: 0, total: 0 }
+      { paid: 0, casual: 0, sick: 0, unpaid: 0, deducted: 0, total: 0 },
     );
 
-    details.sort((a, b) =>
-      new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+    details.sort(
+      (a, b) =>
+        new Date(b.startDate).getTime() - new Date(a.startDate).getTime(),
     );
 
-    return { summaryRows: summaryList, summaryTotals: totals, detailRows: details };
-  }, [leaves, month, employeeMap]);
+    return {
+      summaryRows: summaryWithDeducted,
+      summaryTotals: totals,
+      detailRows: details,
+    };
+  }, [leaves, month, viewMode, employeeMap, adjustments]);
 
   const filteredSummary = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -196,21 +383,54 @@ export default function LeaveReportsPage() {
     });
   }, [detailRows, employeeMap, search]);
 
-  const monthLabel = useMemo(() => formatMonthLabel(month), [month]);
+  const reportLabel = useMemo(
+    () => (viewMode === "ALL" ? "All time" : formatMonthLabel(month)),
+    [viewMode, month],
+  );
+
+  const attendanceAggregates = useMemo(() => {
+    let total = 0;
+    let halfDays = 0;
+    let counted = 0;
+    for (const row of filteredSummary) {
+      const entry = attendanceSummary[row.employeeId];
+      if (!entry || !Number.isFinite(entry.leaveDays)) continue;
+      total += entry.leaveDays;
+      halfDays += Number(entry.halfDayLeaves || 0);
+      counted += 1;
+    }
+    return { total, halfDays, counted };
+  }, [filteredSummary, attendanceSummary]);
+
+  const pageLoading = loading || attendanceLoading;
 
   async function downloadExcel() {
     try {
       setDownloading(true);
       const esc = (value: string) =>
-        String(value ?? "-").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+        String(value ?? "-")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;");
 
       const summaryHeader =
-        "<tr><th>Employee</th><th>Paid</th><th>Casual</th><th>Sick</th><th>Unpaid</th><th>Total Days</th></tr>";
+        "<tr><th>Employee</th><th>Paid</th><th>Casual</th><th>Sick</th><th>Unpaid</th><th>Deducted</th><th>Half Days</th><th>Total Days</th></tr>";
       const summaryRowsHtml = filteredSummary
         .map((row) => {
           const emp = employeeMap.get(row.employeeId);
           const name = emp?.name || row.employeeId;
           const email = emp?.email ? ` (${emp.email})` : "";
+          const attendanceTotals = attendanceSummary[row.employeeId];
+          const attendanceTotal = attendanceTotals?.leaveDays;
+          const hasAttendance =
+            typeof attendanceTotal === "number" &&
+            Number.isFinite(attendanceTotal);
+          const displayTotal = hasAttendance ? attendanceTotal : row.total;
+          const totalDiff =
+            hasAttendance && Math.abs(attendanceTotal - row.total) > 0.005;
+          const halfDayValue =
+            attendanceTotals && Number.isFinite(attendanceTotals.halfDayLeaves)
+              ? fmtNumber(attendanceTotals.halfDayLeaves || 0)
+              : "-";
           return `
             <tr>
               <td>${esc(name + email)}</td>
@@ -218,7 +438,11 @@ export default function LeaveReportsPage() {
               <td>${fmtNumber(row.casual)}</td>
               <td>${fmtNumber(row.sick)}</td>
               <td>${fmtNumber(row.unpaid)}</td>
-              <td>${fmtNumber(row.total)}</td>
+              <td>${fmtNumber(row.deducted)}</td>
+              <td>${halfDayValue}</td>
+              <td>${fmtNumber(displayTotal)}${
+                totalDiff ? ` (Leaves: ${fmtNumber(row.total)})` : ""
+              }</td>
             </tr>`;
         })
         .join("");
@@ -230,6 +454,10 @@ export default function LeaveReportsPage() {
           const emp = employeeMap.get(row.employeeId);
           const name = emp?.name || row.employeeId;
           const email = emp?.email ? ` (${emp.email})` : "";
+          const reasonText = row.reason || "-";
+          const decoratedReason = row.isAuto
+            ? `[AUTO] ${reasonText}`
+            : reasonText;
           return `
             <tr>
               <td>${esc(name + email)}</td>
@@ -239,7 +467,7 @@ export default function LeaveReportsPage() {
               <td>${esc(formatDate(row.endDate))}</td>
               <td>${fmtNumber(row.totalDays)}</td>
               <td>${esc(formatBreakdown(row.portion, row.type))}</td>
-              <td>${esc(row.reason || "-")}</td>
+              <td>${esc(decoratedReason)}</td>
             </tr>`;
         })
         .join("");
@@ -251,16 +479,20 @@ export default function LeaveReportsPage() {
             <title>Leave Report</title>
           </head>
           <body>
-            <h2>Leave Summary (${esc(monthLabel)})</h2>
+            <h2>Leave Summary (${esc(reportLabel)})</h2>
             <table border="1" cellspacing="0" cellpadding="4">
               <thead>${summaryHeader}</thead>
-              <tbody>${summaryRowsHtml || "<tr><td colspan=6>No data</td></tr>"}</tbody>
+              <tbody>${
+                summaryRowsHtml || "<tr><td colspan=8>No data</td></tr>"
+              }</tbody>
             </table>
             <br />
-            <h2>Leave Details (${esc(monthLabel)})</h2>
+            <h2>Leave Details (${esc(reportLabel)})</h2>
             <table border="1" cellspacing="0" cellpadding="4">
               <thead>${detailHeader}</thead>
-              <tbody>${detailRowsHtml || "<tr><td colspan=8>No data</td></tr>"}</tbody>
+              <tbody>${
+                detailRowsHtml || "<tr><td colspan=8>No data</td></tr>"
+              }</tbody>
             </table>
           </body>
         </html>`;
@@ -268,7 +500,9 @@ export default function LeaveReportsPage() {
       const blob = new Blob([html], {
         type: "application/vnd.ms-excel",
       });
-      const filename = `leave-report-${month || "current"}.xls`;
+      const filename = `leave-report-${
+        viewMode === "ALL" ? "all-time" : month || "current"
+      }.xls`;
       downloadFileBlob(blob, filename);
     } finally {
       setDownloading(false);
@@ -277,34 +511,45 @@ export default function LeaveReportsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div className="flex flex-col gap-3 ">
         <div>
           <h2 className="text-xl font-semibold">Leave Reports</h2>
-          <p className="text-sm text-muted">
-            Track approved leave utilisation across the company by month.
+          <p className="text-sm text-muted-foreground">
+            Track approved leave utilisation across the company by month or for
+            all time.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="h-10 rounded-md border border-border bg-surface px-3"
-          />
+          <select
+            value={viewMode}
+            onChange={(e) => setViewMode(e.target.value as ViewMode)}
+            className="h-10 rounded-md border border-border bg-surface px-3 text-sm"
+          >
+            <option value="MONTH">Monthly view</option>
+            <option value="ALL">All time</option>
+          </select>
+          {viewMode === "MONTH" && (
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="h-10 rounded-md border border-border bg-surface px-3"
+            />
+          )}
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter employees…"
             className="h-10 w-52 rounded-md border border-border bg-surface px-3"
           />
-          <button
+          {/* <button
             type="button"
             onClick={downloadExcel}
-            disabled={downloading}
+            disabled={downloading || attendanceLoading}
             className="h-10 rounded-md border border-border bg-white px-3 text-sm disabled:opacity-50"
           >
             {downloading ? "Preparing…" : "Download Excel"}
-          </button>
+          </button> */}
         </div>
       </div>
 
@@ -314,30 +559,51 @@ export default function LeaveReportsPage() {
         </div>
       )}
 
-      {loading ? (
-        <div className="text-sm text-muted">Loading…</div>
+      {attendanceError && (
+        <div className="rounded-md border border-warning/20 bg-warning/10 px-4 py-2 text-sm text-warning">
+          {attendanceError}
+        </div>
+      )}
+      {adjustmentsError && (
+        <div className="rounded-md border border-warning/20 bg-warning/10 px-4 py-2 text-sm text-warning">
+          {adjustmentsError}
+        </div>
+      )}
+
+      {pageLoading ? (
+        <div className="text-sm text-muted-foreground">Loading…</div>
       ) : (
         <div className="space-y-6">
           <section className="rounded-lg border border-border bg-surface shadow-sm">
             <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
               <h3 className="text-sm font-semibold">Summary by employee</h3>
-              <div className="flex gap-4 text-xs text-muted">
+              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                 <span>Paid: {fmtNumber(summaryTotals.paid)}</span>
                 <span>Casual: {fmtNumber(summaryTotals.casual)}</span>
                 <span>Sick: {fmtNumber(summaryTotals.sick)}</span>
                 <span>Unpaid: {fmtNumber(summaryTotals.unpaid)}</span>
-                <span>Total: {fmtNumber(summaryTotals.total)}</span>
+                <span>Deducted: {fmtNumber(summaryTotals.deducted)}</span>
+                <span>Total (Leaves): {fmtNumber(summaryTotals.total)}</span>
+                {attendanceAggregates.counted > 0 && (
+                  <>
+                    <span>
+                      Half Days: {fmtNumber(attendanceAggregates.halfDays)}
+                    </span>
+                  </>
+                )}
               </div>
             </header>
             <div className="overflow-auto">
               <table className="min-w-full text-sm">
                 <thead className="bg-muted/20 text-left">
                   <tr>
-                    <th className="px-4 py-3 font-medium">Employee</th>
+                    <th className="w-[30%] px-4 py-3 font-medium">Employee</th>
                     <th className="px-4 py-3 font-medium">Paid</th>
                     <th className="px-4 py-3 font-medium">Casual</th>
                     <th className="px-4 py-3 font-medium">Sick</th>
                     <th className="px-4 py-3 font-medium">Unpaid</th>
+                    <th className="px-4 py-3 font-medium">Deducted</th>
+                    <th className="px-4 py-3 font-medium">Half Days</th>
                     <th className="px-4 py-3 font-medium">Total Days</th>
                   </tr>
                 </thead>
@@ -347,26 +613,64 @@ export default function LeaveReportsPage() {
                       const emp = employeeMap.get(row.employeeId);
                       const name = emp?.name || row.employeeId;
                       const email = emp?.email;
+                      const attendanceTotals =
+                        attendanceSummary[row.employeeId];
+                      const attendanceTotal = attendanceTotals?.leaveDays;
+                      const hasAttendance =
+                        typeof attendanceTotal === "number" &&
+                        Number.isFinite(attendanceTotal);
+                      const displayTotal = hasAttendance
+                        ? attendanceTotal
+                        : row.total;
+                      const hasDifference =
+                        hasAttendance &&
+                        Math.abs(attendanceTotal - row.total) > 0.005;
+                      const halfDayCount =
+                        attendanceTotals &&
+                        Number.isFinite(attendanceTotals.halfDayLeaves)
+                          ? attendanceTotals.halfDayLeaves || 0
+                          : null;
                       return (
-                        <tr key={row.employeeId} className="border-t border-border/60">
+                        <tr
+                          key={row.employeeId}
+                          className="border-t border-border/60"
+                        >
                           <td className="px-4 py-3">
                             <div className="font-medium">{name}</div>
                             {email && (
-                              <div className="text-xs text-muted">{email}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {email}
+                              </div>
                             )}
                           </td>
                           <td className="px-4 py-3">{fmtNumber(row.paid)}</td>
                           <td className="px-4 py-3">{fmtNumber(row.casual)}</td>
                           <td className="px-4 py-3">{fmtNumber(row.sick)}</td>
                           <td className="px-4 py-3">{fmtNumber(row.unpaid)}</td>
-                          <td className="px-4 py-3 font-medium">{fmtNumber(row.total)}</td>
+                          <td className="px-4 py-3">
+                            {fmtNumber(row.deducted)}
+                          </td>
+                          <td className="px-4 py-3">
+                            {halfDayCount != null
+                              ? fmtNumber(halfDayCount)
+                              : "—"}
+                          </td>
+                          <td className="px-4 py-3 font-medium">
+                            {fmtNumber(
+                              row.total +
+                                (halfDayCount ? halfDayCount * 0.5 : 0),
+                            )}
+                          </td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
-                      <td className="px-4 py-6 text-center text-sm text-muted" colSpan={6}>
-                        No approved leaves recorded for this month.
+                      <td
+                        className="px-4 py-6 text-center text-sm text-muted-foreground"
+                        colSpan={7}
+                      >
+                        No approved leaves recorded for this view.
                       </td>
                     </tr>
                   )}
@@ -375,11 +679,13 @@ export default function LeaveReportsPage() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-border bg-surface shadow-sm">
+          {/* <section className="rounded-lg border border-border bg-surface shadow-sm">
             <header className="border-b border-border px-4 py-3">
               <h3 className="text-sm font-semibold">Leave details</h3>
-              <p className="text-xs text-muted">
-                Includes all leaves that overlap the selected month, regardless of status.
+              <p className="text-xs text-muted-foreground">
+                {viewMode === "ALL"
+                  ? "Includes every leave recorded, regardless of status."
+                  : "Includes all leaves that overlap the selected month, regardless of status."}
               </p>
             </header>
             <div className="overflow-auto">
@@ -401,41 +707,71 @@ export default function LeaveReportsPage() {
                       const emp = employeeMap.get(row.employeeId);
                       const name = emp?.name || row.employeeId;
                       const breakdown = formatBreakdown(row.portion, row.type);
-                      const dates = `${formatDate(row.startDate)} → ${formatDate(row.endDate)}`;
+                      const dates = `${formatDate(
+                        row.startDate
+                      )} → ${formatDate(row.endDate)}`;
+                      const reasonText = row.reason || "-";
+                      const reasonTitle = row.isAuto
+                        ? `${reasonText} (Auto leave)`
+                        : reasonText;
                       return (
-                        <tr key={row.leaveId} className="border-t border-border/60">
+                        <tr
+                          key={row.leaveId}
+                          className="border-t border-border/60"
+                        >
                           <td className="px-4 py-3">
                             <div className="font-medium">{name}</div>
                             {emp?.email && (
-                              <div className="text-xs text-muted">{emp.email}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {emp.email}
+                              </div>
                             )}
                           </td>
-                          <td className="px-4 py-3">{formatLeaveType(row.type)}</td>
+                          <td className="px-4 py-3">
+                            {formatLeaveType(row.type)}
+                          </td>
                           <td className="px-4 py-3">
                             <StatusPill status={row.status} />
                           </td>
-                          <td className="px-4 py-3 whitespace-nowrap">{dates}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {dates}
+                          </td>
                           <td className="px-4 py-3 font-medium">
                             {fmtNumber(row.totalDays)}
                           </td>
                           <td className="px-4 py-3">{breakdown}</td>
-                          <td className="px-4 py-3 max-w-xs truncate" title={row.reason || "-"}>
-                            {row.reason || "-"}
+                          <td
+                            className="px-4 py-3 max-w-xs"
+                            title={reasonTitle}
+                          >
+                            <div className="flex min-h-[1.5rem] min-w-0 items-center gap-2">
+                              <span className="truncate">{reasonText}</span>
+                              {row.isAuto && (
+                                <span className="rounded-full bg-muted/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Auto
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
-                      <td className="px-4 py-6 text-center text-sm text-muted" colSpan={7}>
-                        No leave applications overlap this month.
+                      <td
+                        className="px-4 py-6 text-center text-sm text-muted-foreground"
+                        colSpan={7}
+                      >
+                        {viewMode === "ALL"
+                          ? "No leave applications found in this view."
+                          : "No leave applications overlap this month."}
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
-          </section>
+          </section> */}
         </div>
       )}
     </div>
@@ -466,7 +802,10 @@ function startOfDay(date: Date) {
 }
 
 function monthKey(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}`;
 }
 
 function isWeekend(date: Date) {
@@ -493,7 +832,22 @@ function countWorkingDaysInMonth(leave: LeaveRecord, month: string) {
   return count;
 }
 
-function distributeLeaveAcrossMonths(leave: LeaveRecord): Record<string, Portion> {
+function countWorkingDays(leave: LeaveRecord) {
+  const start = startOfDay(new Date(leave.startDate));
+  const end = startOfDay(new Date(leave.endDate));
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  let count = 0;
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    if (!isWeekend(cursor)) count += 1;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return count;
+}
+
+function distributeLeaveAcrossMonths(
+  leave: LeaveRecord,
+): Record<string, Portion> {
   const start = startOfDay(new Date(leave.startDate));
   const end = startOfDay(new Date(leave.endDate));
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return {};
@@ -509,7 +863,7 @@ function distributeLeaveAcrossMonths(leave: LeaveRecord): Record<string, Portion
   }
   const totalWorkingDays = Object.values(countsByMonth).reduce(
     (sum, n) => sum + n,
-    0
+    0,
   );
   const totalAllocated =
     Number(allocations.paid || 0) +
@@ -549,11 +903,27 @@ function distributeLeaveAcrossMonths(leave: LeaveRecord): Record<string, Portion
   return portions;
 }
 
+function sumPortions(portions: Portion[]) {
+  if (!portions.length) return undefined;
+  const total = portions.reduce(
+    (acc, portion) => ({
+      paid: acc.paid + portion.paid,
+      casual: acc.casual + portion.casual,
+      sick: acc.sick + portion.sick,
+      unpaid: acc.unpaid + portion.unpaid,
+      total: acc.total + portion.total,
+    }),
+    { paid: 0, casual: 0, sick: 0, unpaid: 0, total: 0 },
+  );
+  if (total.total <= 0) return undefined;
+  return total;
+}
+
 function fmtNumber(n: number) {
   const rounded = Math.round(n * 100) / 100;
   if (Number.isNaN(rounded)) return "0";
   if (Math.abs(rounded % 1) < 1e-4) return String(Math.round(rounded));
-  return rounded.toFixed(2);
+  return rounded.toFixed(1);
 }
 
 function formatMonthLabel(month: string) {
@@ -567,7 +937,11 @@ function formatMonthLabel(month: string) {
 function formatDate(input: string) {
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
+  return d.toLocaleDateString([], {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function formatLeaveType(type: LeaveType) {
@@ -592,7 +966,9 @@ function StatusPill({ status }: { status: LeaveStatus }) {
     REJECTED: "bg-error/10 text-error border-error/30",
   };
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${colors[status]}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${colors[status]}`}
+    >
       {status.charAt(0) + status.slice(1).toLowerCase()}
     </span>
   );

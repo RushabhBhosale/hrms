@@ -79,7 +79,7 @@ export default function Invoices() {
     return (items || []).reduce(
       (acc, it: any) => {
         const subtotalRaw = Number(
-          it?.subtotal ?? it?.totalAmount ?? it?.amount ?? 0
+          it?.subtotal ?? it?.totalAmount ?? it?.amount ?? 0,
         );
         const taxRaw = Number(it?.taxTotal ?? 0);
         const subtotal = Number.isFinite(subtotalRaw) ? subtotalRaw : 0;
@@ -94,7 +94,7 @@ export default function Invoices() {
         acc.total += total;
         return acc;
       },
-      { subtotal: 0, tax: 0, total: 0 }
+      { subtotal: 0, tax: 0, total: 0 },
     );
   }, [items]);
 
@@ -133,20 +133,20 @@ export default function Invoices() {
             >
               New Invoice
             </Link>
-          <button
-            className="px-3 py-1.5 rounded-md border"
-            onClick={() =>
-              exportExcel({
-                type,
-                status,
-                q,
-                from,
-                to,
-                amountMin,
-                amountMax,
-              })
-            }
-          >
+            <button
+              className="px-3 py-1.5 rounded-md border"
+              onClick={() =>
+                exportExcel({
+                  type,
+                  status,
+                  q,
+                  from,
+                  to,
+                  amountMin,
+                  amountMax,
+                })
+              }
+            >
               Export Excel
             </button>
           </div>
@@ -257,7 +257,6 @@ export default function Invoices() {
         </div>
       </div>
 
-
       {loading ? (
         <div className="overflow-hidden border border-border rounded-xl">
           <div className="animate-pulse divide-y divide-border">
@@ -267,7 +266,7 @@ export default function Invoices() {
           </div>
         </div>
       ) : items.length === 0 ? (
-        <div className="border border-dashed border-border rounded-xl p-8 text-center text-sm text-muted">
+        <div className="border border-dashed border-border rounded-xl p-8 text-center text-sm text-muted-foreground">
           No invoices found. Try changing filters or create a new invoice.
         </div>
       ) : (
@@ -280,9 +279,7 @@ export default function Invoices() {
                 <th className="text-left p-2">Party</th>
                 <th className="text-left p-2">Status</th>
                 <th className="text-right p-2">Amount</th>
-                {isReceivable && (
-                  <th className="text-right p-2">Total</th>
-                )}
+                {isReceivable && <th className="text-right p-2">Total</th>}
                 <th className="text-right p-2">Actions</th>
               </tr>
             </thead>
@@ -291,7 +288,7 @@ export default function Invoices() {
                 const d = it.issueDate ? new Date(it.issueDate) : null;
                 const row = i % 2 ? "bg-bg" : "bg-surface/30";
                 const subtotalRaw = Number(
-                  it?.subtotal ?? it?.totalAmount ?? it?.amount ?? 0
+                  it?.subtotal ?? it?.totalAmount ?? it?.amount ?? 0,
                 );
                 const subtotal = Number.isFinite(subtotalRaw) ? subtotalRaw : 0;
                 const taxRaw = Number(it?.taxTotal ?? 0);
@@ -331,7 +328,7 @@ export default function Invoices() {
                         <div className="flex flex-col items-end leading-tight">
                           <span>{fmtMoney(subtotal)}</span>
                           {tax > 0 ? (
-                            <span className="text-xs text-muted">
+                            <span className="text-xs text-muted-foreground">
                               + Tax {fmtMoney(tax)}
                             </span>
                           ) : null}
@@ -373,7 +370,7 @@ export default function Invoices() {
                     <div className="flex flex-col items-end leading-tight">
                       <span>{fmtMoney(listTotals.subtotal)}</span>
                       {listTotals.tax > 0 ? (
-                        <span className="text-xs text-muted">
+                        <span className="text-xs text-muted-foreground">
                           + Tax {fmtMoney(listTotals.tax)}
                         </span>
                       ) : null}
@@ -456,7 +453,7 @@ async function exportPdf(opts: {
   if (opts?.amountMax) params.set("amountMax", opts.amountMax);
   const res = await api.get(
     "/invoices/reports/export-pdf?" + params.toString(),
-    { responseType: "blob" }
+    { responseType: "blob" },
   );
   const blob = new Blob([res.data], { type: "application/pdf" });
   const fname =

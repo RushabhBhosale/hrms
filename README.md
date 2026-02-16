@@ -183,7 +183,7 @@ Simplified Policy (Total + Type Caps):
 ### Documents
 
 - Employee uploads files via `POST /documents` (multipart `documents[]`)
-- Files are stored under `apps/api/uploads` and served at `/uploads/*`
+- Files are stored in S3 and served by the API at `/files/*`
 
 ### Email Notifications (optional)
 

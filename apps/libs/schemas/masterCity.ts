@@ -15,6 +15,8 @@ export const masterCitySchema = z.object({
   country: objectId,
   createdBy: objectId.optional(),
   updatedBy: objectId.optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type MasterCityInput = z.infer<typeof masterCitySchema>;

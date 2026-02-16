@@ -44,6 +44,8 @@ export const expenseSchema = z.object({
   voucher: expenseVoucherSchema,
   createdBy: objectId.optional(),
   updatedBy: objectId.optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type ExpenseInput = z.infer<typeof expenseSchema>;

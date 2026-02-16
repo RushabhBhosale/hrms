@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { toast } from 'react-hot-toast';
+import { toast } from "react-hot-toast";
 import { getEmployee } from "../lib/auth";
+import { resolveMediaUrl } from "../lib/utils";
 
 type Announcement = {
   _id: string;
@@ -10,6 +11,7 @@ type Announcement = {
   message: string;
   createdAt: string;
   expiresAt?: string | null;
+  images?: string[];
 };
 
 export default function AnnouncementsPopup() {
@@ -34,7 +36,10 @@ export default function AnnouncementsPopup() {
         const res = await api.get("/announcements");
         const anns: Announcement[] = res.data?.announcements || [];
         // Sort newest first
-        anns.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        anns.sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
         setList(anns);
 
         const lastSeenStr = lsKey ? localStorage.getItem(lsKey) : null;
@@ -65,28 +70,77 @@ export default function AnnouncementsPopup() {
     setOpen(false);
   }
 
-  const goTo = (u?.primaryRole === "ADMIN" || u?.primaryRole === "SUPERADMIN") ? "/admin/announcements" : "/app/announcements";
+  const goTo =
+    u?.primaryRole === "ADMIN" || u?.primaryRole === "SUPERADMIN"
+      ? "/admin/announcements"
+      : "/app/announcements";
+  const modalTitle =
+    unseen.length > 1
+      ? `You have ${unseen.length} announcements`
+      : unseen[0]?.title || "Announcement";
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={dismiss} />
+      <div
+        className="absolute inset-0 bg-black/40 -mt-[32px]"
+        onClick={dismiss}
+      />
       <div className="relative max-w-xl w-[92%] bg-surface border border-border rounded-lg shadow-xl p-4">
         <div className="flex items-start justify-between gap-3">
-          <h3 className="text-lg font-semibold">{unseen.length > 1 ? `You have ${unseen.length} new announcements` : "New announcement"}</h3>
-          <button onClick={dismiss} className="text-sm text-muted hover:text-text">Close</button>
+          <h3 className="text-lg font-semibold">{modalTitle}</h3>
+          <button
+            onClick={dismiss}
+            className="text-sm text-muted-foreground hover:text-text"
+          >
+            Close
+          </button>
         </div>
         <div className="mt-3 max-h-80 overflow-auto space-y-3">
           {unseen.map((a) => (
-            <div key={a._id} className="p-3 rounded-md border border-border bg-bg">
+            <div
+              key={a._id}
+              className="p-3 rounded-md border border-border bg-bg"
+            >
               <div className="font-medium">{a.title}</div>
-              <div className="text-xs text-muted">{new Date(a.createdAt).toLocaleString()} {a.expiresAt ? `• Expires ${new Date(a.expiresAt).toLocaleString()}` : ""}</div>
-              <div className="mt-2 whitespace-pre-wrap text-sm">{a.message}</div>
+              <div className="mt-2 whitespace-pre-wrap text-sm">
+                {a.message}
+              </div>
+              {!!a.images?.length && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {a.images.map((img, idx) => {
+                    const src = resolveMediaUrl(img);
+                    if (!src) return null;
+                    return (
+                      <a
+                        key={`${a._id}-${idx}`}
+                        href={src}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block overflow-hidden rounded border border-border"
+                      >
+                        <img
+                          src={src}
+                          alt={`announcement-${idx + 1}`}
+                          className="h-24 w-full object-cover"
+                        />
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ))}
         </div>
         <div className="mt-4 flex items-center justify-between">
-          <Link to={goTo} className="text-primary hover:underline">View all</Link>
-          <button onClick={dismiss} className="h-9 px-4 rounded-md bg-primary text-white">Dismiss</button>
+          <Link to={goTo} className="text-primary hover:underline">
+            View all
+          </Link>
+          <button
+            onClick={dismiss}
+            className="h-9 px-4 rounded-md bg-primary text-white"
+          >
+            Dismiss
+          </button>
         </div>
       </div>
     </div>

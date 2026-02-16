@@ -92,11 +92,11 @@ export default function AddCompany() {
       setOptionsError(null);
       const res = await api.get("/masters/countries");
       setCountries(
-        Array.isArray(res.data?.countries) ? res.data.countries : []
+        Array.isArray(res.data?.countries) ? res.data.countries : [],
       );
     } catch (error: any) {
       setOptionsError(
-        error?.response?.data?.error || "Failed to load countries"
+        error?.response?.data?.error || "Failed to load countries",
       );
       setCountries([]);
       setValue("countryId", "");
@@ -163,11 +163,11 @@ export default function AddCompany() {
       setOptionsError(null);
       const res = await api.get("/masters/company-types");
       setCompanyTypes(
-        Array.isArray(res.data?.companyTypes) ? res.data.companyTypes : []
+        Array.isArray(res.data?.companyTypes) ? res.data.companyTypes : [],
       );
     } catch (error: any) {
       setOptionsError(
-        error?.response?.data?.error || "Failed to load company types"
+        error?.response?.data?.error || "Failed to load company types",
       );
       setCompanyTypes([]);
       setValue("companyTypeId", "");
@@ -291,7 +291,7 @@ export default function AddCompany() {
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Companies</h2>
-        <p className="text-sm text-muted">Create a company.</p>
+        <p className="text-sm text-muted-foreground">Create a company.</p>
       </div>
 
       {err && (
@@ -461,8 +461,8 @@ export default function AddCompany() {
                       {countriesLoading
                         ? "Loading countries..."
                         : filteredCountries.length === 0
-                        ? "No matches"
-                        : "Select country"}
+                          ? "No matches"
+                          : "Select country"}
                     </option>
                     {filteredCountries.map((country) => (
                       <option key={country.id} value={country.id}>
@@ -493,10 +493,10 @@ export default function AddCompany() {
                       {!countryId
                         ? "Select a country first"
                         : statesLoading
-                        ? "Loading states..."
-                        : filteredStates.length === 0
-                        ? "No matches"
-                        : "Select state"}
+                          ? "Loading states..."
+                          : filteredStates.length === 0
+                            ? "No matches"
+                            : "Select state"}
                     </option>
                     {filteredStates.map((state) => (
                       <option key={state.id} value={state.id}>
@@ -522,10 +522,10 @@ export default function AddCompany() {
                       {!stateId
                         ? "Select a state first"
                         : citiesLoading
-                        ? "Loading cities..."
-                        : filteredCities.length === 0
-                        ? "No matches"
-                        : "Select city"}
+                          ? "Loading cities..."
+                          : filteredCities.length === 0
+                            ? "No matches"
+                            : "Select city"}
                     </option>
                     {filteredCities.map((city) => (
                       <option key={city.id} value={city.id}>
@@ -552,8 +552,8 @@ export default function AddCompany() {
                     {companyTypesLoading
                       ? "Loading company types..."
                       : filteredCompanyTypes.length === 0
-                      ? "No matches"
-                      : "Select company type"}
+                        ? "No matches"
+                        : "Select company type"}
                   </option>
                   {filteredCompanyTypes.map((type) => (
                     <option key={type.id} value={type.id}>
@@ -594,9 +594,9 @@ export default function AddCompany() {
         </div>
         <div className="divide-y divide-border">
           {loading ? (
-            <div className="px-6 py-4 text-sm text-muted">Loading…</div>
+            <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>
           ) : companies.length === 0 ? (
-            <div className="px-6 py-4 text-sm text-muted">
+            <div className="px-6 py-4 text-sm text-muted-foreground">
               No companies yet.
             </div>
           ) : (
@@ -606,7 +606,7 @@ export default function AddCompany() {
                 className="px-6 py-3 flex items-center justify-between"
               >
                 <div className="font-medium">{c.name}</div>
-                <div className="text-sm text-muted">
+                <div className="text-sm text-muted-foreground">
                   {c.admin
                     ? `Admin: ${c.admin.name} (${c.admin.email})`
                     : "No admin"}

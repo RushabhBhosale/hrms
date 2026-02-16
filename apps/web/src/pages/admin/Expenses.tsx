@@ -2,15 +2,17 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import {
   Download,
   Edit2,
+  EyeIcon,
   Loader2,
   Plus,
   Printer,
   RefreshCw,
+  RefreshCwOff,
   Trash2,
 } from "lucide-react";
 import { api } from "../../lib/api";
+import { resolveMediaUrl } from "../../lib/utils";
 
-const apiBase = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
 const FREQUENCIES = [
   { value: "daily", label: "Daily" },
@@ -182,7 +184,9 @@ export default function ExpensesAdmin() {
   const [existingAttachments, setExistingAttachments] = useState<string[]>([]);
   const [attachmentsToRemove, setAttachmentsToRemove] = useState<string[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [selectedExpense, setSelectedExpense] = useState<ExpenseItem | null>(null);
+  const [selectedExpense, setSelectedExpense] = useState<ExpenseItem | null>(
+    null,
+  );
 
   async function loadCategories() {
     try {
@@ -199,7 +203,7 @@ export default function ExpensesAdmin() {
     } catch (err: any) {
       console.error("load categories", err);
       setCategoryError(
-        err?.response?.data?.error || "Failed to load categories"
+        err?.response?.data?.error || "Failed to load categories",
       );
     } finally {
       setLoadingCategories(false);
@@ -283,13 +287,13 @@ export default function ExpensesAdmin() {
         payload.append("startDate", form.startDate);
         payload.append(
           "reminderDaysBefore",
-          String(Math.max(0, form.reminderDaysBefore))
+          String(Math.max(0, form.reminderDaysBefore)),
         );
       }
       if (attachmentsToRemove.length && form.id) {
         payload.append(
           "removeAttachments",
-          JSON.stringify(attachmentsToRemove)
+          JSON.stringify(attachmentsToRemove),
         );
       }
       newFiles.forEach((file) => payload.append("attachments", file));
@@ -349,7 +353,7 @@ export default function ExpensesAdmin() {
     setAttachmentsToRemove((prev) =>
       prev.includes(name)
         ? prev.filter((item) => item !== name)
-        : [...prev, name]
+        : [...prev, name],
     );
   }
 
@@ -381,7 +385,9 @@ export default function ExpensesAdmin() {
       await loadExpenses();
     } catch (err: any) {
       console.error("end recurring expense", err);
-      setFormError(err?.response?.data?.error || "Failed to end recurring expense");
+      setFormError(
+        err?.response?.data?.error || "Failed to end recurring expense",
+      );
     }
   }
 
@@ -410,7 +416,7 @@ export default function ExpensesAdmin() {
     } catch (err: any) {
       console.error("remove category", err);
       setCategoryError(
-        err?.response?.data?.error || "Failed to remove category"
+        err?.response?.data?.error || "Failed to remove category",
       );
     }
   }
@@ -457,7 +463,7 @@ export default function ExpensesAdmin() {
       rows.push([
         "Next Due",
         formatDate(
-          expense.recurring?.nextDueDate || expense.recurring?.startDate
+          expense.recurring?.nextDueDate || expense.recurring?.startDate,
         ),
       ]);
       rows.push([
@@ -488,7 +494,7 @@ export default function ExpensesAdmin() {
     ${rows
       .map(
         ([label, value]) =>
-          `<tr><td class="label">${label}</td><td>${value}</td></tr>`
+          `<tr><td class="label">${label}</td><td>${value}</td></tr>`,
       )
       .join("")}
   </table>
@@ -506,515 +512,519 @@ export default function ExpensesAdmin() {
   return (
     <>
       <div className="space-y-8">
-      <div className="grid gap-6 md:grid-cols-[2fr_1fr]">
-        <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold">Expense Entry</h2>
-            {form.id && (
-              <button
-                onClick={resetForm}
-                className="inline-flex items-center gap-2 text-xs text-accent hover:text-secondary"
-              >
-                <RefreshCw size={14} />
-                Reset
-              </button>
-            )}
-          </div>
-          {formError && (
-            <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {formError}
+        <div className="grid gap-6 md:grid-cols-[2fr_1fr]">
+          <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">Expense Entry</h2>
+              {form.id && (
+                <button
+                  onClick={resetForm}
+                  className="inline-flex items-center gap-2 text-xs text-accent hover:text-secondary"
+                >
+                  <RefreshCw size={14} />
+                  Reset
+                </button>
+              )}
             </div>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col text-sm">
-              <span className="mb-1 font-medium">Date of Expense</span>
-              <input
-                type="date"
-                value={form.date}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, date: e.target.value }))
-                }
-                className="rounded border border-border bg-white px-3 py-2"
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              <span className="mb-1 font-medium">Expense Category</span>
-              <select
-                value={form.categoryId}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, categoryId: e.target.value }))
-                }
-                className="rounded border border-border bg-white px-3 py-2"
-              >
-                <option value="" disabled>
-                  Select a category
-                </option>
-                {categories.map((cat) => (
-                  <option key={cat._id} value={cat._id}>
-                    {cat.name}
+            {formError && (
+              <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {formError}
+              </div>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="flex flex-col text-sm">
+                <span className="mb-1 font-medium">Date of Expense</span>
+                <input
+                  type="date"
+                  value={form.date}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, date: e.target.value }))
+                  }
+                  className="rounded border border-border bg-white px-3 py-2"
+                />
+              </label>
+              <label className="flex flex-col text-sm">
+                <span className="mb-1 font-medium">Expense Category</span>
+                <select
+                  value={form.categoryId}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, categoryId: e.target.value }))
+                  }
+                  className="rounded border border-border bg-white px-3 py-2"
+                >
+                  <option value="" disabled>
+                    Select a category
                   </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col text-sm sm:col-span-2">
-              <span className="mb-1 font-medium">Description / Notes</span>
+                  {categories.map((cat) => (
+                    <option key={cat._id} value={cat._id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col text-sm sm:col-span-2">
+                <span className="mb-1 font-medium">Description / Notes</span>
+                <input
+                  type="text"
+                  value={form.description}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  placeholder="Short description"
+                  className="rounded border border-border bg-white px-3 py-2"
+                />
+              </label>
+              <label className="flex flex-col text-sm">
+                <span className="mb-1 font-medium">Amount</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.amount}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, amount: e.target.value }))
+                  }
+                  className="rounded border border-border bg-white px-3 py-2"
+                  placeholder="0.00"
+                />
+              </label>
+              <label className="flex flex-col text-sm">
+                <span className="mb-1 font-medium">Paid By</span>
+                <select
+                  value={form.paidBy}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, paidBy: e.target.value }))
+                  }
+                  className="rounded border border-border bg-white px-3 py-2"
+                >
+                  {PAYMENT_MODES.map((mode) => (
+                    <option key={mode.value} value={mode.value}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col text-sm sm:col-span-2">
+                <span className="mb-1 font-medium">Attachment (optional)</span>
+                <input
+                  key={fileInputKey}
+                  type="file"
+                  multiple
+                  onChange={onFilesChange}
+                  className="rounded border border-border bg-white px-3 py-2"
+                />
+                {(newFiles.length > 0 || existingAttachments.length > 0) && (
+                  <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                    {existingAttachments.map((file) => (
+                      <li
+                        key={file}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <span>{file}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleRemoveAttachment(file)}
+                          className={`inline-flex items-center gap-1 rounded px-2 py-1 border border-border ${
+                            attachmentsToRemove.includes(file)
+                              ? "bg-red-50 text-red-600"
+                              : "bg-white text-accent"
+                          }`}
+                        >
+                          {attachmentsToRemove.includes(file)
+                            ? "Undo"
+                            : "Remove"}
+                        </button>
+                      </li>
+                    ))}
+                    {newFiles.map((file, idx) => (
+                      <li
+                        key={`${file.name}-${idx}`}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <span>{file.name}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setNewFiles((prev) =>
+                              prev.filter((_, i) => i !== idx),
+                            )
+                          }
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 border border-border text-red-600"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </label>
+
+              <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={form.isRecurring}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      isRecurring: e.target.checked,
+                    }))
+                  }
+                />
+                <span className="font-medium">Mark as Recurring Expense</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={form.generateVoucher}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      generateVoucher: e.target.checked,
+                      authorizedBy: e.target.checked ? prev.authorizedBy : "",
+                    }))
+                  }
+                />
+                <span className="font-medium">Generate Voucher</span>
+              </label>
+
+              {form.generateVoucher && (
+                <div className="sm:col-span-2 grid gap-4 md:grid-cols-2">
+                  <label className="flex flex-col text-sm">
+                    <span className="mb-1 font-medium">Authorized By</span>
+                    <input
+                      type="text"
+                      value={form.authorizedBy}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          authorizedBy: e.target.value,
+                        }))
+                      }
+                      className="rounded border border-border bg-white px-3 py-2"
+                      placeholder="Name of approver"
+                    />
+                  </label>
+                  {form.serverVoucherNumber && (
+                    <div className="text-sm text-muted-foreground self-center">
+                      Voucher No.:{" "}
+                      <span className="font-medium text-foreground/80">
+                        {form.serverVoucherNumber}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {form.isRecurring && (
+                <>
+                  <label className="flex flex-col text-sm">
+                    <span className="mb-1 font-medium">Frequency</span>
+                    <select
+                      value={form.frequency}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          frequency: e.target.value,
+                        }))
+                      }
+                      className="rounded border border-border bg-white px-3 py-2"
+                    >
+                      {FREQUENCIES.map((freq) => (
+                        <option key={freq.value} value={freq.value}>
+                          {freq.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col text-sm">
+                    <span className="mb-1 font-medium">Start Date</span>
+                    <input
+                      type="date"
+                      value={form.startDate}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          startDate: e.target.value,
+                        }))
+                      }
+                      className="rounded border border-border bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="flex flex-col text-sm">
+                    <span className="mb-1 font-medium">Reminder</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        value={form.reminderDaysBefore}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            reminderDaysBefore: Math.max(
+                              0,
+                              Number(e.target.value) || 0,
+                            ),
+                          }))
+                        }
+                        className="w-24 rounded border border-border bg-white px-3 py-2"
+                      />
+                      <span className="text-sm text-muted-foreground">
+                        day(s) before due date
+                      </span>
+                    </div>
+                  </label>
+                  <div className="sm:col-span-2 text-sm text-muted-foreground">
+                    Next Due Date:{" "}
+                    <span className="font-medium">
+                      {nextDuePreview ? formatDate(nextDuePreview) : "-"}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              <label className="flex flex-col text-sm sm:col-span-2">
+                <span className="mb-1 font-medium">Additional Notes</span>
+                <textarea
+                  value={form.notes}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, notes: e.target.value }))
+                  }
+                  rows={3}
+                  className="rounded border border-border bg-white px-3 py-2"
+                />
+              </label>
+            </div>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              {form.id && (
+                <button
+                  onClick={resetForm}
+                  className="inline-flex items-center gap-2 rounded border border-border px-4 py-2 text-sm"
+                >
+                  Cancel
+                </button>
+              )}
+              <button
+                onClick={handleSaveExpense}
+                disabled={savingExpense}
+                className="inline-flex items-center gap-2 rounded bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {savingExpense ? (
+                  <Loader2 className="animate-spin" size={16} />
+                ) : (
+                  <Plus size={16} />
+                )}
+                {form.id ? "Update Expense" : "Save Expense"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Expense Categories</h3>
+            </div>
+            {categoryError && (
+              <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {categoryError}
+              </div>
+            )}
+            <div className="flex gap-2">
               <input
                 type="text"
-                value={form.description}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, description: e.target.value }))
-                }
-                placeholder="Short description"
-                className="rounded border border-border bg-white px-3 py-2"
+                value={categoryInput}
+                onChange={(e) => setCategoryInput(e.target.value)}
+                placeholder="New category"
+                className="flex-1 rounded border border-border bg-white px-3 py-2 text-sm"
               />
-            </label>
-            <label className="flex flex-col text-sm">
-              <span className="mb-1 font-medium">Amount</span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.amount}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, amount: e.target.value }))
-                }
-                className="rounded border border-border bg-white px-3 py-2"
-                placeholder="0.00"
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              <span className="mb-1 font-medium">Paid By</span>
-              <select
-                value={form.paidBy}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, paidBy: e.target.value }))
-                }
-                className="rounded border border-border bg-white px-3 py-2"
+              <button
+                onClick={addCategory}
+                className="inline-flex items-center gap-1 rounded bg-primary px-3 py-2 text-sm font-semibold text-white"
               >
-                {PAYMENT_MODES.map((mode) => (
-                  <option key={mode.value} value={mode.value}>
-                    {mode.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col text-sm sm:col-span-2">
-              <span className="mb-1 font-medium">Attachment (optional)</span>
-              <input
-                key={fileInputKey}
-                type="file"
-                multiple
-                onChange={onFilesChange}
-                className="rounded border border-border bg-white px-3 py-2"
-              />
-              {(newFiles.length > 0 || existingAttachments.length > 0) && (
-                <ul className="mt-2 space-y-1 text-xs text-muted">
-                  {existingAttachments.map((file) => (
+                <Plus size={16} />
+                Add
+              </button>
+            </div>
+            <div className="mt-4 max-h-72 overflow-y-auto">
+              {loadingCategories ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="animate-spin" size={16} /> Loading...
+                </div>
+              ) : categories.length === 0 ? (
+                <div className="text-sm text-muted-foreground">
+                  No categories yet.
+                </div>
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {categories.map((cat) => (
                     <li
-                      key={file}
-                      className="flex items-center justify-between gap-2"
+                      key={cat._id}
+                      className="flex items-center justify-between rounded border border-border px-3 py-2"
                     >
-                      <span>{file}</span>
+                      <span>{cat.name}</span>
                       <button
-                        type="button"
-                        onClick={() => toggleRemoveAttachment(file)}
-                        className={`inline-flex items-center gap-1 rounded px-2 py-1 border border-border ${
-                          attachmentsToRemove.includes(file)
-                            ? "bg-red-50 text-red-600"
-                            : "bg-white text-accent"
-                        }`}
+                        onClick={() => removeCategory(cat._id)}
+                        className="inline-flex items-center gap-1 text-red-600"
                       >
-                        {attachmentsToRemove.includes(file) ? "Undo" : "Remove"}
-                      </button>
-                    </li>
-                  ))}
-                  {newFiles.map((file, idx) => (
-                    <li
-                      key={`${file.name}-${idx}`}
-                      className="flex items-center justify-between gap-2"
-                    >
-                      <span>{file.name}</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setNewFiles((prev) =>
-                            prev.filter((_, i) => i !== idx)
-                          )
-                        }
-                        className="inline-flex items-center gap-1 rounded px-2 py-1 border border-border text-red-600"
-                      >
+                        <Trash2 size={14} />
                         Remove
                       </button>
                     </li>
                   ))}
                 </ul>
               )}
-            </label>
-
-            <label className="flex items-center gap-2 text-sm sm:col-span-2">
-              <input
-                type="checkbox"
-                checked={form.isRecurring}
-                onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    isRecurring: e.target.checked,
-                  }))
-                }
-              />
-              <span className="font-medium">Mark as Recurring Expense</span>
-            </label>
-
-            <label className="flex items-center gap-2 text-sm sm:col-span-2">
-              <input
-                type="checkbox"
-                checked={form.generateVoucher}
-                onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    generateVoucher: e.target.checked,
-                    authorizedBy: e.target.checked ? prev.authorizedBy : "",
-                  }))
-                }
-              />
-              <span className="font-medium">Generate Voucher</span>
-            </label>
-
-            {form.generateVoucher && (
-              <div className="sm:col-span-2 grid gap-4 md:grid-cols-2">
-                <label className="flex flex-col text-sm">
-                  <span className="mb-1 font-medium">Authorized By</span>
-                  <input
-                    type="text"
-                    value={form.authorizedBy}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        authorizedBy: e.target.value,
-                      }))
-                    }
-                    className="rounded border border-border bg-white px-3 py-2"
-                    placeholder="Name of approver"
-                  />
-                </label>
-                {form.serverVoucherNumber && (
-                  <div className="text-sm text-muted self-center">
-                    Voucher No.:{" "}
-                    <span className="font-medium text-foreground/80">
-                      {form.serverVoucherNumber}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {form.isRecurring && (
-              <>
-                <label className="flex flex-col text-sm">
-                  <span className="mb-1 font-medium">Frequency</span>
-                  <select
-                    value={form.frequency}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        frequency: e.target.value,
-                      }))
-                    }
-                    className="rounded border border-border bg-white px-3 py-2"
-                  >
-                    {FREQUENCIES.map((freq) => (
-                      <option key={freq.value} value={freq.value}>
-                        {freq.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col text-sm">
-                  <span className="mb-1 font-medium">Start Date</span>
-                  <input
-                    type="date"
-                    value={form.startDate}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        startDate: e.target.value,
-                      }))
-                    }
-                    className="rounded border border-border bg-white px-3 py-2"
-                  />
-                </label>
-                <label className="flex flex-col text-sm">
-                  <span className="mb-1 font-medium">Reminder</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="0"
-                      value={form.reminderDaysBefore}
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          reminderDaysBefore: Math.max(
-                            0,
-                            Number(e.target.value) || 0
-                          ),
-                        }))
-                      }
-                      className="w-24 rounded border border-border bg-white px-3 py-2"
-                    />
-                    <span className="text-sm text-muted">
-                      day(s) before due date
-                    </span>
-                  </div>
-                </label>
-                <div className="sm:col-span-2 text-sm text-muted">
-                  Next Due Date:{" "}
-                  <span className="font-medium">
-                    {nextDuePreview ? formatDate(nextDuePreview) : "-"}
-                  </span>
-                </div>
-              </>
-            )}
-
-            <label className="flex flex-col text-sm sm:col-span-2">
-              <span className="mb-1 font-medium">Additional Notes</span>
-              <textarea
-                value={form.notes}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, notes: e.target.value }))
-                }
-                rows={3}
-                className="rounded border border-border bg-white px-3 py-2"
-              />
-            </label>
-          </div>
-          <div className="mt-6 flex items-center justify-end gap-3">
-            {form.id && (
-              <button
-                onClick={resetForm}
-                className="inline-flex items-center gap-2 rounded border border-border px-4 py-2 text-sm"
-              >
-                Cancel
-              </button>
-            )}
-            <button
-              onClick={handleSaveExpense}
-              disabled={savingExpense}
-              className="inline-flex items-center gap-2 rounded bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {savingExpense ? (
-                <Loader2 className="animate-spin" size={16} />
-              ) : (
-                <Plus size={16} />
-              )}
-              {form.id ? "Update Expense" : "Save Expense"}
-            </button>
+            </div>
           </div>
         </div>
 
         <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Expense Categories</h3>
-            <button
-              onClick={loadCategories}
-              className="inline-flex items-center gap-1 text-xs text-accent hover:text-secondary"
-            >
-              <RefreshCw size={14} />
-              Refresh
-            </button>
+            <h3 className="text-lg font-semibold">Tracked Expenses</h3>
           </div>
-          {categoryError && (
-            <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              {categoryError}
+          {loadingExpenses ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="animate-spin" size={16} /> Loading expenses...
             </div>
-          )}
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={categoryInput}
-              onChange={(e) => setCategoryInput(e.target.value)}
-              placeholder="New category"
-              className="flex-1 rounded border border-border bg-white px-3 py-2 text-sm"
-            />
-            <button
-              onClick={addCategory}
-              className="inline-flex items-center gap-1 rounded bg-primary px-3 py-2 text-sm font-semibold text-white"
-            >
-              <Plus size={16} />
-              Add
-            </button>
-          </div>
-          <div className="mt-4 max-h-72 overflow-y-auto">
-            {loadingCategories ? (
-              <div className="flex items-center gap-2 text-sm text-muted">
-                <Loader2 className="animate-spin" size={16} /> Loading...
-              </div>
-            ) : categories.length === 0 ? (
-              <div className="text-sm text-muted">No categories yet.</div>
-            ) : (
-              <ul className="space-y-2 text-sm">
-                {categories.map((cat) => (
-                  <li
-                    key={cat._id}
-                    className="flex items-center justify-between rounded border border-border px-3 py-2"
-                  >
-                    <span>{cat.name}</span>
-                    <button
-                      onClick={() => removeCategory(cat._id)}
-                      className="inline-flex items-center gap-1 text-red-600"
-                    >
-                      <Trash2 size={14} />
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Tracked Expenses</h3>
-          <button
-            onClick={loadExpenses}
-            className="inline-flex items-center gap-1 rounded border border-border px-3 py-1.5 text-xs"
-          >
-            <RefreshCw size={14} />
-            Refresh
-          </button>
-        </div>
-        {loadingExpenses ? (
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <Loader2 className="animate-spin" size={16} /> Loading expenses...
-          </div>
-        ) : expenses.length === 0 ? (
-          <div className="text-sm text-muted">No expenses recorded yet.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-border text-sm">
-              <thead className="bg-muted/20">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Date</th>
-                  <th className="px-3 py-2 text-left font-medium">Category</th>
-                  <th className="px-3 py-2 text-right font-medium">Amount</th>
-                  <th className="px-3 py-2 text-left font-medium">Paid By</th>
-                  <th className="px-3 py-2 text-left font-medium">Recurring</th>
-                  <th className="px-3 py-2 text-right font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {expenses.map((expense) => {
-                  const categoryLabel =
-                    expense.category?.name || expense.categoryName;
-                  const amountFormatted = expense.amount.toLocaleString(
-                    "en-IN",
-                    {
-                      style: "currency",
-                      currency: "INR",
-                      minimumFractionDigits: 2,
-                    }
-                  );
-                  return (
-                    <tr key={expense._id} className="hover:bg-muted/10">
-                      <td className="px-3 py-2 align-top w-32">
-                        {formatDate(expense.date)}
-                      </td>
-                      <td className="px-3 py-2 align-top">{categoryLabel}</td>
-                      {/* <td className="px-3 py-2 align-top max-w-[200px]">
+          ) : expenses.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              No expenses recorded yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border text-sm">
+                <thead className="bg-muted/20">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Date</th>
+                    <th className="px-3 py-2 text-left font-medium">
+                      Category
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium">Amount</th>
+                    <th className="px-3 py-2 text-left font-medium">Paid By</th>
+                    <th className="px-3 py-2 text-left font-medium">
+                      Recurring
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {expenses.map((expense) => {
+                    const categoryLabel =
+                      expense.category?.name || expense.categoryName;
+                    const amountFormatted = expense.amount.toLocaleString(
+                      "en-IN",
+                      {
+                        style: "currency",
+                        currency: "INR",
+                        minimumFractionDigits: 2,
+                      },
+                    );
+                    return (
+                      <tr key={expense._id} className="hover:bg-muted/10">
+                        <td className="px-3 py-2 align-top w-32">
+                          {formatDate(expense.date)}
+                        </td>
+                        <td className="px-3 py-2 align-top">{categoryLabel}</td>
+                        {/* <td className="px-3 py-2 align-top max-w-[200px]">
                         <div className="text-sm font-medium text-foreground/90">
                           {expense.description || "-"}
                         </div>
                         {expense.notes && (
-                          <div className="text-xs text-muted">
+                          <div className="text-xs text-muted-foreground">
                             {expense.notes}
                           </div>
                         )}
                       </td> */}
-                      <td className="px-3 py-2 align-top text-right font-semibold">
-                        {amountFormatted}
-                      </td>
-                      <td className="px-3 py-2 align-top uppercase">
-                        {expense.paidBy}
-                      </td>
-                      <td className="px-3 py-2 align-top">
-                        {expense.isRecurring ? (
-                          <div className="space-y-1">
-                            <div className="text-xs font-semibold text-emerald-600">
-                              {expense.recurring?.frequency || "-"}
+                        <td className="px-3 py-2 align-top text-right font-semibold">
+                          {amountFormatted}
+                        </td>
+                        <td className="px-3 py-2 align-top uppercase">
+                          {expense.paidBy}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          {expense.isRecurring ? (
+                            <div className="space-y-1">
+                              <div className="text-xs font-semibold text-emerald-600">
+                                {expense.recurring?.frequency || "-"}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Next:{" "}
+                                {formatDate(expense.recurring?.nextDueDate)}
+                              </div>
                             </div>
-                            <div className="text-xs text-muted">
-                              Next: {formatDate(expense.recurring?.nextDueDate)}
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted">No</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 align-top">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => setSelectedExpense(expense)}
-                            className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs"
-                            title="View Details"
-                          >
-                            View
-                          </button>
-                          {/* <button
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              No
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => setSelectedExpense(expense)}
+                              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs"
+                              title="View Details"
+                            >
+                              <EyeIcon size={14} />
+                            </button>
+                            {/* <button
                             onClick={() => downloadExpense(expense)}
                             className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs"
                             title="Download"
                           >
                             <Download size={14} />
                           </button> */}
-                          <button
-                            onClick={() => printExpense(expense)}
-                            className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs"
-                            title="Print"
-                          >
-                            <Printer size={14} />
-                          </button>
-                          {expense.isRecurring && (
                             <button
-                              onClick={() => endRecurring(expense)}
-                              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-amber-600"
-                              title="End Recurring"
+                              onClick={() => printExpense(expense)}
+                              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs"
+                              title="Print"
                             >
-                              End Recurring
+                              <Printer size={14} />
                             </button>
-                          )}
-                          <button
-                            onClick={() => startEdit(expense)}
-                            className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs"
-                            title="Edit"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                          <button
-                            onClick={() => deleteExpense(expense._id)}
-                            className="inline-flex items-center gap-1 rounded border border-red-300 px-2 py-1 text-xs text-red-600"
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                            {expense.isRecurring && (
+                              <button
+                                onClick={() => endRecurring(expense)}
+                                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-amber-600"
+                                title="End Recurring"
+                              >
+                                <RefreshCwOff size={14} />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => startEdit(expense)}
+                              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs"
+                              title="Edit"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                            <button
+                              onClick={() => deleteExpense(expense._id)}
+                              className="inline-flex items-center gap-1 rounded border border-red-300 px-2 py-1 text-xs text-red-600"
+                              title="Delete"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
       {selectedExpense && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-2xl rounded-lg border border-border bg-surface text-sm shadow-xl">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div>
                 <h4 className="text-lg font-semibold">Expense Details</h4>
-                <p className="text-xs text-muted">
+                <p className="text-xs text-muted-foreground">
                   Recorded on {formatDate(selectedExpense.date)}
                 </p>
               </div>
@@ -1028,109 +1038,126 @@ export default function ExpensesAdmin() {
             <div className="max-h-[70vh] overflow-y-auto px-4 py-4 space-y-4">
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
-                  <span className="text-muted">Category</span>
+                  <span className="text-muted-foreground">Category</span>
                   <div className="font-medium">
-                    {selectedExpense.category?.name || selectedExpense.categoryName}
+                    {selectedExpense.category?.name ||
+                      selectedExpense.categoryName}
                   </div>
                 </div>
                 <div>
-                  <span className="text-muted">Amount</span>
+                  <span className="text-muted-foreground">Amount</span>
                   <div className="font-medium">
-                    {selectedExpense.amount.toLocaleString('en-IN', {
-                      style: 'currency',
-                      currency: 'INR',
+                    {selectedExpense.amount.toLocaleString("en-IN", {
+                      style: "currency",
+                      currency: "INR",
                       minimumFractionDigits: 2,
                     })}
                   </div>
                 </div>
                 <div>
-                  <span className="text-muted">Paid By</span>
-                  <div className="font-medium uppercase">{selectedExpense.paidBy}</div>
+                  <span className="text-muted-foreground">Paid By</span>
+                  <div className="font-medium uppercase">
+                    {selectedExpense.paidBy}
+                  </div>
                 </div>
                 <div>
-                  <span className="text-muted">Created</span>
+                  <span className="text-muted-foreground">Created</span>
                   <div>{formatDate(selectedExpense.createdAt)}</div>
                 </div>
               </div>
 
               <div>
-                <span className="text-muted">Description</span>
+                <span className="text-muted-foreground">Description</span>
                 <div className="whitespace-pre-wrap">
-                  {selectedExpense.description || '—'}
+                  {selectedExpense.description || "—"}
                 </div>
               </div>
               <div>
-                <span className="text-muted">Notes</span>
-                <div className="whitespace-pre-wrap">{selectedExpense.notes || '—'}</div>
+                <span className="text-muted-foreground">Notes</span>
+                <div className="whitespace-pre-wrap">
+                  {selectedExpense.notes || "—"}
+                </div>
               </div>
 
               {selectedExpense.isRecurring && (
                 <div className="grid gap-3 md:grid-cols-2">
                   <div>
-                    <span className="text-muted">Frequency</span>
+                    <span className="text-muted-foreground">Frequency</span>
                     <div className="font-medium">
-                      {selectedExpense.recurring?.frequency || '—'}
+                      {selectedExpense.recurring?.frequency || "—"}
                     </div>
                   </div>
                   <div>
-                    <span className="text-muted">Next Due</span>
-                    <div>{formatDate(selectedExpense.recurring?.nextDueDate)}</div>
-                  </div>
-                  <div>
-                    <span className="text-muted">Start Date</span>
-                    <div>{formatDate(selectedExpense.recurring?.startDate)}</div>
-                  </div>
-                  <div>
-                    <span className="text-muted">Reminder</span>
+                    <span className="text-muted-foreground">Next Due</span>
                     <div>
-                      {selectedExpense.recurring?.reminderDaysBefore ?? 0} day(s) before
+                      {formatDate(selectedExpense.recurring?.nextDueDate)}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Start Date</span>
+                    <div>
+                      {formatDate(selectedExpense.recurring?.startDate)}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Reminder</span>
+                    <div>
+                      {selectedExpense.recurring?.reminderDaysBefore ?? 0}{" "}
+                      day(s) before
                     </div>
                   </div>
                 </div>
               )}
 
-              {selectedExpense.hasVoucher && selectedExpense.voucher?.number && (
-                <div className="space-y-2">
-                  <div className="font-medium">Voucher</div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div>
-                      <span className="text-muted">Voucher No.</span>
-                      <div className="font-medium">{selectedExpense.voucher.number}</div>
-                    </div>
-                    <div>
-                      <span className="text-muted">Authorized By</span>
-                      <div>{selectedExpense.voucher.authorizedBy || '—'}</div>
-                    </div>
-                    <div>
-                      <span className="text-muted">Generated</span>
+              {selectedExpense.hasVoucher &&
+                selectedExpense.voucher?.number && (
+                  <div className="space-y-2">
+                    <div className="font-medium">Voucher</div>
+                    <div className="grid gap-3 md:grid-cols-2">
                       <div>
-                        {selectedExpense.voucher.generatedAt
-                          ? formatDate(selectedExpense.voucher.generatedAt)
-                          : '—'}
+                        <span className="text-muted-foreground">
+                          Voucher No.
+                        </span>
+                        <div className="font-medium">
+                          {selectedExpense.voucher.number}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">
+                          Authorized By
+                        </span>
+                        <div>{selectedExpense.voucher.authorizedBy || "—"}</div>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Generated</span>
+                        <div>
+                          {selectedExpense.voucher.generatedAt
+                            ? formatDate(selectedExpense.voucher.generatedAt)
+                            : "—"}
+                        </div>
                       </div>
                     </div>
+                    {selectedExpense.voucher.pdfFile && (
+                      <a
+                        href={resolveMediaUrl(selectedExpense.voucher.pdfFile) || "#"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 text-accent hover:text-secondary"
+                      >
+                        <Download size={14} /> Download Voucher PDF
+                      </a>
+                    )}
                   </div>
-                  {selectedExpense.voucher.pdfFile && (
-                    <a
-                      href={`${apiBase}/uploads/${selectedExpense.voucher.pdfFile}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 text-accent hover:text-secondary"
-                    >
-                      <Download size={14} /> Download Voucher PDF
-                    </a>
-                  )}
-                </div>
-              )}
+                )}
 
               <div>
-                <span className="text-muted">Attachments</span>
+                <span className="text-muted-foreground">Attachments</span>
                 {selectedExpense.attachments?.length ? (
                   <ul className="mt-1 space-y-1">
                     {selectedExpense.attachments.map((file) => (
                       <li key={file}>
                         <a
-                          href={`${apiBase}/uploads/${file}`}
+                          href={resolveMediaUrl(file) || "#"}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-accent hover:text-secondary"

@@ -29,7 +29,7 @@ const schema = z.object({
     .transform((v) => (v === "" ? undefined : v))
     .refine(
       (v) => v === undefined || /^\d{4}-\d{2}$/.test(v),
-      "Invalid month format"
+      "Invalid month format",
     ),
 });
 
@@ -79,11 +79,11 @@ export default function RegisterCompany() {
       setCountriesLoading(true);
       const res = await api.get("/masters/countries");
       setCountries(
-        Array.isArray(res.data?.countries) ? res.data.countries : []
+        Array.isArray(res.data?.countries) ? res.data.countries : [],
       );
     } catch (err: any) {
       setOptionsError(
-        err?.response?.data?.error || "Failed to load countries."
+        err?.response?.data?.error || "Failed to load countries.",
       );
       setCountries([]);
       setValue("countryId", "");
@@ -147,11 +147,11 @@ export default function RegisterCompany() {
       setCompanyTypesLoading(true);
       const res = await api.get("/masters/company-types");
       setCompanyTypes(
-        Array.isArray(res.data?.companyTypes) ? res.data.companyTypes : []
+        Array.isArray(res.data?.companyTypes) ? res.data.companyTypes : [],
       );
     } catch (err: any) {
       setOptionsError(
-        err?.response?.data?.error || "Failed to load company types."
+        err?.response?.data?.error || "Failed to load company types.",
       );
       setCompanyTypes([]);
       setValue("companyTypeId", "");
@@ -180,7 +180,7 @@ export default function RegisterCompany() {
     try {
       await api.post("/companies/register", values);
       setSuccess(
-        "Thanks! Your registration was submitted. A superadmin will review it shortly."
+        "Thanks! Your registration was submitted. A superadmin will review it shortly.",
       );
       reset();
     } catch (e: any) {
@@ -211,7 +211,7 @@ export default function RegisterCompany() {
         <div className="flex items-center justify-center">
           <section className="bg-white rounded-lg border border-border shadow-sm p-6 w-full max-w-2xl">
             <h2 className="text-xl font-semibold">Register your company</h2>
-            <p className="text-sm text-muted mt-1">
+            <p className="text-sm text-muted-foreground mt-1">
               Submit your details and we’ll notify your admin after approval.
             </p>
 
@@ -316,7 +316,7 @@ export default function RegisterCompany() {
                   label="Leave Applicable From"
                   type="month"
                 />
-                <p className="text-xs text-muted -mt-2">
+                <p className="text-xs text-muted-foreground -mt-2">
                   Optional: choose the starting month for monthly leave accrual.
                 </p>
 
@@ -327,7 +327,7 @@ export default function RegisterCompany() {
                 >
                   {isSubmitting ? "Submitting…" : "Submit Registration"}
                 </button>
-                <p className="text-xs text-muted text-center">
+                <p className="text-xs text-muted-foreground text-center">
                   Already approved?{" "}
                   <Link to="/login" className="underline">
                     Login
@@ -339,7 +339,7 @@ export default function RegisterCompany() {
         </div>
       </main>
 
-      <footer className="border-t border-border py-6 text-center text-xs text-muted">
+      <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground">
         © {new Date().getFullYear()} HRMS — All rights reserved.
       </footer>
     </div>
@@ -415,7 +415,7 @@ function PasswordField({
         <button
           type="button"
           onClick={() => setShow((v) => !v)}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           aria-label={show ? "Hide password" : "Show password"}
         >
           {show ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -469,8 +469,8 @@ function RHFSelect({
               {disabled
                 ? loadingText || "Loading…"
                 : options.length === 0
-                ? "No options"
-                : placeholder || "Select option"}
+                  ? "No options"
+                  : placeholder || "Select option"}
             </option>
             {options.map((opt) => (
               <option key={opt.value} value={opt.value}>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import { api } from "../../lib/api";
+import { GripVertical } from "lucide-react";
 
 type FieldType = "text" | "number" | "date";
 type FieldCategory = "earning" | "deduction" | "info";
@@ -88,7 +89,7 @@ const BasicTemplateSchema = z
             code: z.ZodIssueCode.custom,
             message: `Duplicate key: ${k}`,
             path: ["fields", i, "key"],
-          })
+          }),
         );
       }
     }
@@ -109,6 +110,8 @@ export default function SalaryTemplate() {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<"all" | FieldCategory>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | FieldType>("all");
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   const [zodErrors, setZodErrors] = useState<Record<string, string>>({});
 
@@ -179,7 +182,7 @@ export default function SalaryTemplate() {
           basicPercent: Number.isFinite(Number(s.basicPercent))
             ? Number(s.basicPercent)
             : Number(
-                normalized.find((x) => x.key === "basic_earned")?.defaultValue
+                normalized.find((x) => x.key === "basic_earned")?.defaultValue,
               ) || 0,
           hraPercent: Number.isFinite(Number(s.hraPercent))
             ? Number(s.hraPercent)
@@ -188,7 +191,7 @@ export default function SalaryTemplate() {
           medicalAmount: Number.isFinite(Number(s.medicalAmount))
             ? Number(s.medicalAmount)
             : Number(
-                normalized.find((x) => x.key === "medical")?.defaultValue
+                normalized.find((x) => x.key === "medical")?.defaultValue,
               ) || 0,
         };
 
@@ -232,7 +235,7 @@ export default function SalaryTemplate() {
       if (!f.label.trim() || !k) invalidIdx.push(i);
     });
     const dupes = new Set(
-      [...map.entries()].filter(([, c]) => c > 1).map(([k]) => k)
+      [...map.entries()].filter(([, c]) => c > 1).map(([k]) => k),
     );
     return {
       hasDuplicateKeys: dupes.size > 0,
@@ -259,7 +262,7 @@ export default function SalaryTemplate() {
     if (!parsed.success) {
       const e: Record<string, string> = {};
       parsed.error.issues.forEach(
-        (iss) => (e[iss.path.join(".")] = iss.message)
+        (iss) => (e[iss.path.join(".")] = iss.message),
       );
       setZodErrors(e);
       return false;
@@ -344,7 +347,7 @@ export default function SalaryTemplate() {
           next.key = slugify(next.label || "");
         if ("key" in patch) next.key = slugify(String(patch.key || ""));
         return next;
-      })
+      }),
     );
   }
 
@@ -360,6 +363,31 @@ export default function SalaryTemplate() {
       return prev.filter((_, idx) => idx !== i);
     });
   }
+
+  const isLockedField = useCallback(
+    (field?: Field | null) =>
+      !!(field && (field.locked || PROTECTED_KEYS.has(field.key))),
+    [],
+  );
+
+  const reorderFields = useCallback(
+    (sourceId: string, targetId: string) => {
+      if (!sourceId || !targetId || sourceId === targetId) return;
+      setFields((prev) => {
+        const next = [...prev];
+        const fromIdx = next.findIndex((f) => f.id === sourceId);
+        const toIdx = next.findIndex((f) => f.id === targetId);
+        if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
+        const source = next[fromIdx];
+        const target = next[toIdx];
+        if (isLockedField(source) || isLockedField(target)) return prev;
+        const [moved] = next.splice(fromIdx, 1);
+        next.splice(toIdx, 0, moved);
+        return next.map((f, idx) => ({ ...f, order: idx }));
+      });
+    },
+    [isLockedField],
+  );
 
   useEffect(() => {
     const fs = fields.map((f, i) => ({ ...f, order: i }));
@@ -396,6 +424,9 @@ export default function SalaryTemplate() {
           {counts.total} • {counts.earning} earning • {counts.deduction}{" "}
           deduction • {counts.info} info
         </span>
+        <span className="text-xs text-muted-foreground">
+          Drag the handle to reorder fields
+        </span>
         <div className="ml-auto flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <input
             value={q}
@@ -429,7 +460,7 @@ export default function SalaryTemplate() {
       <div className="rounded-md border border-border bg-surface p-2">
         <div className="max-h-[70vh] overflow-auto pr-1">
           {filtered.length === 0 && (
-            <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted">
+            <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               No fields match.
             </div>
           )}
@@ -447,22 +478,87 @@ export default function SalaryTemplate() {
 
               const { unitLabel, prefix, suffix } = unitForField(f);
               const valueLabel = `Value${unitLabel ? ` (${unitLabel})` : ""}`;
+              const isDragOver = dragOverId === f.id;
+              const isDragging = draggingId === f.id;
 
               return (
                 <div
                   key={f.id}
                   className={`rounded border ${
                     isInvalid ? "border-amber-600" : "border-border"
-                  } bg-white p-2`}
+                  } bg-white p-2 ${
+                    isDragOver ? "ring-2 ring-primary/40" : ""
+                  } ${isDragging ? "opacity-80" : ""}`}
+                  onDragOver={(e) => {
+                    if (!draggingId || isProtected) return;
+                    const draggedField = fields.find(
+                      (fld) => fld.id === draggingId,
+                    );
+                    if (!draggedField || isLockedField(draggedField)) return;
+                    e.preventDefault();
+                    setDragOverId(f.id);
+                  }}
+                  onDragEnter={(e) => {
+                    if (!draggingId || isProtected) return;
+                    const draggedField = fields.find(
+                      (fld) => fld.id === draggingId,
+                    );
+                    if (!draggedField || isLockedField(draggedField)) return;
+                    e.preventDefault();
+                    setDragOverId(f.id);
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverId === f.id) setDragOverId(null);
+                  }}
+                  onDrop={(e) => {
+                    if (!draggingId || isProtected) return;
+                    e.preventDefault();
+                    reorderFields(draggingId, f.id);
+                    setDragOverId(null);
+                    setDraggingId(null);
+                  }}
                 >
                   <div className="mb-1 flex items-center gap-2">
+                    <button
+                      type="button"
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded border text-lg leading-none ${
+                        isProtected
+                          ? "cursor-not-allowed border-border/70 bg-slate-100 text-muted-foreground"
+                          : "cursor-grab border-border bg-slate-50 text-slate-600 hover:border-slate-400"
+                      }`}
+                      title={
+                        isProtected
+                          ? "System field order is locked"
+                          : "Drag to reorder"
+                      }
+                      draggable={!isProtected}
+                      onDragStart={(e) => {
+                        if (isProtected) return;
+                        setDraggingId(f.id);
+                        setDragOverId(null);
+                        try {
+                          e.dataTransfer?.setData("text/plain", f.id);
+                        } catch (_) {
+                          // ignore
+                        }
+                        if (e.dataTransfer)
+                          e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragEnd={() => {
+                        setDraggingId(null);
+                        setDragOverId(null);
+                      }}
+                      aria-label="Drag to reorder"
+                    >
+                      <GripVertical className="size-4" />
+                    </button>
                     <span
                       className={`rounded px-2 py-0.5 text-[10px] ${
                         (f.category || "info") === "earning"
                           ? "bg-emerald-100 text-emerald-800"
                           : (f.category || "info") === "deduction"
-                          ? "bg-rose-100 text-rose-800"
-                          : "bg-slate-100 text-slate-800"
+                            ? "bg-rose-100 text-rose-800"
+                            : "bg-slate-100 text-slate-800"
                       }`}
                     >
                       {f.category || "info"}
@@ -489,7 +585,9 @@ export default function SalaryTemplate() {
 
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
                     <div>
-                      <div className="mb-0.5 text-[10px] text-muted">Label</div>
+                      <div className="mb-0.5 text-[10px] text-muted-foreground">
+                        Label
+                      </div>
                       <input
                         value={f.label}
                         onChange={(e) =>
@@ -514,7 +612,7 @@ export default function SalaryTemplate() {
                     </div>
 
                     <div>
-                      <div className="mb-0.5 flex items-center justify-between text-[10px] text-muted">
+                      <div className="mb-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
                         <span>Key</span>
                         <label className="inline-flex items-center gap-1 text-[10px]">
                           <input
@@ -548,7 +646,7 @@ export default function SalaryTemplate() {
 
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <div className="mb-0.5 text-[10px] text-muted">
+                        <div className="mb-0.5 text-[10px] text-muted-foreground">
                           Type
                         </div>
                         <select
@@ -568,7 +666,7 @@ export default function SalaryTemplate() {
                         </select>
                       </div>
                       <div>
-                        <div className="mb-0.5 text-[10px] text-muted">
+                        <div className="mb-0.5 text-[10px] text-muted-foreground">
                           Category
                         </div>
                         <select
@@ -589,7 +687,7 @@ export default function SalaryTemplate() {
                     </div>
 
                     <div>
-                      <div className="mb-0.5 text-[10px] text-muted">
+                      <div className="mb-0.5 text-[10px] text-muted-foreground">
                         {valueLabel}
                       </div>
                       <div className="flex items-stretch gap-1">
@@ -603,8 +701,8 @@ export default function SalaryTemplate() {
                             f.type === "number"
                               ? "number"
                               : f.type === "date"
-                              ? "date"
-                              : "text"
+                                ? "date"
+                                : "text"
                           }
                           value={f.defaultValue ?? ""}
                           onChange={(e) =>
@@ -642,7 +740,7 @@ export default function SalaryTemplate() {
                             <option value="fixed">Fixed</option>
                             <option value="percent">Percent</option>
                           </select>
-                          <span className="self-center text-[10px] text-muted">
+                          <span className="self-center text-[10px] text-muted-foreground">
                             {f.amountType === "percent"
                               ? "Interpreted as %"
                               : "Fixed amount"}
@@ -699,10 +797,10 @@ export default function SalaryTemplate() {
                 hasDuplicateKeys
                   ? "Duplicate keys"
                   : invalids.size
-                  ? "Fix empty label/key"
-                  : Object.keys(zodErrors).length
-                  ? "Fix validation errors"
-                  : undefined
+                    ? "Fix empty label/key"
+                    : Object.keys(zodErrors).length
+                      ? "Fix validation errors"
+                      : undefined
               }
             >
               Save

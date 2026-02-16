@@ -1,6 +1,5 @@
 const router = require("express").Router();
 const path = require("path");
-const fs = require("fs");
 const mongoose = require("mongoose");
 const ExcelJS = require("exceljs");
 
@@ -11,7 +10,12 @@ const MasterState = require("../models/MasterState");
 const MasterCity = require("../models/MasterCity");
 const CompanyTypeMaster = require("../models/CompanyTypeMaster");
 
-const { upload } = require("../utils/uploads");
+const {
+  upload,
+  loadFileBuffer,
+  getStoredFileId,
+  deleteStoredFile,
+} = require("../utils/fileStorage");
 
 function slug(value) {
   if (!value) return "";
@@ -88,6 +92,7 @@ function parseSheet(sheet, fieldMap, requiredFields = []) {
 }
 
 async function buildSummary() {
+  const liveFilter = { isDeleted: { $ne: true }, isActive: { $ne: false } };
   const [
     countries,
     states,
@@ -98,14 +103,14 @@ async function buildSummary() {
     lastCity,
     lastCompanyType,
   ] = await Promise.all([
-    MasterCountry.countDocuments(),
-    MasterState.countDocuments(),
-    MasterCity.countDocuments(),
-    CompanyTypeMaster.countDocuments(),
-    MasterCountry.findOne().sort({ updatedAt: -1 }).lean(),
-    MasterState.findOne().sort({ updatedAt: -1 }).lean(),
-    MasterCity.findOne().sort({ updatedAt: -1 }).lean(),
-    CompanyTypeMaster.findOne().sort({ updatedAt: -1 }).lean(),
+    MasterCountry.countDocuments(liveFilter),
+    MasterState.countDocuments(liveFilter),
+    MasterCity.countDocuments(liveFilter),
+    CompanyTypeMaster.countDocuments(liveFilter),
+    MasterCountry.findOne(liveFilter).sort({ updatedAt: -1 }).lean(),
+    MasterState.findOne(liveFilter).sort({ updatedAt: -1 }).lean(),
+    MasterCity.findOne(liveFilter).sort({ updatedAt: -1 }).lean(),
+    CompanyTypeMaster.findOne(liveFilter).sort({ updatedAt: -1 }).lean(),
   ]);
 
   const toMeta = (count, doc) => ({
@@ -139,7 +144,7 @@ router.get(
 router.get("/countries", async (req, res) => {
   try {
     const { q } = req.query || {};
-    const filter = {};
+    const filter = { isDeleted: { $ne: true }, isActive: { $ne: false } };
     if (typeof q === "string" && q.trim()) {
       filter.name = { $regex: new RegExp(q.trim(), "i") };
     }
@@ -166,7 +171,7 @@ router.get("/countries", async (req, res) => {
 router.get("/states", async (req, res) => {
   try {
     const { countryId, countryKey, q } = req.query || {};
-    const filter = {};
+    const filter = { isDeleted: { $ne: true }, isActive: { $ne: false } };
     let hasCountryFilter = false;
 
     if (typeof countryId === "string" && countryId.trim()) {
@@ -221,7 +226,7 @@ router.get("/states", async (req, res) => {
 router.get("/cities", async (req, res) => {
   try {
     const { stateId, stateKey, countryId, countryKey, q } = req.query || {};
-    const filter = {};
+    const filter = { isDeleted: { $ne: true }, isActive: { $ne: false } };
     let hasFilter = false;
 
     if (typeof stateId === "string" && stateId.trim()) {
@@ -297,7 +302,7 @@ router.get("/cities", async (req, res) => {
 router.get("/company-types", async (req, res) => {
   try {
     const { q } = req.query || {};
-    const filter = {};
+    const filter = { isDeleted: { $ne: true }, isActive: { $ne: false } };
     if (typeof q === "string" && q.trim()) {
       filter.name = { $regex: new RegExp(q.trim(), "i") };
     }
@@ -399,7 +404,7 @@ router.post(
   requirePrimary(["SUPERADMIN"]),
   upload.single("file"),
   async (req, res) => {
-    const filePath = req.file?.path;
+    const fileId = req.file ? getStoredFileId(req.file) : null;
     if (!req.file) {
       return res.status(400).json({
         error: "Please upload an Excel file with the masters data.",
@@ -408,7 +413,7 @@ router.post(
 
     const ext = path.extname(req.file.originalname || "").toLowerCase();
     if (ext !== ".xlsx") {
-      if (filePath) fs.promises.unlink(filePath).catch(() => {});
+      if (fileId) await deleteStoredFile(fileId);
       return res.status(400).json({
         error: "Unsupported file. Please upload a .xlsx workbook.",
       });
@@ -433,7 +438,13 @@ router.post(
 
     try {
       const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(filePath);
+      const buffer =
+        req.file.buffer || (fileId ? await loadFileBuffer(fileId) : null);
+      if (!buffer) {
+        await deleteStoredFile(fileId);
+        return res.status(400).json({ error: "Failed to read uploaded file." });
+      }
+      await workbook.xlsx.load(buffer);
 
       const normalizeSheetName = (value) =>
         value
@@ -886,7 +897,7 @@ router.post(
       console.error("masters import err", err);
       res.status(500).json({ error: "Failed to import master data." });
     } finally {
-      if (filePath) fs.promises.unlink(filePath).catch(() => {});
+      if (fileId) await deleteStoredFile(fileId);
     }
   }
 );

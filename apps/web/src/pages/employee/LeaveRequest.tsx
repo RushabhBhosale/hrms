@@ -1,9 +1,34 @@
-import { useEffect, useMemo, useState, FormEvent } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "react-hot-toast";
+import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
+import { CalendarIcon } from "lucide-react";
+
 import { api } from "../../lib/api";
-import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
 import { getEmployee, setAuth, LeaveBalances } from "../../lib/auth";
-import { StatusBadge } from "../../components/ui/StatusBadge";
+import { formatDateDisplay } from "../../lib/utils";
+import {
+  Th,
+  Td,
+  SkeletonRows,
+  PaginationFooter,
+} from "../../components/utils/Table";
+import { StatusBadge } from "../../components/utils/StatusBadge";
+
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+type LeaveAllocations = {
+  paid?: number;
+  casual?: number;
+  sick?: number;
+  unpaid?: number;
+};
 
 type Leave = {
   _id: string;
@@ -13,6 +38,8 @@ type Leave = {
   reason?: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
   adminMessage?: string;
+  allocations?: LeaveAllocations;
+  approver?: { _id: string; name: string; email?: string };
 };
 
 type FormState = {
@@ -33,16 +60,68 @@ function daysBetween(start?: string, end?: string) {
   const d1 = new Date(start);
   const d2 = new Date(end);
 
-  if (isNaN(d1.getTime()) || isNaN(d2.getTime())) {
-    console.warn("Invalid dates:", start, end);
-    return 0;
-  }
+  if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return 0;
 
   d1.setUTCHours(0, 0, 0, 0);
   d2.setUTCHours(0, 0, 0, 0);
 
   return Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 }
+
+function computedLeaveDays(leave: Leave) {
+  const alloc = leave.allocations;
+  if (alloc) {
+    const total =
+      Number(alloc.paid || 0) +
+      Number(alloc.casual || 0) +
+      Number(alloc.sick || 0) +
+      Number(alloc.unpaid || 0);
+    if (total > 0) return total;
+  }
+  return daysBetween(leave.startDate, leave.endDate);
+}
+
+function formatType(l: Leave) {
+  const parts: string[] = [];
+  const fmt = (n?: number) =>
+    Number.isFinite(n)
+      ? Math.abs((n ?? 0) % 1) < 1e-4
+        ? `${Math.round(n!)}`
+        : `${Math.round((n || 0) * 100) / 100}`
+      : null;
+  const add = (label: string, val?: number) => {
+    const num = fmt(val);
+    if (num && Number(num) > 0) parts.push(`${num} ${label}`);
+  };
+  add("Paid", l.allocations?.paid);
+  add("Casual", l.allocations?.casual);
+  add("Sick", l.allocations?.sick);
+  add("Unpaid", l.allocations?.unpaid);
+  if (parts.length) return parts.join(" + ");
+  return l.type;
+}
+
+function formatLeaveDays(value: number) {
+  const rounded = Math.round(value * 100) / 100;
+  if (!Number.isFinite(rounded)) return "0";
+  if (Math.abs(rounded % 1) < 1e-4) return String(Math.round(rounded));
+  return rounded.toFixed(2);
+}
+
+function toISODate(d: Date) {
+  return format(d, "yyyy-MM-dd");
+}
+
+function fromISODate(s: string) {
+  if (!s) return undefined;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+const isWeekend = (d: Date) => {
+  const day = d.getDay();
+  return day === 0 || day === 6;
+};
 
 export default function LeaveRequest() {
   const [form, setForm] = useState<FormState>({
@@ -51,24 +130,38 @@ export default function LeaveRequest() {
     reason: "",
     type: "PAID",
   });
+
+  const [range, setRange] = useState<DateRange | undefined>(() => {
+    const from = fromISODate(form.startDate);
+    const to = fromISODate(form.endDate);
+    if (from && to) return { from, to };
+    if (from) return { from, to: from };
+    return undefined;
+  });
+  const [months, setMonths] = useState(1);
+
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+
   const [balances, setBalances] = useState<LeaveBalances | null>(
-    () => getEmployee()?.leaveBalances || null
+    () => getEmployee()?.leaveBalances || null,
   );
   const [totalAvail, setTotalAvail] = useState<number>(
-    () => getEmployee()?.totalLeaveAvailable || 0
+    () => getEmployee()?.totalLeaveAvailable || 0,
   );
+
   const [employees, setEmployees] = useState<EmployeeLite[]>([]);
   const [notifyIds, setNotifyIds] = useState<string[]>([]);
+
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | Leave["status"]>(
-    "ALL"
+    "ALL",
   );
   const [typeFilter, setTypeFilter] = useState<"ALL" | Leave["type"]>("ALL");
+
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
   const [sortKey, setSortKey] = useState<
@@ -97,19 +190,15 @@ export default function LeaveRequest() {
     async function refreshBalances() {
       try {
         const res = await api.get("/auth/me");
-        console.log("hsd", res.data);
         setBalances(res.data.employee.leaveBalances);
         setTotalAvail(res.data.employee.totalLeaveAvailable || 0);
         const token = localStorage.getItem("token");
         if (token) setAuth(token, res.data.employee);
-      } catch (e) {
-        console.error(e);
-      }
+      } catch (_) {}
     }
     refreshBalances();
   }, []);
 
-  // Load company employees for notification selection
   useEffect(() => {
     (async () => {
       try {
@@ -120,32 +209,48 @@ export default function LeaveRequest() {
           name: e.name,
           email: e.email,
         }));
-        // Exclude self from list
         if (me) list = list.filter((e) => e.id !== me.id);
-        // Sort by name
         list.sort((a, b) => a.name.localeCompare(b.name));
         setEmployees(list);
-      } catch (_) {
-        // ignore; UI will hide selector if cannot load
-      }
+      } catch (_) {}
     })();
   }, []);
 
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  useEffect(() => {
+    if (!range?.from) {
+      setForm((p) => ({ ...p, startDate: "", endDate: "" }));
+      return;
+    }
+    setForm((p) => ({
+      ...p,
+      startDate: toISODate(range.from!),
+      endDate: toISODate(range.to ?? range.from!),
+    }));
+  }, [range]);
+
+  useEffect(() => {
+    const updateMonths = () =>
+      setMonths(
+        typeof window !== "undefined" && window.innerWidth < 640 ? 1 : 2,
+      );
+    updateMonths();
+    window.addEventListener("resize", updateMonths);
+    return () => window.removeEventListener("resize", updateMonths);
+  }, []);
+
   const canSubmit = useMemo(() => {
     if (!form.startDate || !form.endDate) return false;
     if (new Date(form.endDate) < new Date(form.startDate)) return false;
     return true;
   }, [form.startDate, form.endDate]);
 
-  // Derived lists for table: search, filters, sorting, pagination (client-side)
   const leavesFiltered = useMemo(() => {
     const term = q.trim().toLowerCase();
     return leaves.filter(
       (l) =>
         (statusFilter === "ALL" || l.status === statusFilter) &&
         (typeFilter === "ALL" || l.type === typeFilter) &&
-        (!term || (l.adminMessage || "").toLowerCase().includes(term))
+        (!term || (l.adminMessage || "").toLowerCase().includes(term)),
     );
   }, [leaves, q, statusFilter, typeFilter]);
 
@@ -157,11 +262,7 @@ export default function LeaveRequest() {
         case "end":
           return dir * (+new Date(a.endDate) - +new Date(b.endDate));
         case "days":
-          return (
-            dir *
-            (daysBetween(a.startDate, a.endDate) -
-              daysBetween(b.startDate, b.endDate))
-          );
+          return dir * (computedLeaveDays(a) - computedLeaveDays(b));
         case "type":
           return dir * a.type.localeCompare(b.type);
         case "status":
@@ -177,14 +278,41 @@ export default function LeaveRequest() {
   const totalFiltered = leavesSorted.length;
   const pages = useMemo(
     () => Math.max(1, Math.ceil(totalFiltered / Math.max(1, limit))),
-    [totalFiltered, limit]
+    [totalFiltered, limit],
   );
+
   const pageRows = useMemo(
     () => leavesSorted.slice((page - 1) * limit, (page - 1) * limit + limit),
-    [leavesSorted, page, limit]
+    [leavesSorted, page, limit],
   );
 
   const days = daysBetween(form.startDate, form.endDate);
+
+  const disabledRanges = useMemo(
+    () =>
+      leaves
+        .filter((l) => l.status !== "REJECTED")
+        .map((l) => {
+          const from = new Date(l.startDate);
+          const to = new Date(l.endDate);
+          if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
+            return null;
+          return { from, to };
+        })
+        .filter(Boolean) as { from: Date; to: Date }[],
+    [leaves],
+  );
+
+  function handleRangeSelect(next?: DateRange) {
+    if (!next) {
+      setRange(undefined);
+      return;
+    }
+    if (next.from && isWeekend(next.from)) return;
+    if (next.to && isWeekend(next.to)) return;
+    setRange(next);
+  }
+
   const advanceNoticeDays = useMemo(() => {
     if (!form.startDate) return null;
     const start = new Date(form.startDate);
@@ -192,44 +320,55 @@ export default function LeaveRequest() {
     const today = new Date();
     start.setHours(0, 0, 0, 0);
     today.setHours(0, 0, 0, 0);
-    return Math.floor((start.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.floor(
+      (start.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+    );
   }, [form.startDate]);
+
   const requiresAdvanceNotice = days >= 3;
   const advanceNoticeSatisfied =
     !requiresAdvanceNotice ||
     (advanceNoticeDays !== null && advanceNoticeDays >= ADVANCE_NOTICE_DAYS);
-  const advanceNoticeViolation = requiresAdvanceNotice && !advanceNoticeSatisfied;
+  const advanceNoticeViolation =
+    requiresAdvanceNotice && !advanceNoticeSatisfied;
+
   const selectedAvail = useMemo(() => {
     if (!balances) return 0;
     const capRemain: Record<FormState["type"], number> = {
       CASUAL: balances.casual || 0,
       PAID: balances.paid || 0,
       SICK: balances.sick || 0,
-      UNPAID: Infinity,
+      UNPAID: Number.POSITIVE_INFINITY,
     };
-    if (form.type === "UNPAID") return Infinity;
+    if (form.type === "UNPAID") return Number.POSITIVE_INFINITY;
     return Math.max(0, Math.min(capRemain[form.type], totalAvail));
   }, [balances, form.type, totalAvail]);
-  const needsFallback =
-    form.type !== "UNPAID" &&
-    days > 0 &&
-    selectedAvail < days &&
-    (form.fallbackType = "UNPAID");
+
+  const needsFallback = useMemo(() => {
+    if (form.type === "UNPAID") return false;
+    if (days <= 0) return false;
+    if (!Number.isFinite(selectedAvail)) return false;
+    return selectedAvail < days;
+  }, [form.type, days, selectedAvail]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
+
     setErr(null);
     setOk(null);
+
     if (advanceNoticeViolation) {
       const msg = `Leaves of 3 or more days must be applied at least ${ADVANCE_NOTICE_DAYS} days in advance.`;
       toast.error(msg);
       setErr(msg);
       return;
     }
+
     try {
       setSending(true);
       await api.post("/leaves", { ...form, notify: notifyIds });
+      setRange(undefined);
       setForm({ startDate: "", endDate: "", reason: "", type: "CASUAL" });
       setNotifyIds([]);
       setOk("Leave request submitted");
@@ -245,7 +384,7 @@ export default function LeaveRequest() {
     <div className="space-y-8">
       <header>
         <h2 className="text-3xl font-bold">Request Leave</h2>
-        <p className="text-sm text-muted">
+        <p className="text-sm text-muted-foreground">
           Create a new leave request and track its status.
         </p>
       </header>
@@ -265,23 +404,23 @@ export default function LeaveRequest() {
         <section className="rounded-lg border border-border bg-surface shadow-sm p-5">
           <h3 className="text-lg font-semibold mb-4">Leave Balances</h3>
           <div className="grid grid-cols-2 gap-4 text-sm">
-            {balances?.casual !== 0 && <div>Casual: {balances.casual}</div>}
-            {balances?.paid !== 0 && <div>Paid: {balances.paid}</div>}
-            {balances?.sick !== 0 && <div>Sick: {balances.sick}</div>}
-            {balances?.unpaid !== 0 && <div>Unpaid: {balances.unpaid}</div>}
+            {balances.casual !== 0 && <div>Casual: {balances.casual}</div>}
+            {balances.paid !== 0 && <div>Paid: {balances.paid}</div>}
+            {balances.sick !== 0 && <div>Sick: {balances.sick}</div>}
+            {balances.unpaid !== 0 && <div>Unpaid: {balances.unpaid}</div>}
 
-            <div className="col-span-2 text-muted">
+            <div className="col-span-2 text-muted-foreground">
               Total Available leaves this month: {totalAvail}
             </div>
           </div>
         </section>
       )}
 
-      {/* Form */}
-      <section className="rounded-lg border border-border bg-surface shadow-sm">
+      <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
         <div className="border-b border-border px-6 py-4">
           <h3 className="text-lg font-semibold">New Request</h3>
         </div>
+
         <form onSubmit={submit} className="px-6 py-5 space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
@@ -290,10 +429,10 @@ export default function LeaveRequest() {
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
                 value={form.type}
                 onChange={(e) =>
-                  setForm({
-                    ...form,
+                  setForm((p) => ({
+                    ...p,
                     type: e.target.value as FormState["type"],
-                  })
+                  }))
                 }
               >
                 {balances?.casual !== 0 && (
@@ -304,29 +443,61 @@ export default function LeaveRequest() {
                 <option value="UNPAID">Unpaid</option>
               </select>
             </div>
-            <div className="space-y-2">
+
+            <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium required-label">
-                Start date
+                Date range
               </label>
-              <input
-                type="date"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.startDate}
-                onChange={(e) =>
-                  setForm({ ...form, startDate: e.target.value })
-                }
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium required-label">
-                End date
-              </label>
-              <input
-                type="date"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                value={form.endDate}
-                onChange={(e) => setForm({ ...form, endDate: e.target.value })}
-              />
+
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-start gap-1.5 border-border bg-surface px-2 py-1.5 text-xs font-normal"
+                  >
+                    <CalendarIcon className="h-3.5 w-3.5" />
+                    {range?.from ? (
+                      range.to ? (
+                        <span className="text-[11px]">
+                          {format(range.from, "LLL dd, y")} -{" "}
+                          {format(range.to, "LLL dd, y")}
+                        </span>
+                      ) : (
+                        <span className="text-[11px]">
+                          {format(range.from, "LLL dd, y")}
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground">
+                        Pick a date range
+                      </span>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+
+                <PopoverContent
+                  className="w-[min(520px,95vw)] p-2 bg-surface/95 border border-border/70 shadow-md rounded-lg"
+                  align="start"
+                  sideOffset={8}
+                >
+                  <Calendar
+                    mode="range"
+                    numberOfMonths={2}
+                    selected={range}
+                    onSelect={handleRangeSelect}
+                    defaultMonth={range?.from}
+                    disabled={disabledRanges}
+                    className="p-0 text-xs [&_.rdp-months]:gap-3 [&_.rdp-caption_label]:text-xs [&_.rdp-day_button]:text-[11px]"
+                  />
+                </PopoverContent>
+              </Popover>
+
+              {!form.startDate || !form.endDate ? (
+                <div className="text-xs text-muted-foreground">
+                  Select a start and end date
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -337,82 +508,47 @@ export default function LeaveRequest() {
               className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
               placeholder="Optional note for your manager"
               value={form.reason}
-              onChange={(e) => setForm({ ...form, reason: e.target.value })}
+              onChange={(e) =>
+                setForm((p) => ({ ...p, reason: e.target.value }))
+              }
             />
-            <div className="text-xs text-muted">
+            <div className="text-xs text-muted-foreground">
               {form.startDate && form.endDate && days > 0
                 ? `Duration: ${days} day${days > 1 ? "s" : ""}`
                 : "Select start and end dates"}
             </div>
+
             {advanceNoticeViolation && (
               <div className="text-xs text-error">
-                Leaves of 3 or more days must be applied at least {ADVANCE_NOTICE_DAYS} days in advance.
+                Leaves of 3 or more days must be applied at least{" "}
+                {ADVANCE_NOTICE_DAYS} days in advance.
               </div>
             )}
           </div>
 
           {needsFallback && (
-            <div className="text-xs text-muted">
-              You have only {selectedAvail} {form.type.toLowerCase()} leave(s).
-              The remaining {Math.max(0, days - selectedAvail)} day(s) will be
-              marked as Unpaid.
-            </div>
-          )}
-
-          {/* Notify recipients */}
-          {employees.length > 0 && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">
-                Notify Others (optional)
-              </label>
-              <div className="text-xs text-muted">
-                Default recipients: Company Admin and your reporting person(s)
-              </div>
-              <div className="rounded-md border border-border p-3 bg-bg">
-                <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2">
-                  {employees.map((emp) => {
-                    const checked = notifyIds.includes(emp.id);
-                    return (
-                      <label
-                        key={emp.id}
-                        className="flex items-center gap-2 text-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4"
-                          checked={checked}
-                          onChange={(e) => {
-                            setNotifyIds((prev) =>
-                              e.target.checked
-                                ? Array.from(new Set([...prev, emp.id]))
-                                : prev.filter((id) => id !== emp.id)
-                            );
-                          }}
-                        />
-                        <span className="truncate">
-                          {emp.name}{" "}
-                          <span className="text-muted">({emp.email})</span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
+            <div className="text-xs text-error">
+              You have only {Number.isFinite(selectedAvail) ? selectedAvail : 0}{" "}
+              {form.type.toLowerCase()} leave(s). The remaining{" "}
+              {Math.max(
+                0,
+                days - (Number.isFinite(selectedAvail) ? selectedAvail : 0),
+              )}{" "}
+              day(s) will be marked as Unpaid.
             </div>
           )}
 
           <div className="pt-2 flex items-center gap-2">
-            <button
-              type="submit"
-              disabled={!canSubmit || sending}
-              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
-            >
+            <Button type="submit" disabled={!canSubmit || sending}>
               {sending ? "Submitting…" : "Submit"}
-            </button>
-            <button
+            </Button>
+
+            <Button
               type="button"
-              className="rounded-md border border-border px-3 py-2"
+              variant="outline"
+              disabled={sending}
               onClick={() => {
+                setRange(undefined);
                 setForm({
                   startDate: "",
                   endDate: "",
@@ -421,10 +557,9 @@ export default function LeaveRequest() {
                 });
                 setNotifyIds([]);
               }}
-              disabled={sending}
             >
               Reset
-            </button>
+            </Button>
           </div>
 
           {!canSubmit && (form.startDate || form.endDate) && (
@@ -435,19 +570,16 @@ export default function LeaveRequest() {
         </form>
       </section>
 
-      {/* List */}
       <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
-        <div className="border-b border-border px-4 py-3 flex items-center justify-between">
-          <div className="text-sm text-muted">
+        <div className="border-b border-border px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm text-muted-foreground">
             {loading
               ? "Loading…"
               : `Showing ${
                   totalFiltered === 0 ? 0 : (page - 1) * limit + 1
-                }-${Math.min(
-                  totalFiltered,
-                  page * limit
-                )} of ${totalFiltered} requests`}
+                }-${Math.min(totalFiltered, page * limit)} of ${totalFiltered} requests`}
           </div>
+
           <div className="flex items-center gap-2">
             <select
               className="h-9 rounded-md border border-border bg-surface px-2 text-sm"
@@ -466,7 +598,6 @@ export default function LeaveRequest() {
           </div>
         </div>
 
-        {/* Controls */}
         <div className="px-4 py-3 flex flex-wrap gap-2">
           <select
             className="h-9 rounded-md border border-border bg-surface px-3"
@@ -481,6 +612,7 @@ export default function LeaveRequest() {
             <option value="APPROVED">Approved</option>
             <option value="REJECTED">Rejected</option>
           </select>
+
           <select
             className="h-9 rounded-md border border-border bg-surface px-3"
             value={typeFilter}
@@ -495,6 +627,7 @@ export default function LeaveRequest() {
             <option value="UNPAID">Unpaid</option>
             <option value="SICK">Sick</option>
           </select>
+
           <input
             value={q}
             onChange={(e) => {
@@ -506,7 +639,6 @@ export default function LeaveRequest() {
           />
         </div>
 
-        {/* Desktop table */}
         <div className="hidden md:block">
           <table className="w-full text-sm">
             <thead className="bg-bg">
@@ -521,6 +653,7 @@ export default function LeaveRequest() {
                 >
                   Start
                 </Th>
+
                 <Th
                   sortable
                   onSort={() => {
@@ -531,6 +664,7 @@ export default function LeaveRequest() {
                 >
                   End
                 </Th>
+
                 <Th
                   sortable
                   onSort={() => {
@@ -541,6 +675,7 @@ export default function LeaveRequest() {
                 >
                   Days
                 </Th>
+
                 <Th
                   sortable
                   onSort={() => {
@@ -551,6 +686,7 @@ export default function LeaveRequest() {
                 >
                   Type
                 </Th>
+
                 <Th
                   sortable
                   onSort={() => {
@@ -561,27 +697,38 @@ export default function LeaveRequest() {
                 >
                   Status
                 </Th>
+
+                <Th>Approved By</Th>
                 <Th>Message</Th>
               </tr>
             </thead>
+
             <tbody>
               {loading ? (
-                <SkeletonRows rows={6} cols={6} />
+                <SkeletonRows rows={6} cols={7} />
               ) : pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-muted">
+                  <td
+                    colSpan={7}
+                    className="px-4 py-6 text-center text-muted-foreground"
+                  >
                     No leave requests yet.
                   </td>
                 </tr>
               ) : (
                 pageRows.map((l) => (
                   <tr key={l._id} className="border-t border-border/70">
-                    <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
-                    <Td>{new Date(l.endDate).toLocaleDateString()}</Td>
-                    <Td>{daysBetween(l.startDate, l.endDate)}</Td>
-                    <Td>{l.type}</Td>
+                    <Td>{formatDateDisplay(l.startDate)}</Td>
+                    <Td>{formatDateDisplay(l.endDate)}</Td>
+                    <Td>{formatLeaveDays(computedLeaveDays(l))}</Td>
+                    <Td>{formatType(l)}</Td>
                     <Td>
                       <StatusBadge status={l.status as Leave["status"]} />
+                    </Td>
+                    <Td>
+                      {l.status === "APPROVED"
+                        ? l.approver?.name || "—"
+                        : "-"}
                     </Td>
                     <Td>
                       <span
@@ -598,7 +745,6 @@ export default function LeaveRequest() {
           </table>
         </div>
 
-        {/* Mobile cards */}
         <div className="md:hidden divide-y divide-border">
           {loading ? (
             <div className="p-4 space-y-3">
@@ -614,7 +760,7 @@ export default function LeaveRequest() {
               ))}
             </div>
           ) : pageRows.length === 0 ? (
-            <div className="px-4 py-6 text-center text-muted">
+            <div className="px-4 py-6 text-center text-muted-foreground">
               No leave requests yet.
             </div>
           ) : (
@@ -622,38 +768,42 @@ export default function LeaveRequest() {
               <div key={l._id} className="p-4">
                 <div className="flex items-center justify-between">
                   <div className="font-medium">
-                    {new Date(l.startDate).toLocaleDateString()} →{" "}
-                    {new Date(l.endDate).toLocaleDateString()}
+                    {formatDateDisplay(l.startDate)} →{" "}
+                    {formatDateDisplay(l.endDate)}
                   </div>
                   <StatusBadge status={l.status as Leave["status"]} />
                 </div>
+
                 <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                  <div className="text-muted">Days</div>
-                  <div>{daysBetween(l.startDate, l.endDate)}</div>
-                  <div className="text-muted">Type</div>
-                  <div>{l.type}</div>
-                  <div className="text-muted">Message</div>
+                  <div className="text-muted-foreground">Days</div>
+                  <div>{formatLeaveDays(computedLeaveDays(l))}</div>
+
+                  <div className="text-muted-foreground">Type</div>
+                  <div>{formatType(l)}</div>
+
+                  <div className="text-muted-foreground">Approved By</div>
+                  <div>{l.status === "APPROVED" ? l.approver?.name || "—" : "-"}</div>
+
+                  <div className="text-muted-foreground">Message</div>
                   <div className="col-span-1">{l.adminMessage || "-"}</div>
                 </div>
               </div>
             ))
           )}
         </div>
-      </section>
 
-      <div className="flex items-center justify-end">
-        <Pagination
-          page={page}
-          pages={pages}
-          onFirst={() => setPage(1)}
-          onPrev={() => setPage((p) => Math.max(1, p - 1))}
-          onNext={() => setPage((p) => Math.min(pages, p + 1))}
-          onLast={() => setPage(pages)}
-          disabled={loading}
-        />
-      </div>
+        <div className="border-t border-border px-4 py-3">
+          <PaginationFooter
+            page={page}
+            pages={pages}
+            onFirst={() => setPage(1)}
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => Math.min(pages, p + 1))}
+            onLast={() => setPage(pages)}
+            disabled={loading}
+          />
+        </div>
+      </section>
     </div>
   );
 }
-
-// Using shared Th, Td, SkeletonRows, Pagination from components/ui/Table

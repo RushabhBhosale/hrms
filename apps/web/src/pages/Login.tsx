@@ -7,7 +7,7 @@ import { api } from "../lib/api";
 import { setAuth } from "../lib/auth";
 import { applyTheme } from "../lib/theme";
 import { LoginSchema, type LoginValues } from "../schemas/auth";
-import { PasswordField } from "../components/ui/PasswordInput";
+import { PasswordField } from "../components/utils/PasswordInput";
 import toast from "react-hot-toast";
 
 export default function Login() {
@@ -60,7 +60,6 @@ export default function Login() {
     }
   };
 
-  console.log("dhscds", user);
   if (user?.primaryRole === "ADMIN") return <Navigate to="/admin" replace />;
   if (user?.primaryRole) return <Navigate to="/app" replace />;
 
@@ -123,7 +122,7 @@ export default function Login() {
             </Link>
           </div>
 
-          <p className="text-xs text-muted text-center">
+          <p className="text-xs text-muted-foreground text-center">
             Don't have an account?{" "}
             <Link to="/register-company" className="underline">
               Register

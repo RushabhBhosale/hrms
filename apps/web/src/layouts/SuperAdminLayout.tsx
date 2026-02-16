@@ -1,44 +1,78 @@
-import {
-  Outlet,
-  NavLink,
-  useLocation,
-  useNavigate,
-  useMatch,
-} from "react-router-dom";
-import { clearAuth, getEmployee } from "../lib/auth";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentType } from "react";
+import { Outlet, useLocation, useNavigate, useMatch } from "react-router-dom";
+import { clearAuth } from "../lib/auth";
+import { useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard,
   Building2,
   LogOut,
-  Menu,
-  X,
   User,
-  ChevronDown,
-  ChevronRight,
-  PanelLeftClose,
-  PanelLeftOpen,
+  X,
+  UserCircle2Icon,
 } from "lucide-react";
+import LayoutSidebar from "../components/LayoutSidebar";
+import LayoutNavbar, { ProfileMenuItem } from "../components/LayoutNavbar";
+import { useSidebarOpenSections } from "../hooks/useSidebarSections";
+import { useCurrentEmployee } from "../hooks/useCurrentEmployee";
+
+type Item = {
+  to: string;
+  label: string;
+  icon: ComponentType<{ size?: number | string }>;
+};
+
+type Section = {
+  key: string;
+  label: string;
+  items: Item[];
+};
 
 export default function SuperAdminLayout() {
   const nav = useNavigate();
   const { pathname } = useLocation();
-  const u = getEmployee();
+  const { employee: u } = useCurrentEmployee();
+
+  const dashboardMatch = useMatch({ path: "/superadmin", end: true });
+  const companiesMatch = useMatch("/superadmin/companies/*");
+  const profileMatch = useMatch("/superadmin/profile/*");
 
   const [desktopOpen, setDesktopOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [companiesOpen, setCompaniesOpen] = useState(
-    pathname.startsWith("/superadmin/companies")
-  );
-
-  const companiesMatch = useMatch("/superadmin/companies/*");
-  const dashboardMatch = useMatch({ path: "/superadmin", end: true });
-  const profileMatch = useMatch("/superadmin/profile/*");
-
   useEffect(() => setMobileOpen(false), [pathname]);
-  useEffect(() => {
-    setCompaniesOpen(pathname.startsWith("/superadmin/companies"));
-  }, [pathname]);
+
+  const sections = useMemo<Section[]>(
+    () => [
+      {
+        key: "overview",
+        label: "Overview",
+        items: [
+          { to: "/superadmin", label: "Dashboard", icon: LayoutDashboard },
+        ],
+      },
+      {
+        key: "companies",
+        label: "Companies",
+        items: [
+          {
+            to: "/superadmin/companies",
+            label: "All Companies",
+            icon: Building2,
+          },
+          {
+            to: "/superadmin/companies/add",
+            label: "Add Company",
+            icon: Building2,
+          },
+        ],
+      },
+      {
+        key: "profile",
+        label: "Profile",
+        items: [{ to: "/superadmin/profile", label: "Profile", icon: User }],
+      },
+    ],
+    []
+  );
 
   const title = useMemo(() => {
     if (dashboardMatch) return "Dashboard";
@@ -48,6 +82,30 @@ export default function SuperAdminLayout() {
     return "Superadmin";
   }, [pathname, companiesMatch, dashboardMatch, profileMatch]);
 
+  const STORAGE_KEY = "superadminSidebarOpenSections";
+  const autoOpenKey = useMemo(() => {
+    if (pathname.startsWith("/superadmin/companies")) return "companies";
+    if (pathname.startsWith("/superadmin/profile")) return "profile";
+    if (pathname === "/superadmin") return "overview";
+    return sections[0]?.key ?? "overview";
+  }, [pathname, sections]);
+
+  const { openSections, toggleSection } = useSidebarOpenSections(
+    STORAGE_KEY,
+    autoOpenKey
+  );
+
+  const itemIsActive = (to: string) => {
+    if (to === "/superadmin") return pathname === "/superadmin";
+    return pathname === to || pathname.startsWith(to + "/");
+  };
+
+  const desktopSidebarWidthClass = desktopOpen ? "w-56" : "w-14";
+  const desktopContentOffsetClass = desktopOpen ? "md:pl-56" : "md:pl-14";
+  const desktopHeaderOffsetClasses = desktopOpen
+    ? "md:w-[calc(100%-14rem)]"
+    : "md:w-[calc(100%-3.5rem)]";
+
   const initials = (u?.name || "User")
     .split(" ")
     .slice(0, 2)
@@ -55,164 +113,54 @@ export default function SuperAdminLayout() {
     .join("")
     .toUpperCase();
 
-  const SidebarInner = ({ compact = false }: { compact?: boolean }) => (
-    <div className={`flex h-full ${compact ? "w-16" : "w-56"} transition-all`}>
-      <div className="flex flex-col w-full">
-        <div
-          className={`${
-            compact ? "justify-center" : "justify-between"
-          } flex items-center h-[66px] border-b border-border`}
-        >
-          <div className="font-bold text-sidebar-active tracking-wide">
-            {compact ? (
-              <img src="/logo.png" alt="logo" className="max-w-none size-12" />
-            ) : (
-              <img src="/logo-horizontal.png" alt="logo" className="size-32" />
-            )}
-          </div>
-        </div>
+  const headerClassName = "bg-surface border-b border-border shadow-sm";
 
-        <nav
-          className="flex-1 overflow-y-auto px-2 py-3 space-y-1"
-          role="navigation"
-          aria-label="Primary"
-        >
-          <NavLink
-            to="/superadmin"
-            end
-            className={({ isActive }) =>
-              [
-                "flex items-center gap-3 rounded-md px-3 py-2 transition",
-                isActive
-                  ? "bg-primary/10 text-sidebar-active font-semibold"
-                  : "hover:bg-sidebar-hover",
-              ].join(" ")
-            }
-            title="Dashboard"
-          >
-            <LayoutDashboard size={18} />
-            {!compact && <span className="truncate">Dashboard</span>}
-          </NavLink>
-
-          <div>
-            <button
-              onClick={() => setCompaniesOpen((v) => !v)}
-              className={[
-                "w-full flex items-center gap-3 rounded-md px-3 py-2 transition",
-                "hover:bg-sidebar-hover",
-              ].join(" ")}
-              aria-expanded={companiesOpen}
-              aria-controls="companies-submenu"
-              type="button"
-            >
-              <Building2 size={18} />
-              {!compact && <span className="truncate">Companies</span>}
-              {!compact && (
-                <span className="ml-auto">
-                  {companiesOpen ? (
-                    <ChevronDown size={16} />
-                  ) : (
-                    <ChevronRight size={16} />
-                  )}
-                </span>
-              )}
-            </button>
-
-            <div
-              id="companies-submenu"
-              className={`ml-8 mt-1 space-y-1 ${
-                companiesOpen ? "block" : "hidden"
-              }`}
-            >
-              <NavLink
-                to="/superadmin/companies"
-                end
-                className={({ isActive }) =>
-                  [
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition",
-                    isActive
-                      ? "bg-primary/10 text-sidebar-active font-semibold"
-                      : "hover:bg-sidebar-hover",
-                  ].join(" ")
-                }
-                title="All Companies"
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60" />
-                {!compact && <span className="truncate">All Companies</span>}
-              </NavLink>
-
-              <NavLink
-                to="/superadmin/companies/add"
-                end
-                className={({ isActive }) =>
-                  [
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition",
-                    isActive
-                      ? "bg-primary/10 text-sidebar-active font-semibold"
-                      : "hover:bg-sidebar-hover",
-                  ].join(" ")
-                }
-                title="Add Company"
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60" />
-                {!compact && <span className="truncate">Add Company</span>}
-              </NavLink>
-            </div>
-          </div>
-
-          <NavLink
-            to="/superadmin/profile"
-            className={({ isActive }) =>
-              [
-                "flex items-center gap-3 rounded-md px-3 py-2 transition",
-                isActive
-                  ? "bg-primary/10 text-sidebar-active font-semibold"
-                  : "hover:bg-sidebar-hover",
-              ].join(" ")
-            }
-            title="Profile"
-          >
-            <User size={18} />
-            {!compact && <span className="truncate">Profile</span>}
-          </NavLink>
-        </nav>
-      </div>
-    </div>
+  const profileMenuItems = useMemo<ProfileMenuItem[]>(
+    () => [
+      {
+        label: "Profile",
+        icon: <UserCircle2Icon size={16} />,
+        onClick: () => nav("/superadmin/profile"),
+      },
+      {
+        label: "Logout",
+        icon: <LogOut size={16} />,
+        onClick: () => {
+          clearAuth();
+          nav("/login");
+        },
+      },
+    ],
+    [nav, clearAuth]
   );
 
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const profileRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (profileRef.current && !profileRef.current.contains(e.target as Node))
-        setProfileMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setProfileMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, []);
-
   return (
-    <div className="min-h-screen bg-bg text-text">
+    <div className="min-h-screen bg-bg text-text overflow-x-hidden">
       <div
         className={`fixed inset-0 bg-black/40 z-40 md:hidden transition-opacity ${
           mobileOpen ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={() => setMobileOpen(false)}
       />
-      <div className="flex">
+
+      <div
+        className={`flex w-full ${desktopContentOffsetClass} transition-all`}
+      >
         <aside
-          className="hidden md:block bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm sticky top-0 h-screen"
+          className={`hidden md:block fixed inset-y-0 left-0 bg-sidebar-bg text-sidebar-text border-r border-border shadow-sm transition-[width] duration-200 ${desktopSidebarWidthClass}`}
           aria-label="Sidebar"
         >
-          <SidebarInner compact={!desktopOpen} />
+          <LayoutSidebar
+            sections={sections}
+            pathname={pathname}
+            compact={!desktopOpen}
+            logoSquareUrl="/logo.png"
+            logoWideUrl="/logo-horizontal.png"
+            widthClass={{ compact: "w-14", expanded: "w-56" }}
+            openSections={openSections}
+            toggleSection={toggleSection}
+            itemIsActive={itemIsActive}
+          />
         </aside>
 
         <aside
@@ -223,7 +171,7 @@ export default function SuperAdminLayout() {
         >
           <div className="flex items-center justify-between px-4 h-14 border-b border-border">
             <div className="font-bold text-sidebar-active tracking-wide">
-              <img src="/peracto_logo.png" />
+              <img src="/peracto_logo.png" alt="Peracto" />
             </div>
             <button
               className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-sidebar-bg"
@@ -234,92 +182,37 @@ export default function SuperAdminLayout() {
             </button>
           </div>
           <div className="h-[calc(100%-3.5rem)]">
-            <SidebarInner compact={false} />
+            <LayoutSidebar
+              sections={sections}
+              pathname={pathname}
+              compact={false}
+              logoSquareUrl="/logo.png"
+              logoWideUrl="/logo-horizontal.png"
+              widthClass={{ compact: "w-14", expanded: "w-56" }}
+              openSections={openSections}
+              toggleSection={toggleSection}
+              itemIsActive={itemIsActive}
+            />
           </div>
         </aside>
 
-        <div className="flex-1 grid grid-rows-[auto_1fr] min-h-screen">
-          <header className="sticky top-0 z-30 bg-surface border-b border-border shadow-sm">
-            <div className="h-16 px-3 md:px-6 flex items-center gap-3">
-              <button
-                onClick={() => setMobileOpen(true)}
-                className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-surface"
-                aria-label="Open sidebar"
-                aria-expanded={mobileOpen}
-              >
-                <Menu size={18} />
-              </button>
-              <button
-                onClick={() => setDesktopOpen((v) => !v)}
-                className="hidden md:inline-flex items-center justify-center h-9 w-9 rounded-md border border-border bg-surface hover:bg-bg"
-                aria-label={desktopOpen ? "Collapse sidebar" : "Expand sidebar"}
-                title={desktopOpen ? "Collapse sidebar" : "Expand sidebar"}
-              >
-                {desktopOpen ? (
-                  <PanelLeftClose size={18} />
-                ) : (
-                  <PanelLeftOpen size={18} />
-                )}
-              </button>
-              <h1 className="text-lg md:text-xl font-semibold">{title}</h1>
+        <div className="flex-1 min-w-0 flex flex-col min-h-screen">
+          <LayoutNavbar
+            title={title}
+            desktopOpen={desktopOpen}
+            onDesktopToggle={() => setDesktopOpen((v) => !v)}
+            mobileOpen={mobileOpen}
+            onMobileToggle={() => setMobileOpen(true)}
+            initials={initials}
+            headerOffsetClass={desktopHeaderOffsetClasses}
+            headerClassName={headerClassName}
+            profileMenuItems={profileMenuItems}
+          />
 
-              <div className="ml-auto flex items-center gap-3">
-                <div className="hidden md:block">
-                  <input
-                    placeholder="Search…"
-                    className="h-9 w-56 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
-                    aria-label="Search"
-                  />
-                </div>
-
-                <div className="relative" ref={profileRef}>
-                  <button
-                    onClick={() => setProfileMenuOpen((o) => !o)}
-                    className="flex items-center gap-2 rounded-full border border-border bg-surface pl-2 pr-2.5 h-9"
-                    aria-haspopup="menu"
-                    aria-expanded={profileMenuOpen}
-                    title={u?.name || "Account"}
-                  >
-                    <div className="grid place-items-center h-7 w-7 rounded-full bg-primary/15 text-primary text-xs font-semibold">
-                      {initials}
-                    </div>
-                    <ChevronDown size={16} className="text-muted" />
-                  </button>
-
-                  {profileMenuOpen && (
-                    <div
-                      className="absolute right-0 mt-2 w-44 rounded-md border border-border bg-surface shadow-lg z-50 py-1"
-                      role="menu"
-                    >
-                      <button
-                        onClick={() => {
-                          setProfileMenuOpen(false);
-                          nav("/superadmin/profile");
-                        }}
-                        className="w-full px-4 py-2 text-left hover:bg-sidebar-hover text-sm"
-                        role="menuitem"
-                      >
-                        Profile
-                      </button>
-                      <button
-                        onClick={() => {
-                          clearAuth();
-                          nav("/login");
-                        }}
-                        className="w-full px-4 py-2 text-left hover:bg-sidebar-hover text-sm text-accent inline-flex items-center gap-2"
-                        role="menuitem"
-                      >
-                        <LogOut size={16} />
-                        Logout
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </header>
-
-          <main id="main" className="p-4 md:p-8 bg-bg">
+          <main
+            id="main"
+            className="flex-1 p-4 pt-24 md:p-8 md:pt-24 bg-bg min-w-0 overflow-x-auto"
+          >
             <Outlet />
           </main>
         </div>

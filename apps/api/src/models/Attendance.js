@@ -26,7 +26,9 @@ const AttendanceSchema = new mongoose.Schema({
     acknowledgedAt: { type: Date },
     resolvedAt: { type: Date },
     resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }
-  }
+  },
+  isDeleted: { type: Boolean, default: false },
+  isActive: { type: Boolean, default: true },
 });
 
 AttendanceSchema.index({ employee: 1, date: 1 }, { unique: true });

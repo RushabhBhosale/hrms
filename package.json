@@ -16,13 +16,18 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@types/xlsx": "^0.0.35",
+    "clsx": "^2.1.1",
     "lucide-react": "^0.541.0",
     "mongoose-field-encryption": "^7.0.1",
     "multer": "^2.0.2",
     "react-hook-form": "^7.63.0",
+    "tailwind-merge": "^3.4.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@types/node": "^25.2.0",
     "concurrently": "^9.0.0",
     "cross-spawn": "^7.0.3",
     "electron": "^31.0.0",

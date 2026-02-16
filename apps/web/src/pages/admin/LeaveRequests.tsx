@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
-import { Th, Td, SkeletonRows, Pagination } from "../../components/ui/Table";
-import { StatusBadge } from "../../components/ui/StatusBadge";
+import { formatDateDisplay } from "../../lib/utils";
+import {
+  Th,
+  Td,
+  SkeletonRows,
+  PaginationFooter,
+} from "../../components/utils/Table";
+import { StatusBadge } from "../../components/utils/StatusBadge";
+import { CheckCircle2, XCircle } from "lucide-react";
 
 export type Leave = {
   _id: string;
@@ -9,9 +16,16 @@ export type Leave = {
   startDate: string;
   endDate: string;
   type: "CASUAL" | "PAID" | "UNPAID" | "SICK";
+  allocations?: {
+    paid?: number;
+    casual?: number;
+    sick?: number;
+    unpaid?: number;
+  };
   reason?: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
   adminMessage?: string;
+  approver?: { _id: string; name: string; email?: string };
 };
 
 export default function LeaveRequests() {
@@ -19,7 +33,7 @@ export default function LeaveRequests() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<"ALL" | Leave["status"]>("ALL");
+  const [status, setStatus] = useState<"ALL" | Leave["status"]>("PENDING");
   const [typeFilter, setTypeFilter] = useState<"ALL" | Leave["type"]>("ALL");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
@@ -59,7 +73,7 @@ export default function LeaveRequests() {
         (typeFilter === "ALL" ? true : r.type === typeFilter) &&
         (!term ||
           r.employee.name.toLowerCase().includes(term) ||
-          (r.reason || "").toLowerCase().includes(term))
+          (r.reason || "").toLowerCase().includes(term)),
     );
   }, [rows, q, status, typeFilter]);
 
@@ -96,7 +110,7 @@ export default function LeaveRequests() {
   const end = Math.min(total, page * limit);
   const pageRows = useMemo(
     () => sorted.slice((page - 1) * limit, (page - 1) * limit + limit),
-    [sorted, page, limit]
+    [sorted, page, limit],
   );
 
   function toggleSort(k: typeof sortKey) {
@@ -107,11 +121,73 @@ export default function LeaveRequests() {
     }
   }
 
+  function formatType(l: Leave) {
+    const parts: string[] = [];
+    const fmt = (n?: number) =>
+      Number.isFinite(n) ? (Math.abs((n ?? 0) % 1) < 1e-4 ? `${Math.round(n!)}` : `${Math.round((n || 0) * 100) / 100}`) : null;
+    const add = (label: string, val?: number) => {
+      const num = fmt(val);
+      if (num && Number(num) > 0) parts.push(`${num} ${label}`);
+    };
+    add("Paid", l.allocations?.paid);
+    add("Casual", l.allocations?.casual);
+    add("Sick", l.allocations?.sick);
+    add("Unpaid", l.allocations?.unpaid);
+    if (parts.length) return parts.join(" + ");
+    return l.type;
+  }
+
   async function confirmAction() {
     if (!modal) return;
     try {
       setSubmitting(true);
-      await api.post(`/leaves/${modal.id}/${modal.action}`, { message });
+      const basePayload: any = { message };
+
+      // Always hint the backend to convert shortfall to unpaid on approval
+      const approveParams =
+        modal.action === "approve"
+          ? {
+              params: { fallbackType: "UNPAID", force: "true" },
+            }
+          : undefined;
+
+      const primaryPayload =
+        modal.action === "approve"
+          ? {
+              ...basePayload,
+              fallbackType: "UNPAID",
+              type: "UNPAID",
+              typeOverride: "UNPAID",
+              force: true,
+              allowShortfall: true,
+            }
+          : basePayload;
+
+      try {
+        await api.post(
+          `/leaves/${modal.id}/${modal.action}`,
+          primaryPayload,
+          approveParams,
+        );
+      } catch (err: any) {
+        const msg = err?.response?.data?.error || "";
+        if (
+          modal.action === "approve" &&
+          msg.toLowerCase().includes("insufficient")
+        ) {
+          // Final retry with the most explicit conversion to unpaid
+          await api.post(`/leaves/${modal.id}/${modal.action}`, {
+            ...primaryPayload,
+            force: true,
+            fallbackType: "UNPAID",
+            type: "UNPAID",
+            typeOverride: "UNPAID",
+            allowShortfall: true,
+          });
+        } else {
+          throw err;
+        }
+      }
       setModal(null);
       setMessage("");
       load();
@@ -127,7 +203,7 @@ export default function LeaveRequests() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 className="text-3xl font-bold">Leave Requests</h2>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             Review and take action on employee leave requests.
           </p>
         </div>
@@ -159,12 +235,6 @@ export default function LeaveRequests() {
             placeholder="Search name or reason…"
             className="h-10 w-64 rounded-md border border-border bg-surface px-3 outline-none focus:ring-2 focus:ring-primary"
           />
-          <button
-            onClick={load}
-            className="h-10 rounded-md bg-primary px-4 text-white"
-          >
-            Refresh
-          </button>
         </div>
       </div>
 
@@ -175,8 +245,8 @@ export default function LeaveRequests() {
       )}
 
       <section className="rounded-lg border border-border bg-surface shadow-sm overflow-hidden">
-        <div className="border-b border-border px-4 py-3 flex items-center justify-between">
-          <div className="text-sm text-muted">
+        <div className="border-b border-border px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm text-muted-foreground">
             {loading
               ? "Loading…"
               : `Showing ${start}-${end} of ${total} requests`}
@@ -233,15 +303,19 @@ export default function LeaveRequests() {
                 >
                   Status
                 </Th>
-                <Th>Actions</Th>
+                <Th>Approved By</Th>
+                <Th className="w-48">Actions</Th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <SkeletonRows rows={6} cols={7} />
+                <SkeletonRows rows={6} cols={8} />
               ) : pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-muted">
+                  <td
+                    colSpan={8}
+                    className="px-4 py-6 text-center text-muted-foreground"
+                  >
                     No leave requests.
                   </td>
                 </tr>
@@ -249,9 +323,9 @@ export default function LeaveRequests() {
                 pageRows.map((l) => (
                   <tr key={l._id} className="border-t border-border/70">
                     <Td className="font-medium">{l.employee.name}</Td>
-                    <Td>{new Date(l.startDate).toLocaleDateString()}</Td>
-                    <Td>{new Date(l.endDate).toLocaleDateString()}</Td>
-                    <Td>{l.type}</Td>
+                    <Td>{formatDateDisplay(l.startDate)}</Td>
+                    <Td>{formatDateDisplay(l.endDate)}</Td>
+                    <Td>{formatType(l)}</Td>
                     <Td>
                       <span
                         title={l.reason || ""}
@@ -264,27 +338,36 @@ export default function LeaveRequests() {
                       <StatusBadge status={l.status} />
                     </Td>
                     <Td>
+                      {l.status === "APPROVED"
+                        ? l.approver?.name || "—"
+                        : "-"}
+                    </Td>
+                    <Td>
                       {l.status === "PENDING" ? (
                         <div className="flex gap-2">
                           <button
-                            className="rounded-md bg-secondary px-3 py-1 text-white disabled:opacity-60"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-white shadow-sm hover:bg-primary/90 disabled:opacity-60"
                             onClick={() =>
                               setModal({ id: l._id, action: "approve" })
                             }
+                            title="Approve leave"
+                            aria-label="Approve leave"
                           >
-                            Approve
+                            <CheckCircle2 size={18} />
                           </button>
                           <button
-                            className="rounded-md bg-accent px-3 py-1 text-white disabled:opacity-60"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-error text-white shadow-sm hover:bg-error/90 disabled:opacity-60"
                             onClick={() =>
                               setModal({ id: l._id, action: "reject" })
                             }
+                            title="Reject leave"
+                            aria-label="Reject leave"
                           >
-                            Reject
+                            <XCircle size={18} />
                           </button>
                         </div>
                       ) : (
-                        <span className="text-xs text-muted">
+                        <span className="text-xs text-muted-foreground">
                           {l.adminMessage ? `Note: ${l.adminMessage}` : "-"}
                         </span>
                       )}
@@ -311,7 +394,7 @@ export default function LeaveRequests() {
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <div className="px-4 py-6 text-center text-muted">
+            <div className="px-4 py-6 text-center text-muted-foreground">
               No leave requests.
             </div>
           ) : (
@@ -322,13 +405,15 @@ export default function LeaveRequests() {
                   <StatusBadge status={l.status} />
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                  <div className="text-muted">Start</div>
-                  <div>{new Date(l.startDate).toLocaleDateString()}</div>
-                  <div className="text-muted">End</div>
-                  <div>{new Date(l.endDate).toLocaleDateString()}</div>
-                  <div className="text-muted">Type</div>
-                  <div>{l.type}</div>
-                  <div className="text-muted">Reason</div>
+                  <div className="text-muted-foreground">Start</div>
+                  <div>{formatDateDisplay(l.startDate)}</div>
+                  <div className="text-muted-foreground">End</div>
+                  <div>{formatDateDisplay(l.endDate)}</div>
+                  <div className="text-muted-foreground">Type</div>
+                  <div>{formatType(l)}</div>
+                  <div className="text-muted-foreground">Approved By</div>
+                  <div>{l.status === "APPROVED" ? l.approver?.name || "—" : "-"}</div>
+                  <div className="text-muted-foreground">Reason</div>
                   <div className="col-span-1">{l.reason || "-"}</div>
                 </div>
                 {l.status === "PENDING" ? (
@@ -347,7 +432,7 @@ export default function LeaveRequests() {
                     </button>
                   </div>
                 ) : (
-                  <div className="mt-2 text-xs text-muted">
+                  <div className="mt-2 text-xs text-muted-foreground">
                     {l.adminMessage ? `Note: ${l.adminMessage}` : "-"}
                   </div>
                 )}
@@ -355,31 +440,30 @@ export default function LeaveRequests() {
             ))
           )}
         </div>
+        <div className="border-t border-border px-4 py-3">
+          <PaginationFooter
+            page={page}
+            pages={pages}
+            onFirst={() => setPage(1)}
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => Math.min(pages, p + 1))}
+            onLast={() => setPage(pages)}
+            disabled={loading}
+          />
+        </div>
       </section>
-
-      <div className="flex items-center justify-end">
-        <Pagination
-          page={page}
-          pages={pages}
-          onFirst={() => setPage(1)}
-          onPrev={() => setPage((p) => Math.max(1, p - 1))}
-          onNext={() => setPage((p) => Math.min(pages, p + 1))}
-          onLast={() => setPage(pages)}
-          disabled={loading}
-        />
-      </div>
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-black/40 -mt-[32px]"
             onClick={() => setModal(null)}
           />
           <div className="relative w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg">
             <h4 className="text-lg font-semibold mb-2">
               {modal.action === "approve" ? "Approve Leave" : "Reject Leave"}
             </h4>
-            <p className="text-sm text-muted mb-3">
+            <p className="text-sm text-muted-foreground mb-3">
               Add a short message (optional).
             </p>
             <textarea
@@ -407,8 +491,8 @@ export default function LeaveRequests() {
                 {submitting
                   ? "Saving…"
                   : modal.action === "approve"
-                  ? "Approve"
-                  : "Reject"}
+                    ? "Approve"
+                    : "Reject"}
               </button>
             </div>
           </div>

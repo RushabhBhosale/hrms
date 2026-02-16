@@ -28,11 +28,21 @@ const projectSchema = z.object({
     .string({ required_error: "Company is required" })
     .trim()
     .min(1, "Company is required"),
+  client: z
+    .union([z.string().trim().min(1, "Client id cannot be empty"), z.undefined()])
+    .optional()
+    .transform((val) => (val == null || val === "" ? undefined : val)),
   startTime: z.date().optional(),
   estimatedTimeMinutes: z
     .number({ invalid_type_error: "Estimated time must be a number" })
     .int("Estimated time must be an integer")
     .min(0, "Estimated time cannot be negative")
+    .optional()
+    .default(0),
+  monthlyEstimateMinutes: z
+    .number({ invalid_type_error: "Monthly estimate must be a number" })
+    .int("Monthly estimate must be an integer")
+    .min(0, "Monthly estimate cannot be negative")
     .optional()
     .default(0),
 });

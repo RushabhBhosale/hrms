@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "../../lib/api";
-import { Field } from "../../components/ui/Field";
+import { Field } from "../../components/utils/Field";
 import ReportingPersonMultiSelect from "../../components/ReportingPersonMultiSelect";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
@@ -8,6 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import type { RoleDefinition } from "../../types/roles";
+import { Button } from "../../components/ui/button";
 
 type EmpLite = { id: string; name: string };
 
@@ -37,12 +38,19 @@ const schema = z.object({
     .min(1, "DOB is required")
     .refine((v) => !Number.isNaN(Date.parse(v)), "Invalid date")
     .refine((v) => new Date(v) < new Date(), "DOB must be in the past"),
+  attendanceStartDate: z
+    .string()
+    .refine(
+      (v) => !v || v.trim() === "" || !Number.isNaN(Date.parse(v)),
+      "Invalid attendance start date",
+    )
+    .default(""),
   joiningDate: z
     .string()
     .min(1, "Joining date is required")
     .refine(
       (v) => !v || v.trim() === "" || !Number.isNaN(Date.parse(v)),
-      "Invalid joining date"
+      "Invalid joining date",
     )
     .default(""),
   bloodGroup: z.union([z.literal(""), z.enum(BLOOD_GROUP_OPTIONS)]).default(""),
@@ -52,9 +60,9 @@ const schema = z.object({
     .transform((vals) =>
       Array.from(
         new Set(
-          (vals || []).map((val) => val.trim()).filter((val) => val.length > 0)
-        )
-      )
+          (vals || []).map((val) => val.trim()).filter((val) => val.length > 0),
+        ),
+      ),
     ),
   employeeId: z.string().min(1, "Employee Id is required"),
   ctc: z
@@ -62,7 +70,7 @@ const schema = z.object({
     .min(1, "CTC is required")
     .refine(
       (v) => !Number.isNaN(Number(v)) && Number(v) >= 0,
-      "Enter a valid number"
+      "Enter a valid number",
     ),
   ctcMode: z.enum(["monthly", "annual"]),
   aadharNumber: z
@@ -72,6 +80,10 @@ const schema = z.object({
     if (!v) return true;
     return /^[A-Za-z0-9]{8,20}$/.test(v.trim());
   }, "PAN should be 8–20 alphanumerics"),
+  uan: z
+    .string()
+    .regex(/^\d{12}$/, "UAN must be 12 digits")
+    .or(z.literal("")),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -96,6 +108,7 @@ export default function AddEmployee() {
       personalEmail: "",
       dob: "",
       joiningDate: "",
+      attendanceStartDate: "",
       bloodGroup: "",
       reportingPersons: [],
       employeeId: "",
@@ -103,6 +116,7 @@ export default function AddEmployee() {
       ctcMode: "annual",
       aadharNumber: "",
       panNumber: "",
+      uan: "",
     },
     mode: "onSubmit",
     reValidateMode: "onChange",
@@ -120,6 +134,8 @@ export default function AddEmployee() {
 
   const ctc = watch("ctc");
   const ctcMode = watch("ctcMode");
+  const joiningDate = watch("joiningDate");
+  const attendanceStartDate = watch("attendanceStartDate");
 
   useEffect(() => {
     (async () => {
@@ -134,11 +150,19 @@ export default function AddEmployee() {
         const fallback =
           defs.find((item) => !item.system)?.name || defs[0]?.name || "";
         setDefaultRole(fallback);
-        if (fallback)
-          setValue("role", fallback, { shouldValidate: true });
+        if (fallback) setValue("role", fallback, { shouldValidate: true });
       } catch {}
     })();
   }, [setValue]);
+
+  useEffect(() => {
+    if (joiningDate && !attendanceStartDate) {
+      setValue("attendanceStartDate", joiningDate, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+    }
+  }, [attendanceStartDate, joiningDate, setValue]);
 
   const onSubmit = async (data: FormValues) => {
     setOk(null);
@@ -161,10 +185,15 @@ export default function AddEmployee() {
       const fd = new FormData();
       const normalizedAadhaar = (data.aadharNumber || "").replace(/\D/g, "");
       const normalizedPan = (data.panNumber || "").trim().toUpperCase();
+      const normalizedUan = (data.uan || "").replace(/\D/g, "");
+      const normalizedAttendanceStart =
+        data.attendanceStartDate || data.joiningDate;
       const payload = {
         ...data,
+        attendanceStartDate: normalizedAttendanceStart,
         aadharNumber: normalizedAadhaar,
         panNumber: normalizedPan,
+        uan: normalizedUan,
         ctc: String(monthlyCtc),
       };
       const { ctcMode: _omit, reportingPersons, ...rest } = payload as any;
@@ -193,6 +222,7 @@ export default function AddEmployee() {
         personalEmail: "",
         dob: "",
         joiningDate: "",
+        attendanceStartDate: "",
         bloodGroup: "",
         reportingPersons: [],
         employeeId: "",
@@ -218,14 +248,18 @@ export default function AddEmployee() {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold">Add Employee</h2>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             Create an employee and upload documents.
           </p>
         </div>
         <div>
-          <button className="h-10 rounded-md bg-primary px-4 text-white">
+          <Button
+            variant="outline"
+            className="h-10"
+            onClick={() => navigate("/admin/employees")}
+          >
             back to list
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -328,7 +362,7 @@ export default function AddEmployee() {
                   />
                 )}
               />
-              <p className="text-xs text-muted mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Choose one or more managers who should receive updates.
               </p>
             </Field>
@@ -365,7 +399,7 @@ export default function AddEmployee() {
                 </select>
               </div>
               {ctc && (
-                <div className="text-xs text-muted mt-1">
+                <div className="text-xs text-muted-foreground mt-1">
                   {ctcMode === "annual"
                     ? `≈ Monthly: ${(Number(ctc) / 12 || 0).toFixed(2)}`
                     : `≈ Annual: ${(Number(ctc) * 12 || 0).toFixed(2)}`}
@@ -423,7 +457,7 @@ export default function AddEmployee() {
             </Field>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
             <Field label="Aadhaar Number" required>
               <input
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
@@ -448,6 +482,20 @@ export default function AddEmployee() {
               {errors.panNumber && (
                 <p className="text-xs text-error mt-1">
                   {errors.panNumber.message as string}
+                </p>
+              )}
+            </Field>
+            <Field label="UAN">
+              <input
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                placeholder="12-digit UAN"
+                inputMode="numeric"
+                maxLength={12}
+                {...register("uan")}
+              />
+              {errors.uan && (
+                <p className="text-xs text-error mt-1">
+                  {errors.uan.message as string}
                 </p>
               )}
             </Field>
@@ -476,11 +524,26 @@ export default function AddEmployee() {
                 </p>
               )}
             </Field>
+            <Field label="Attendance Start Date">
+              <input
+                type="date"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                {...register("attendanceStartDate")}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Defaults to the joining date if left blank.
+              </p>
+              {errors.attendanceStartDate && (
+                <p className="text-xs text-error mt-1">
+                  {errors.attendanceStartDate.message}
+                </p>
+              )}
+            </Field>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Documents">
-              <label className="flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-bg px-3 text-sm text-muted hover:bg-bg/70">
+              <label className="flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-bg px-3 text-sm text-muted-foreground hover:bg-bg/70">
                 <input
                   type="file"
                   multiple
@@ -491,7 +554,7 @@ export default function AddEmployee() {
                 <span className="text-xs">PNG, JPG, PDF up to 10MB each</span>
               </label>
               {!!docs && (
-                <ul className="mt-2 space-y-1 text-sm text-muted">
+                <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
                   {Array.from(docs).map((f, i) => (
                     <li key={i} className="truncate">
                       {f.name}

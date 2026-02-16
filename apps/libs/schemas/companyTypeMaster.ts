@@ -9,6 +9,8 @@ export const companyTypeMasterSchema = z.object({
   description: z.string().optional(),
   createdBy: objectId.optional(),
   updatedBy: objectId.optional(),
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type CompanyTypeMasterInput = z.infer<typeof companyTypeMasterSchema>;

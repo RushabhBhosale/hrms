@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
-import { toast } from 'react-hot-toast';
+import { toast } from "react-hot-toast";
 import { formatMinutesLabel } from "../../lib/time";
 import { getEmployee, hasPermission } from "../../lib/auth";
 
@@ -12,7 +12,7 @@ type MonthlyDay = {
   lastPunchInLocation?: string | null;
   timeSpentMs: number;
   dayType: "FULL_DAY" | "HALF_DAY";
-  status?: "" | "WORKED" | "HOLIDAY" | "LEAVE" | "WEEKEND";
+  status?: "" | "WORKED" | "HOLIDAY" | "LEAVE" | "WEEKEND" | "NO ATTENDENCE";
   lateMinutes?: number;
   overtimeMinutes?: number;
   ignoredLate?: boolean;
@@ -35,13 +35,30 @@ function fmtDur(ms?: number) {
   return `${h}h ${m}m`;
 }
 
+function parseMillis(value?: string | null) {
+  if (!value) return null;
+  const ts = Date.parse(value);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function computeWorkedMs(day: MonthlyDay) {
+  const start = parseMillis(day.firstPunchIn);
+  const end = parseMillis(day.lastPunchOut);
+  if (start != null && end != null && end > start) {
+    const diff = end - start;
+    const MAX = 16 * 60 * 60 * 1000;
+    return Math.min(diff, MAX);
+  }
+  return 0;
+}
+
 export default function MonthlyReport() {
   const u = getEmployee();
   const canViewOthers = hasPermission(u, "attendance", "read");
   const canEditOverrides = hasPermission(u, "attendance", "write");
 
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>(
-    []
+    [],
   );
   const [employeeId, setEmployeeId] = useState<string>(u?.id || "");
   const [empQuery, setEmpQuery] = useState("");
@@ -87,11 +104,20 @@ export default function MonthlyReport() {
     load();
   }, [employeeId, month]); // eslint-disable-line
 
+  const computedRows = useMemo(
+    () =>
+      rows.map((day) => ({
+        ...day,
+        computedTimeSpentMs: computeWorkedMs(day),
+      })),
+    [rows],
+  );
+
   const filteredEmployees = useMemo(() => {
     const q = empQuery.trim().toLowerCase();
     if (!q) return employees;
     return employees.filter(
-      (e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q)
+      (e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q),
     );
   }, [empQuery, employees]);
 
@@ -100,7 +126,7 @@ export default function MonthlyReport() {
     const d = new Date(y, m - 1 + delta, 1);
     const newMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
       2,
-      "0"
+      "0",
     )}`;
     setMonth(newMonth);
   }
@@ -130,7 +156,7 @@ export default function MonthlyReport() {
               Next
             </button>
           </div>
-          <button
+          {/* <button
             className="rounded-md border border-border px-3 py-3 text-sm bg-white"
             onClick={async () => {
               try {
@@ -166,7 +192,7 @@ export default function MonthlyReport() {
             }}
           >
             Download Excel
-          </button>
+          </button> */}
         </div>
       </div>
 
@@ -183,8 +209,8 @@ export default function MonthlyReport() {
             onChange={(e) => setEmployeeId(e.target.value)}
             className="h-10 rounded-md border border-border bg-surface px-3"
           >
-            {filteredEmployees.map((emp) => (
-              <option key={emp.id} value={emp.id}>
+            {filteredEmployees.map((emp, i) => (
+              <option key={i} value={emp.id}>
                 {emp.name}
               </option>
             ))}
@@ -194,7 +220,7 @@ export default function MonthlyReport() {
 
       <div className="rounded-md border border-border overflow-hidden bg-white">
         {loading ? (
-          <div className="p-4 text-sm text-muted">Loading…</div>
+          <div className="p-4 text-sm text-muted-foreground">Loading…</div>
         ) : err ? (
           <div className="p-4 text-sm text-error">{err}</div>
         ) : (
@@ -216,7 +242,7 @@ export default function MonthlyReport() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((d) => {
+                {computedRows.map((d) => {
                   // Merge day type and status like the Excel export:
                   // - WORKED => Full Day / Half Day
                   // - Otherwise => Weekend / Holiday / Leave (or blank for future)
@@ -226,37 +252,46 @@ export default function MonthlyReport() {
                         ? "Full Day"
                         : "Half Day"
                       : d.status === "WEEKEND"
-                      ? "Weekend"
-                      : d.status === "HOLIDAY"
-                      ? "Holiday"
-                      : d.status === "LEAVE"
-                      ? "Leave"
-                      : "";
-                  const canToggleHalf = (d.status === 'WORKED' && d.dayType === 'HALF_DAY') || d.ignoredHalfDay;
-                  const canToggleLate = (typeof d.lateMinutes === 'number' && d.lateMinutes > 0) || d.ignoredLate;
-                  const canToggleHoliday = d.status === 'HOLIDAY' || d.ignoredHoliday;
+                        ? "Weekend"
+                        : d.status === "HOLIDAY"
+                          ? "Holiday"
+                          : d.status === "LEAVE"
+                            ? "Leave"
+                            : "";
+                  const canToggleHalf =
+                    (d.status === "WORKED" && d.dayType === "HALF_DAY") ||
+                    d.ignoredHalfDay;
+                  const canToggleLate =
+                    (typeof d.lateMinutes === "number" && d.lateMinutes > 0) ||
+                    d.ignoredLate;
+                  const canToggleHoliday =
+                    d.status === "HOLIDAY" || d.ignoredHoliday;
                   return (
                     <tr key={d.date} className="border-t border-border/60">
                       <td className="px-3 py-2 whitespace-nowrap">{d.date}</td>
                       <td className="px-3 py-2">{fmtTime(d.firstPunchIn)}</td>
                       <td className="px-3 py-2">{fmtTime(d.lastPunchOut)}</td>
                       <td className="px-3 py-2">
-                        {d.lastPunchInLocation ||
-                          d.firstPunchInLocation ||
-                          "-"}
+                        {d.lastPunchInLocation || d.firstPunchInLocation || "-"}
                       </td>
                       <td className="px-3 py-2">
-                        {statusLabel ? fmtDur(d.timeSpentMs) : ""}
+                        {statusLabel ? fmtDur(d.computedTimeSpentMs) : ""}
                       </td>
                       <td className="px-3 py-2">
-                        {typeof d.lateMinutes === 'number'
-                          ? formatMinutesLabel(d.lateMinutes, { minUnit: 'm', hourUnit: 'hrs' })
-                          : ''}
+                        {typeof d.lateMinutes === "number"
+                          ? formatMinutesLabel(d.lateMinutes, {
+                              minUnit: "m",
+                              hourUnit: "hrs",
+                            })
+                          : ""}
                       </td>
                       <td className="px-3 py-2">
-                        {typeof d.overtimeMinutes === 'number'
-                          ? formatMinutesLabel(d.overtimeMinutes, { minUnit: 'm', hourUnit: 'hrs' })
-                          : ''}
+                        {typeof d.overtimeMinutes === "number"
+                          ? formatMinutesLabel(d.overtimeMinutes, {
+                              minUnit: "m",
+                              hourUnit: "hrs",
+                            })
+                          : ""}
                       </td>
                       <td className="px-3 py-2">{statusLabel}</td>
                       {canEditOverrides && (
@@ -271,13 +306,16 @@ export default function MonthlyReport() {
                                   onChange={async (e) => {
                                     try {
                                       setSaving(d.date);
-                                      await api.post(`/attendance/overrides/${employeeId}` as string, {
-                                        date: d.date,
-                                        ignoreHalfDay: e.target.checked,
-                                      });
+                                      await api.post(
+                                        `/attendance/overrides/${employeeId}` as string,
+                                        {
+                                          date: d.date,
+                                          ignoreHalfDay: e.target.checked,
+                                        },
+                                      );
                                       await load();
                                     } catch {
-                                      toast.error('Failed to save override');
+                                      toast.error("Failed to save override");
                                     } finally {
                                       setSaving(null);
                                     }
@@ -295,13 +333,16 @@ export default function MonthlyReport() {
                                   onChange={async (e) => {
                                     try {
                                       setSaving(d.date);
-                                      await api.post(`/attendance/overrides/${employeeId}` as string, {
-                                        date: d.date,
-                                        ignoreLate: e.target.checked,
-                                      });
+                                      await api.post(
+                                        `/attendance/overrides/${employeeId}` as string,
+                                        {
+                                          date: d.date,
+                                          ignoreLate: e.target.checked,
+                                        },
+                                      );
                                       await load();
                                     } catch {
-                                      toast.error('Failed to save override');
+                                      toast.error("Failed to save override");
                                     } finally {
                                       setSaving(null);
                                     }
@@ -319,13 +360,16 @@ export default function MonthlyReport() {
                                   onChange={async (e) => {
                                     try {
                                       setSaving(d.date);
-                                      await api.post(`/attendance/overrides/${employeeId}` as string, {
-                                        date: d.date,
-                                        ignoreHoliday: e.target.checked,
-                                      });
+                                      await api.post(
+                                        `/attendance/overrides/${employeeId}` as string,
+                                        {
+                                          date: d.date,
+                                          ignoreHoliday: e.target.checked,
+                                        },
+                                      );
                                       await load();
                                     } catch {
-                                      toast.error('Failed to save override');
+                                      toast.error("Failed to save override");
                                     } finally {
                                       setSaving(null);
                                     }

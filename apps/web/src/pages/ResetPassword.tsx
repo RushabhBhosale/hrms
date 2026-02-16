@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Button } from "../components/ui/button";
 
 export default function ResetPassword() {
   const nav = useNavigate();
@@ -90,24 +91,18 @@ export default function ResetPassword() {
               placeholder="6-digit code"
             />
           </div>
-          <button
-            disabled={loading}
-            className="w-full h-10 rounded bg-primary text-white"
-          >
+          <Button disabled={loading} className="w-full h-10">
             {loading ? "..." : "Verify"}
-          </button>
+          </Button>
           <div className="text-sm text-center">
-            <Link
-              className="text-primary hover:underline"
-              to={`/forgot-password`}
-            >
-              Resend OTP
-            </Link>
+            <Button asChild variant="outline" className="w-full justify-center">
+              <Link to={`/forgot-password`}>Resend OTP</Link>
+            </Button>
           </div>
-          <div className="text-xs text-center text-muted">
-            <Link to="/login" className="hover:underline">
-              Back to login
-            </Link>
+          <div className="text-xs text-center text-muted-foreground">
+            <Button asChild variant="outline" className="w-full justify-center">
+              <Link to="/login">Back to login</Link>
+            </Button>
           </div>
         </form>
       ) : (
@@ -138,20 +133,18 @@ export default function ResetPassword() {
               minLength={8}
             />
           </div>
-          <button
-            disabled={loading}
-            className="w-full h-10 rounded bg-primary text-white"
-          >
+          <Button disabled={loading} className="w-full h-10">
             {loading ? "..." : "Reset password"}
-          </button>
-          <div className="text-xs text-center text-muted">
-            <button
+          </Button>
+          <div className="text-xs text-center text-muted-foreground">
+            <Button
               type="button"
+              variant="outline"
+              className="w-full justify-center"
               onClick={() => setStep("otp")}
-              className="hover:underline"
             >
               Back to OTP
-            </button>
+            </Button>
           </div>
         </form>
       )}

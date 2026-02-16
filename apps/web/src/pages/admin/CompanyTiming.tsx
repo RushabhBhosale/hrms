@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { toast } from "react-hot-toast";
-import { Field } from "../../components/ui/Field";
+import { Field } from "../../components/utils/Field";
 import {
   useForm,
   type SubmitHandler,
@@ -25,10 +25,22 @@ const schema = z
       .int("Must be a whole number")
       .min(0, "Cannot be negative")
       .max(240, "Too large (max 240)"),
+    minFullDayHours: z.coerce
+      .number()
+      .gt(0, "Must be greater than zero")
+      .max(24, "Too large (max 24)"),
+    minHalfDayHours: z.coerce
+      .number()
+      .min(0, "Cannot be negative")
+      .max(24, "Too large (max 24)"),
   })
   .refine((v) => toMin(v.end) > toMin(v.start), {
     path: ["end"],
     message: "End must be after start",
+  })
+  .refine((v) => v.minHalfDayHours <= v.minFullDayHours, {
+    path: ["minHalfDayHours"],
+    message: "Half day hours cannot exceed full day hours",
   });
 
 type FormValues = z.infer<typeof schema>;
@@ -40,7 +52,13 @@ export default function CompanyTiming() {
 
   const form = useForm({
     resolver: zodResolver(schema),
-    defaultValues: { start: "09:30", end: "18:30", graceMinutes: 0 },
+    defaultValues: {
+      start: "09:30",
+      end: "18:30",
+      graceMinutes: 0,
+      minFullDayHours: 6,
+      minHalfDayHours: 3,
+    },
     mode: "onSubmit",
     reValidateMode: "onChange",
     shouldFocusError: true,
@@ -64,6 +82,17 @@ export default function CompanyTiming() {
           end: wh.end || "",
           graceMinutes:
             typeof wh.graceMinutes === "number" ? wh.graceMinutes : 0,
+          minFullDayHours:
+            typeof wh.minFullDayHours === "number" ? wh.minFullDayHours : 6,
+          minHalfDayHours:
+            typeof wh.minHalfDayHours === "number"
+              ? wh.minHalfDayHours
+              : Math.min(
+                  3,
+                  typeof wh.minFullDayHours === "number"
+                    ? wh.minFullDayHours
+                    : 6,
+                ),
         });
       } catch (e: any) {
         // eslint-disable-next-line no-console
@@ -83,6 +112,8 @@ export default function CompanyTiming() {
         start: data.start,
         end: data.end,
         graceMinutes: data.graceMinutes,
+        minFullDayHours: data.minFullDayHours,
+        minHalfDayHours: data.minHalfDayHours,
       });
       setOk("Company work hours updated");
     } catch (e: any) {
@@ -95,6 +126,8 @@ export default function CompanyTiming() {
   const start = watch("start");
   const end = watch("end");
   const grace = watch("graceMinutes") ?? 0;
+  const minFull: any = watch("minFullDayHours");
+  const minHalf: any = watch("minHalfDayHours");
   const durationM =
     timeRegex.test(start) && timeRegex.test(end) && toMin(end) > toMin(start)
       ? toMin(end) - toMin(start)
@@ -106,7 +139,7 @@ export default function CompanyTiming() {
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Company Timing</h2>
-        <p className="text-sm text-muted">
+        <p className="text-sm text-muted-foreground">
           Configure default work hours and grace period.
         </p>
       </div>
@@ -178,12 +211,52 @@ export default function CompanyTiming() {
                 </p>
               )}
             </Field>
+
+            <Field label="Full Day Minimum Hours" required>
+              <input
+                type="number"
+                min={0.25}
+                step={0.25}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                {...register("minFullDayHours", { valueAsNumber: true })}
+                aria-invalid={!!errors.minFullDayHours}
+                required
+              />
+              {errors.minFullDayHours && (
+                <p className="text-xs text-error mt-1">
+                  {errors.minFullDayHours.message}
+                </p>
+              )}
+            </Field>
+
+            <Field label="Half Day Minimum Hours" required>
+              <input
+                type="number"
+                min={0}
+                step={0.25}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                {...register("minHalfDayHours", { valueAsNumber: true })}
+                aria-invalid={!!errors.minHalfDayHours}
+                required
+              />
+              {errors.minHalfDayHours && (
+                <p className="text-xs text-error mt-1">
+                  {errors.minHalfDayHours.message}
+                </p>
+              )}
+            </Field>
           </div>
 
           {durationM !== null && (
-            <div className="text-xs text-muted">
+            <div className="text-xs text-muted-foreground">
               Workday length: {Math.floor(durationM / 60)}h {durationM % 60}m
               {grace ? ` • Grace: ${grace}m` : ""}
+            </div>
+          )}
+          {Number.isFinite(minFull) && Number.isFinite(minHalf) && (
+            <div className="text-xs text-muted-foreground">
+              Full day requires ≥ {minFull}h • Half day requires ≥{" "}
+              {Math.min(minHalf, minFull)}h
             </div>
           )}
 

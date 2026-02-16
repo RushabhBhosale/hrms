@@ -32,11 +32,20 @@ export const companyLeavePolicySchema = z
   .object({
     totalAnnual: nonNegativeNumber.optional(),
     ratePerMonth: nonNegativeNumber.optional(),
+    probationRatePerMonth: nonNegativeNumber.optional(),
+    accrualStrategy: z.enum(["ACCRUAL", "LUMP_SUM"]).optional(),
+    applicableFrom: z.string().optional(),
     typeCaps: z
       .object({
         paid: nonNegativeNumber.optional(),
         casual: nonNegativeNumber.optional(),
         sick: nonNegativeNumber.optional(),
+      })
+      .optional(),
+    sandwich: z
+      .object({
+        enabled: z.boolean().optional(),
+        minDays: nonNegativeNumber.optional(),
       })
       .optional(),
   })
@@ -47,6 +56,8 @@ export const companyWorkHoursSchema = z
     start: z.string().optional(),
     end: z.string().optional(),
     graceMinutes: nonNegativeNumber.optional(),
+    minFullDayHours: nonNegativeNumber.optional(),
+    minHalfDayHours: nonNegativeNumber.optional(),
   })
   .optional();
 
@@ -83,6 +94,8 @@ export const companySchema = z.object({
   workHours: companyWorkHoursSchema,
   bankHolidays: z.array(companyBankHolidaySchema).optional(),
   theme: companyThemeSchema,
+  isDeleted: z.boolean().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type CompanyInput = z.infer<typeof companySchema>;

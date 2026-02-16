@@ -1,8 +1,9 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../../lib/api";
+import { resolveMediaUrl } from "../../lib/utils";
 import { applyTheme, resetTheme } from "../../lib/theme";
 import { toast } from "react-hot-toast";
-import { Field } from "../../components/ui/Field";
+import { Field } from "../../components/utils/Field";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -37,7 +38,9 @@ const SmtpSchema = z
   .object({
     enabled: z.boolean(),
     host: z.string(),
-    port: z.number().int("Port must be an integer")
+    port: z
+      .number()
+      .int("Port must be an integer")
       .min(1, "Port must be between 1 and 65535")
       .max(65535, "Port must be between 1 and 65535"),
     secure: z.boolean(),
@@ -114,13 +117,14 @@ export default function CompanyProfile() {
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [leaveApplicableFrom, setLeaveApplicableFrom] = useState("");
-  const [leavePolicySnapshot, setLeavePolicySnapshot] = useState<LeavePolicySnapshot>({
-    totalAnnual: 0,
-    ratePerMonth: 0,
-    probationRatePerMonth: 0,
-    accrualStrategy: "ACCRUAL",
-    typeCaps: { paid: 0, casual: 0, sick: 0 },
-  });
+  const [leavePolicySnapshot, setLeavePolicySnapshot] =
+    useState<LeavePolicySnapshot>({
+      totalAnnual: 0,
+      ratePerMonth: 0,
+      probationRatePerMonth: 0,
+      accrualStrategy: "ACCRUAL",
+      typeCaps: { paid: 0, casual: 0, sick: 0 },
+    });
   const [savingLeaveApplicable, setSavingLeaveApplicable] = useState(false);
 
   // forms
@@ -153,7 +157,11 @@ export default function CompanyProfile() {
     reset: resetSmtp,
     setValue: setSmtpValue,
     watch: watchSmtp,
-    formState: { errors: smtpErrors, isSubmitting: savingSmtp, dirtyFields: smtpDirty },
+    formState: {
+      errors: smtpErrors,
+      isSubmitting: savingSmtp,
+      dirtyFields: smtpDirty,
+    },
   } = useForm<SmtpInput>({
     resolver: zodResolver(SmtpSchema),
     defaultValues: DEFAULT_SMTP,
@@ -199,7 +207,7 @@ export default function CompanyProfile() {
             resetSmtp({
               enabled: !!smtp.enabled,
               host: smtp.host || "",
-              port: typeof smtp.port === 'number' ? smtp.port : 587,
+              port: typeof smtp.port === "number" ? smtp.port : 587,
               secure: !!smtp.secure,
               user: smtp.user || "",
               password: "",
@@ -212,7 +220,7 @@ export default function CompanyProfile() {
             setSmtpPasswordSet(false);
           }
         } catch (smtpErr) {
-          console.warn('[CompanyProfile] failed to load SMTP config', smtpErr);
+          console.warn("[CompanyProfile] failed to load SMTP config", smtpErr);
           resetSmtp(DEFAULT_SMTP);
           setSmtpPasswordSet(false);
         }
@@ -222,7 +230,7 @@ export default function CompanyProfile() {
           setLeaveApplicableFrom(lp.applicableFrom || "");
           setLeavePolicySnapshot(normalizeLeavePolicy(lp));
         } catch (lpErr) {
-          console.warn('[CompanyProfile] failed to load leave policy', lpErr);
+          console.warn("[CompanyProfile] failed to load leave policy", lpErr);
         }
         setClearSmtpPassword(false);
       } catch (e: any) {
@@ -243,7 +251,9 @@ export default function CompanyProfile() {
   }, [smtpValues.enabled]);
 
   // helpers
-  const apiBase = import.meta.env.VITE_API_URL || "http://localhost:4000";
+  const resolveLogoUrl = (value: string | null) => {
+    return resolveMediaUrl(value);
+  };
   const validateImageFile = (file: File | null) => {
     if (!file) return "No file selected";
     if (!file.type.startsWith("image/")) return "Only image files allowed";
@@ -283,7 +293,11 @@ export default function CompanyProfile() {
       setLeaveApplicableFrom(lp.applicableFrom || "");
       setLeavePolicySnapshot(normalizeLeavePolicy(lp));
       const next = lp.applicableFrom || "";
-      setOk(next ? "Leave applicable month updated" : "Leave applicable month cleared");
+      setOk(
+        next
+          ? "Leave applicable month updated"
+          : "Leave applicable month cleared",
+      );
     } catch (e: any) {
       const msg =
         e?.response?.data?.error || "Failed to update leave applicable month";
@@ -361,7 +375,7 @@ export default function CompanyProfile() {
       resetSmtp({
         enabled: !!smtp?.enabled,
         host: smtp?.host || "",
-        port: typeof smtp?.port === 'number' ? smtp.port : 587,
+        port: typeof smtp?.port === "number" ? smtp.port : 587,
         secure: !!smtp?.secure,
         user: smtp?.user || "",
         password: "",
@@ -432,13 +446,16 @@ export default function CompanyProfile() {
     }
   };
 
+  const squareUrl = resolveLogoUrl(logoSquare);
+  const wideUrl = resolveLogoUrl(logoHorizontal);
+
   if (loading) return <div>Loading…</div>;
 
   return (
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Company Profile</h2>
-        <p className="text-sm text-muted">
+        <p className="text-sm text-muted-foreground">
           Update your company name, logos, SMTP, and theme.
         </p>
       </div>
@@ -494,7 +511,7 @@ export default function CompanyProfile() {
       <section className="rounded-lg border border-border bg-surface shadow-sm">
         <div className="border-b border-border px-6 py-4">
           <h3 className="text-lg font-semibold">Leave Accrual</h3>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted-foreground">
             Choose the month from which leave accrual should be calculated.
           </p>
         </div>
@@ -508,17 +525,17 @@ export default function CompanyProfile() {
                   value={leaveApplicableFrom}
                   onChange={(e) => setLeaveApplicableFrom(e.target.value)}
                 />
-                <p className="text-xs text-muted">
-                  Employees accrue from their joining month; selecting an earlier
-                  month backfills balances company wide.
+                <p className="text-xs text-muted-foreground">
+                  Employees accrue from their joining month; selecting an
+                  earlier month backfills balances company wide.
                 </p>
               </>
             </Field>
-            <div className="md:col-span-2 rounded-md border border-border/60 bg-muted/10 p-4 text-xs text-muted">
+            <div className="md:col-span-2 rounded-md border border-border/60 bg-muted/10 p-4 text-xs text-muted-foreground">
               {leavePolicySnapshot.accrualStrategy === "LUMP_SUM" ? (
                 <>
                   <div>
-                    Leaves are granted upfront: employees receive a pool of{' '}
+                    Leaves are granted upfront: employees receive a pool of{" "}
                     <strong>{leavePolicySnapshot.totalAnnual}</strong> leave(s)
                     for the year.
                   </div>
@@ -530,21 +547,21 @@ export default function CompanyProfile() {
               ) : (
                 <>
                   <div>
-                    Permanent staff accrue{' '}
+                    Permanent staff accrue{" "}
                     <strong>{leavePolicySnapshot.ratePerMonth}</strong> leave(s)
-                    per month, capped at{' '}
+                    per month, capped at{" "}
                     <strong>{leavePolicySnapshot.totalAnnual}</strong> annually.
                   </div>
                   <div className="mt-1">
-                    Probation rate:{' '}
-                    <strong>{leavePolicySnapshot.probationRatePerMonth}</strong>{' '}
+                    Probation rate:{" "}
+                    <strong>{leavePolicySnapshot.probationRatePerMonth}</strong>{" "}
                     leave(s) per month.
                   </div>
                 </>
               )}
               <div className="mt-2">
-                Type caps — Paid: {leavePolicySnapshot.typeCaps.paid}, Casual:{' '}
-                {leavePolicySnapshot.typeCaps.casual}, Sick:{' '}
+                Type caps — Paid: {leavePolicySnapshot.typeCaps.paid}, Casual:{" "}
+                {leavePolicySnapshot.typeCaps.casual}, Sick:{" "}
                 {leavePolicySnapshot.typeCaps.sick}
               </div>
             </div>
@@ -574,7 +591,7 @@ export default function CompanyProfile() {
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div>
             <h3 className="text-lg font-semibold">Company Logos</h3>
-            <p className="text-xs text-muted">
+            <p className="text-xs text-muted-foreground">
               Upload square and horizontal variants
             </p>
           </div>
@@ -584,14 +601,16 @@ export default function CompanyProfile() {
           {/* Square logo */}
           <div className="grid gap-6 md:grid-cols-[auto_1fr] items-start">
             <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-md border border-border bg-bg shadow-sm">
-              {logoSquare ? (
+              {squareUrl ? (
                 <img
-                  src={`${apiBase}/uploads/${logoSquare}`}
+                  src={squareUrl}
                   alt="Square logo"
                   className="h-full w-full object-contain"
                 />
               ) : (
-                <span className="text-xs text-muted">No square logo</span>
+                <span className="text-xs text-muted-foreground">
+                  No square logo
+                </span>
               )}
             </div>
             <div className="space-y-3">
@@ -610,7 +629,7 @@ export default function CompanyProfile() {
                 >
                   {uploadingSquare ? "Uploading…" : "Upload"}
                 </button>
-                <p className="text-xs text-muted">
+                <p className="text-xs text-muted-foreground">
                   PNG/JPG • ≤10MB • 256×256+ recommended
                 </p>
               </div>
@@ -620,14 +639,16 @@ export default function CompanyProfile() {
           {/* Horizontal logo */}
           <div className="grid gap-6 md:grid-cols-[auto_1fr] items-start">
             <div className="flex h-20 w-52 items-center justify-center overflow-hidden rounded-md border border-border bg-bg shadow-sm">
-              {logoHorizontal ? (
+              {wideUrl ? (
                 <img
-                  src={`${apiBase}/uploads/${logoHorizontal}`}
+                  src={wideUrl}
                   alt="Horizontal logo"
                   className="h-full w-full object-contain"
                 />
               ) : (
-                <span className="text-xs text-muted">No horizontal logo</span>
+                <span className="text-xs text-muted-foreground">
+                  No horizontal logo
+                </span>
               )}
             </div>
             <div className="space-y-3">
@@ -648,14 +669,14 @@ export default function CompanyProfile() {
                 >
                   {uploadingWide ? "Uploading…" : "Upload"}
                 </button>
-                <p className="text-xs text-muted">
+                <p className="text-xs text-muted-foreground">
                   PNG/JPG • ≤10MB • 512×128+ recommended
                 </p>
               </div>
             </div>
           </div>
 
-          <p className="text-xs text-muted text-center">
+          <p className="text-xs text-muted-foreground text-center">
             If a variant is missing, the app will use the available logo or
             default.
           </p>
@@ -667,7 +688,9 @@ export default function CompanyProfile() {
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div>
             <h3 className="text-lg font-semibold">SMTP Settings</h3>
-            <p className="text-xs text-muted">Deliver company emails with your own SMTP credentials.</p>
+            <p className="text-xs text-muted-foreground">
+              Deliver company emails with your own SMTP credentials.
+            </p>
           </div>
         </div>
         <form
@@ -689,7 +712,9 @@ export default function CompanyProfile() {
                 {...registerSmtp("host")}
               />
               {smtpErrors.host && (
-                <p className="mt-1 text-xs text-error">{smtpErrors.host.message}</p>
+                <p className="mt-1 text-xs text-error">
+                  {smtpErrors.host.message}
+                </p>
               )}
             </Field>
             <Field label="SMTP Port">
@@ -700,7 +725,9 @@ export default function CompanyProfile() {
                 {...registerSmtp("port", { valueAsNumber: true })}
               />
               {smtpErrors.port && (
-                <p className="mt-1 text-xs text-error">{smtpErrors.port.message}</p>
+                <p className="mt-1 text-xs text-error">
+                  {smtpErrors.port.message}
+                </p>
               )}
             </Field>
             <Field label="SMTP User">
@@ -711,7 +738,9 @@ export default function CompanyProfile() {
                 {...registerSmtp("user")}
               />
               {smtpErrors.user && (
-                <p className="mt-1 text-xs text-error">{smtpErrors.user.message}</p>
+                <p className="mt-1 text-xs text-error">
+                  {smtpErrors.user.message}
+                </p>
               )}
             </Field>
             <Field label="From Address">
@@ -722,9 +751,13 @@ export default function CompanyProfile() {
                 disabled={!smtpValues.enabled}
                 {...registerSmtp("from")}
               />
-              <p className="mt-1 text-xs text-muted">Optional display name and email shown to recipients.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Optional display name and email shown to recipients.
+              </p>
               {smtpErrors.from && (
-                <p className="mt-1 text-xs text-error">{smtpErrors.from.message}</p>
+                <p className="mt-1 text-xs text-error">
+                  {smtpErrors.from.message}
+                </p>
               )}
             </Field>
             <Field label="Reply-to Address">
@@ -736,17 +769,26 @@ export default function CompanyProfile() {
                 {...registerSmtp("replyTo")}
               />
               {smtpErrors.replyTo && (
-                <p className="mt-1 text-xs text-error">{smtpErrors.replyTo.message}</p>
+                <p className="mt-1 text-xs text-error">
+                  {smtpErrors.replyTo.message}
+                </p>
               )}
             </Field>
           </div>
 
           <div className="space-y-1 text-sm">
             <label className="flex items-center gap-2 font-medium">
-              <input type="checkbox" {...registerSmtp("secure")} disabled={!smtpValues.enabled} />
+              <input
+                type="checkbox"
+                {...registerSmtp("secure")}
+                disabled={!smtpValues.enabled}
+              />
               <span>Use secure connection (TLS/SSL)</span>
             </label>
-            <p className="text-xs text-muted">Port 465 typically requires SSL. Ports 587/25 usually use STARTTLS.</p>
+            <p className="text-xs text-muted-foreground">
+              Port 465 typically requires SSL. Ports 587/25 usually use
+              STARTTLS.
+            </p>
           </div>
 
           <Field label="SMTP Password">
@@ -754,12 +796,16 @@ export default function CompanyProfile() {
               <input
                 type="password"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
-                placeholder={smtpPasswordSet && !clearSmtpPassword ? "Leave blank to keep existing" : ""}
+                placeholder={
+                  smtpPasswordSet && !clearSmtpPassword
+                    ? "Leave blank to keep existing"
+                    : ""
+                }
                 disabled={!smtpValues.enabled || clearSmtpPassword}
                 {...registerSmtp("password")}
               />
               {smtpPasswordSet && !clearSmtpPassword && (
-                <div className="flex items-center justify-between text-xs text-muted">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>Password is stored securely.</span>
                   <button
                     type="button"
@@ -786,13 +832,15 @@ export default function CompanyProfile() {
                 </div>
               )}
               {smtpErrors.password && (
-                <p className="mt-1 text-xs text-error">{smtpErrors.password.message}</p>
+                <p className="mt-1 text-xs text-error">
+                  {smtpErrors.password.message}
+                </p>
               )}
             </div>
           </Field>
 
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <p className="text-xs text-muted">
+            <p className="text-xs text-muted-foreground">
               {smtpValues.enabled
                 ? "Automated emails for this company will use these credentials."
                 : "When disabled, the platform-level SMTP configuration is used."}
@@ -812,7 +860,9 @@ export default function CompanyProfile() {
       <section className="rounded-lg border border-border bg-surface shadow-sm">
         <div className="border-b border-border px-6 py-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold">Theme Colors</h3>
-          <span className="text-xs text-muted">Company-specific</span>
+          <span className="text-xs text-muted-foreground">
+            Company-specific
+          </span>
         </div>
 
         <form
@@ -871,7 +921,7 @@ export default function CompanyProfile() {
             >
               Reset to Default
             </button>
-            <span className="text-xs text-muted">
+            <span className="text-xs text-muted-foreground">
               Changes apply immediately in this session.
             </span>
           </div>

@@ -9,6 +9,8 @@ const SalarySlipSchema = new mongoose.Schema(
     values: { type: Map, of: mongoose.Schema.Types.Mixed, default: {} },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+    isDeleted: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

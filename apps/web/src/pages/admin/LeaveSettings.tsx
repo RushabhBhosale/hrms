@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent, useMemo } from "react";
 import { api } from "../../lib/api";
 import { toast } from "react-hot-toast";
-import { Field } from "../../components/ui/Field";
+import { Field } from "../../components/utils/Field";
 
 type FormState = {
   totalAnnual: string;
@@ -12,9 +12,13 @@ type FormState = {
   capsSick: string;
   applicableFrom: string;
   accrualStrategy: "ACCRUAL" | "LUMP_SUM";
+  sandwichEnabled: boolean;
+  sandwichMinDays: string;
 };
 
 type Holiday = {
+  _id?: string;
+  id?: string;
   date: string;
   name?: string;
 };
@@ -23,6 +27,7 @@ type DayOverride = {
   date: string; // yyyy-mm-dd
   type: "WORKING" | "HOLIDAY" | "HALF_DAY";
   note?: string;
+  id?: string;
 };
 
 // Define EmployeeLite type globally or in a shared types file
@@ -52,20 +57,32 @@ export default function LeaveSettings() {
     capsSick: "0",
     applicableFrom: "",
     accrualStrategy: "ACCRUAL",
+    sandwichEnabled: false,
+    sandwichMinDays: "5",
   });
   const [submitting, setSubmitting] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [holidayYear, setHolidayYear] = useState<string>("");
   const [hForm, setHForm] = useState<Holiday>({ date: "", name: "" });
   const [hSubmitting, setHSubmitting] = useState(false);
   const [hErr, setHErr] = useState<string | null>(null);
+  const [editHoliday, setEditHoliday] = useState<{
+    id: string;
+    date: string;
+    name: string;
+  } | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [deletingHolidayId, setDeletingHolidayId] = useState<string | null>(
+    null,
+  );
   const [resetting, setResetting] = useState(false);
   const [resetMsg, setResetMsg] = useState<string | null>(null);
 
   // Company Day Overrides
   const [ovMonth, setOvMonth] = useState<string>(
-    new Date().toISOString().slice(0, 7)
+    new Date().toISOString().slice(0, 7),
   );
   const [overrides, setOverrides] = useState<DayOverride[]>([]);
   const [ovForm, setOvForm] = useState<DayOverride>({
@@ -75,11 +92,23 @@ export default function LeaveSettings() {
   });
   const [ovSubmitting, setOvSubmitting] = useState(false);
   const [ovErr, setOvErr] = useState<string | null>(null);
+  const [confirmOverrideDelete, setConfirmOverrideDelete] = useState<{
+    date: string;
+    label: string;
+    id?: string;
+  } | null>(null);
+  const [deletingOverride, setDeletingOverride] = useState<string | null>(null);
+  const [cleanupDate, setCleanupDate] = useState<string>("");
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupMsg, setCleanupMsg] = useState<string | null>(null);
+  const [cleanupErr, setCleanupErr] = useState<string | null>(null);
 
   // Employees for dropdown in backfill rows
   const [bfEmployees, setBfEmployees] = useState<EmployeeLite[]>([]);
   const [bfEmpLoading, setBfEmpLoading] = useState(false);
-  const [probationBusy, setProbationBusy] = useState<Record<string, boolean>>({});
+  const [probationBusy, setProbationBusy] = useState<Record<string, boolean>>(
+    {},
+  );
 
   const isAccrualStrategy = form.accrualStrategy === "ACCRUAL";
 
@@ -94,17 +123,103 @@ export default function LeaveSettings() {
 
   const sortedEmployees = useMemo(
     () =>
-      [...bfEmployees].sort((a, b) => a.name.localeCompare(b.name, "en", {
-        sensitivity: "base",
-      })),
-    [bfEmployees]
+      [...bfEmployees].sort((a, b) =>
+        a.name.localeCompare(b.name, "en", {
+          sensitivity: "base",
+        }),
+      ),
+    [bfEmployees],
   );
+  const holidaysByYear = useMemo(() => {
+    const byYear = new Map<string, Holiday[]>();
+    holidays.forEach((holiday) => {
+      const parsed = new Date(holiday.date);
+      const year = Number.isNaN(parsed.getTime())
+        ? "Unknown"
+        : String(parsed.getFullYear());
+      const list = byYear.get(year) || [];
+      list.push(holiday);
+      byYear.set(year, list);
+    });
+    for (const [year, list] of byYear.entries()) {
+      list.sort((a, b) => {
+        const aTime = new Date(a.date).getTime();
+        const bTime = new Date(b.date).getTime();
+        if (Number.isNaN(aTime) && Number.isNaN(bTime)) return 0;
+        if (Number.isNaN(aTime)) return 1;
+        if (Number.isNaN(bTime)) return -1;
+        return aTime - bTime;
+      });
+      byYear.set(year, list);
+    }
+    const entries = Array.from(byYear.entries());
+    entries.sort((a, b) => {
+      if (a[0] === "Unknown") return 1;
+      if (b[0] === "Unknown") return -1;
+      return Number(b[0]) - Number(a[0]);
+    });
+    return entries;
+  }, [holidays]);
+
+  const activeHolidayYear = useMemo(() => {
+    if (holidaysByYear.length === 0) return "";
+    const years = holidaysByYear.map(([year]) => year);
+    if (holidayYear && years.includes(holidayYear)) return holidayYear;
+    return years[0];
+  }, [holidaysByYear, holidayYear]);
+
+  useEffect(() => {
+    if (holidayYear !== activeHolidayYear) {
+      setHolidayYear(activeHolidayYear);
+    }
+  }, [activeHolidayYear, holidayYear]);
+
+  const holidayList = useMemo(() => {
+    if (!activeHolidayYear) return [];
+    const entry = holidaysByYear.find(([year]) => year === activeHolidayYear);
+    return entry ? entry[1] : [];
+  }, [holidaysByYear, activeHolidayYear]);
+
+  const sortedOverrides = useMemo(() => {
+    return [...overrides].sort((a, b) => {
+      const aTime = new Date(a.date).getTime();
+      const bTime = new Date(b.date).getTime();
+      if (Number.isNaN(aTime) && Number.isNaN(bTime)) return 0;
+      if (Number.isNaN(aTime)) return 1;
+      if (Number.isNaN(bTime)) return -1;
+      return aTime - bTime;
+    });
+  }, [overrides]);
 
   function formatProbationSince(value?: string | null) {
     if (!value) return "—";
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return "—";
     return parsed.toLocaleDateString();
+  }
+
+  function formatOverrideType(type: DayOverride["type"]) {
+    switch (type) {
+      case "HALF_DAY":
+        return "Half Day";
+      case "WORKING":
+        return "Working Day";
+      case "HOLIDAY":
+      default:
+        return "Holiday";
+    }
+  }
+
+  function overrideTone(type: DayOverride["type"]) {
+    switch (type) {
+      case "WORKING":
+        return "bg-secondary/10 text-secondary";
+      case "HALF_DAY":
+        return "bg-primary/10 text-primary";
+      case "HOLIDAY":
+      default:
+        return "bg-accent/10 text-accent";
+    }
   }
 
   useEffect(() => {
@@ -123,6 +238,10 @@ export default function LeaveSettings() {
           accrualStrategy: (p.accrualStrategy || "ACCRUAL") as
             | "ACCRUAL"
             | "LUMP_SUM",
+          sandwichEnabled: !!p.sandwich?.enabled,
+          sandwichMinDays: String(
+            Number.isFinite(p.sandwich?.minDays) ? p.sandwich?.minDays : 5,
+          ),
         });
       } catch {
         // ignore
@@ -177,6 +296,10 @@ export default function LeaveSettings() {
           casual: parseInt(form.capsCasual, 10) || 0,
           sick: parseInt(form.capsSick, 10) || 0,
         },
+        sandwich: {
+          enabled: form.sandwichEnabled,
+          minDays: parseInt(form.sandwichMinDays, 10) || 0,
+        },
       });
       setOk("Leave policy updated");
     } catch (e: any) {
@@ -208,6 +331,63 @@ export default function LeaveSettings() {
     }
   }
 
+  function startEditingHoliday(holiday: Holiday) {
+    const holidayId = holiday._id || holiday.id;
+    if (!holidayId) {
+      toast.error("Unable to edit this holiday");
+      return;
+    }
+    setEditHoliday({
+      id: holidayId,
+      date: holiday.date
+        ? new Date(holiday.date).toISOString().slice(0, 10)
+        : "",
+      name: holiday.name || "",
+    });
+    setHErr(null);
+  }
+
+  function onEditHolidayChange(key: "date" | "name", value: string) {
+    setEditHoliday((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  async function saveHolidayChanges(e: FormEvent) {
+    e.preventDefault();
+    if (!editHoliday?.id) return;
+    setHErr(null);
+    try {
+      setEditSubmitting(true);
+      const res = await api.put(`/companies/bank-holidays/${editHoliday.id}`, {
+        date: editHoliday.date,
+        name: editHoliday.name,
+      });
+      setHolidays(res.data.bankHolidays || []);
+      setEditHoliday(null);
+    } catch (e: any) {
+      setHErr(e?.response?.data?.error || "Failed to update bank holiday");
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
+  async function deleteHoliday(holidayId: string) {
+    if (!holidayId) return;
+    if (!window.confirm("Delete this bank holiday?")) return;
+    setHErr(null);
+    try {
+      setDeletingHolidayId(holidayId);
+      const res = await api.delete(`/companies/bank-holidays/${holidayId}`);
+      setHolidays(res.data.bankHolidays || []);
+      if (editHoliday?.id === holidayId) {
+        setEditHoliday(null);
+      }
+    } catch (e: any) {
+      setHErr(e?.response?.data?.error || "Failed to delete bank holiday");
+    } finally {
+      setDeletingHolidayId(null);
+    }
+  }
+
   async function loadOverrides(month: string) {
     try {
       const res = await api.get("/companies/day-overrides", {
@@ -219,9 +399,27 @@ export default function LeaveSettings() {
     }
   }
 
+  async function deleteOverride(value: string) {
+    if (!value) return;
+    setOvErr(null);
+    try {
+      setDeletingOverride(value);
+      await api.delete(`/companies/day-overrides/${encodeURIComponent(value)}`);
+      await loadOverrides(ovMonth);
+    } catch (e) {
+      setOvErr(
+        (e as any)?.response?.data?.error || "Failed to delete override",
+      );
+      toast.error("Failed to delete override");
+    } finally {
+      setDeletingOverride(null);
+      setConfirmOverrideDelete(null);
+    }
+  }
+
   function onOvChange<K extends keyof DayOverride>(
     key: K,
-    value: DayOverride[K]
+    value: DayOverride[K],
   ) {
     setOvForm((prev) => ({ ...prev, [key]: value }));
   }
@@ -245,9 +443,45 @@ export default function LeaveSettings() {
     }
   }
 
+  async function runAutoLeaveCleanup(e: FormEvent) {
+    e.preventDefault();
+    setCleanupMsg(null);
+    setCleanupErr(null);
+    if (!cleanupDate) {
+      setCleanupErr("Select a date to clear auto leaves for.");
+      return;
+    }
+    try {
+      setCleanupBusy(true);
+      const res = await api.post("/attendance/admin/auto-leave/bulk-resolve", {
+        date: cleanupDate,
+      });
+      const data = res.data || {};
+      const resolvedCount = Number(data.resolved) || 0;
+      const deletedCount = Number(data.autoLeavesDeleted) || 0;
+      const failedCount = Number(data.failed) || 0;
+      const targetDate = data.date || cleanupDate;
+      const bits = [
+        `resolved ${resolvedCount} penalties`,
+        `removed ${deletedCount} auto leave records`,
+      ];
+      if (failedCount > 0) bits.push(`${failedCount} failed`);
+      setCleanupMsg(
+        `Cleared auto leaves for ${targetDate}: ${bits.join(", ")}.`,
+      );
+    } catch (e: any) {
+      setCleanupErr(
+        e?.response?.data?.error ||
+          "Failed to clear auto leaves for the selected date",
+      );
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
+
   async function updateEmploymentStatus(
     empId: string,
-    next: "PROBATION" | "PERMANENT"
+    next: "PROBATION" | "PERMANENT",
   ) {
     setProbationBusy((prev) => ({ ...prev, [empId]: true }));
     try {
@@ -265,17 +499,17 @@ export default function LeaveSettings() {
                   next,
                 probationSince: payload?.probationSince ?? null,
               }
-            : emp
-        )
+            : emp,
+        ),
       );
       toast.success(
         next === "PROBATION"
           ? "Employee moved to probation"
-          : "Employee marked permanent"
+          : "Employee marked permanent",
       );
     } catch (e: any) {
       toast.error(
-        e?.response?.data?.error || "Failed to update employment status"
+        e?.response?.data?.error || "Failed to update employment status",
       );
     } finally {
       setProbationBusy((prev) => {
@@ -290,7 +524,9 @@ export default function LeaveSettings() {
     <div className="space-y-8">
       <div>
         <h2 className="text-3xl font-bold">Leave Settings</h2>
-        <p className="text-sm text-muted">Manage default leave allocation.</p>
+        <p className="text-sm text-muted-foreground">
+          Manage default leave allocation.
+        </p>
       </div>
 
       {err && (
@@ -319,15 +555,15 @@ export default function LeaveSettings() {
                   onChange={(e) =>
                     onChange(
                       "accrualStrategy",
-                      (e.target
-                        .value as FormState["accrualStrategy"]) || "ACCRUAL"
+                      (e.target.value as FormState["accrualStrategy"]) ||
+                        "ACCRUAL",
                     )
                   }
                 >
                   <option value="ACCRUAL">Accrue every month</option>
                   <option value="LUMP_SUM">Grant full balance at once</option>
                 </select>
-                <p className="text-xs text-muted">
+                <p className="text-xs text-muted-foreground">
                   Choose whether leaves accrue monthly or are allocated upfront.
                 </p>
               </>
@@ -362,7 +598,7 @@ export default function LeaveSettings() {
                     onChange("probationRatePerMonth", e.target.value)
                   }
                 />
-                <p className="text-xs text-muted">
+                <p className="text-xs text-muted-foreground">
                   Used when an employee is marked as on probation.
                 </p>
               </>
@@ -377,11 +613,49 @@ export default function LeaveSettings() {
                     value={form.applicableFrom}
                     onChange={(e) => onChange("applicableFrom", e.target.value)}
                   />
-                  <p className="text-xs text-muted">
+                  <p className="text-xs text-muted-foreground">
                     Month when accrual should begin. Ignored when granting the
                     full balance upfront.
                   </p>
                 </>
+              </Field>
+            </div>
+            <div className="md:col-span-4">
+              <Field label="Sandwich Policy">
+                <div className="space-y-2">
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.sandwichEnabled}
+                      onChange={(e) =>
+                        onChange("sandwichEnabled", e.target.checked)
+                      }
+                    />
+                    <span className="font-medium">
+                      Include weekends and holidays for long leave spans
+                    </span>
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, weekends and holidays sandwiched between
+                    consecutive leave days are deducted once the minimum length
+                    is reached.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground">
+                      Minimum consecutive days
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-24 rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
+                      value={form.sandwichMinDays}
+                      onChange={(e) =>
+                        onChange("sandwichMinDays", e.target.value)
+                      }
+                      disabled={!form.sandwichEnabled}
+                    />
+                  </div>
+                </div>
               </Field>
             </div>
           </div>
@@ -427,7 +701,7 @@ export default function LeaveSettings() {
                 setResetMsg(null);
                 if (
                   !window.confirm(
-                    "Reset all employees' leave balances? This will zero out usage and pool, then re-accrue to current month."
+                    "Reset all employees' leave balances? This will zero out usage and pool, then re-accrue to current month.",
                   )
                 )
                   return;
@@ -435,14 +709,15 @@ export default function LeaveSettings() {
                   setResetting(true);
                   const res = await api.post(
                     "/companies/leave-balances/reset",
-                    { reaccrue: true }
+                    { reaccrue: true },
                   );
                   setResetMsg(
-                    `Reset completed for ${res.data.count || 0} employees.`
+                    `Reset completed for ${res.data.count || 0} employees.`,
                   );
                 } catch (e: any) {
                   setResetMsg(
-                    e?.response?.data?.error || "Failed to reset leave balances"
+                    e?.response?.data?.error ||
+                      "Failed to reset leave balances",
                   );
                 } finally {
                   setResetting(false);
@@ -453,29 +728,31 @@ export default function LeaveSettings() {
               {resetting ? "Resetting…" : "Reset Leave Balances"}
             </button>
             {resetMsg && (
-              <span className="ml-3 text-sm text-muted">{resetMsg}</span>
+              <span className="ml-3 text-sm text-muted-foreground">
+                {resetMsg}
+              </span>
             )}
           </div>
         </form>
       </section>
 
-      <section className="rounded-lg border border-border bg-surface shadow-sm">
+      {/* <section className="rounded-lg border border-border bg-surface shadow-sm">
         <div className="border-b border-border px-6 py-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold">Employment Status</h3>
         </div>
         <div className="px-6 py-5 space-y-4">
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             Toggle employees between permanent and probation. Probation staff use
             the probation accrual rate you set above.
           </p>
           {bfEmpLoading ? (
-            <p className="text-sm text-muted">Loading employees…</p>
+            <p className="text-sm text-muted-foreground">Loading employees…</p>
           ) : sortedEmployees.length === 0 ? (
-            <p className="text-sm text-muted">No employees found.</p>
+            <p className="text-sm text-muted-foreground">No employees found.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="text-left text-muted">
+                <thead className="text-left text-muted-foreground">
                   <tr className="border-b border-border">
                     <th className="py-2 pr-4 font-medium">Employee</th>
                     <th className="py-2 pr-4 font-medium">Status</th>
@@ -500,7 +777,7 @@ export default function LeaveSettings() {
                       <tr key={emp.id} className="border-b border-border/60">
                         <td className="py-2 pr-4">
                           <div className="font-medium">{emp.name}</div>
-                          <div className="text-xs text-muted">{emp.email}</div>
+                          <div className="text-xs text-muted-foreground">{emp.email}</div>
                         </td>
                         <td className="py-2 pr-4">{status}</td>
                         <td className="py-2 pr-4">
@@ -510,7 +787,7 @@ export default function LeaveSettings() {
                         </td>
                         <td className="py-2 pr-0 text-right">
                           {disableToggle ? (
-                            <span className="text-xs text-muted">
+                            <span className="text-xs text-muted-foreground">
                               Admin accounts stay permanent
                             </span>
                           ) : (
@@ -536,7 +813,7 @@ export default function LeaveSettings() {
             </div>
           )}
         </div>
-      </section>
+      </section> */}
 
       {hErr && (
         <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
@@ -549,19 +826,150 @@ export default function LeaveSettings() {
           <h3 className="text-lg font-semibold">Bank Holidays</h3>
         </div>
         <div className="px-6 py-5 space-y-5">
-          <ul className="list-disc pl-6 space-y-1">
-            {holidays.length === 0 && (
-              <li className="list-none text-sm text-muted">
-                No holidays added.
-              </li>
-            )}
-            {holidays.map((h) => (
-              <li key={h.date}>
-                {new Date(h.date).toLocaleDateString()}
-                {h.name ? ` - ${h.name}` : ""}
-              </li>
-            ))}
-          </ul>
+          {holidays.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              No holidays added.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-md border border-border overflow-hidden bg-surface">
+                  {holidaysByYear.map(([year], index) => {
+                    const label = year === "Unknown" ? "Unknown" : year;
+                    const active = year === activeHolidayYear;
+                    return (
+                      <button
+                        key={year}
+                        type="button"
+                        onClick={() => setHolidayYear(year)}
+                        title={year === "Unknown" ? "Unknown" : year}
+                        className={`px-3 py-1.5 text-sm ${
+                          index > 0 ? "border-l border-border" : ""
+                        } ${
+                          active ? "bg-primary/10 text-primary font-medium" : ""
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <ul className="space-y-3">
+                {holidayList.length === 0 && (
+                  <li className="text-sm text-muted-foreground">
+                    No holidays for this year.
+                  </li>
+                )}
+                {holidayList.map((h) => {
+                  const refId = h._id || h.id;
+                  const listKey = refId || h.date;
+                  const isEditing = !!refId && editHoliday?.id === refId;
+                  const isDeleting = !!refId && deletingHolidayId === refId;
+                  return (
+                    <li
+                      key={listKey}
+                      className="rounded-md border border-border/60 px-3 py-3"
+                    >
+                      {isEditing && editHoliday ? (
+                        <form
+                          onSubmit={saveHolidayChanges}
+                          className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_auto]"
+                        >
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium required-label">
+                              Date
+                            </label>
+                            <input
+                              type="date"
+                              value={editHoliday.date}
+                              onChange={(e) =>
+                                onEditHolidayChange("date", e.target.value)
+                              }
+                              className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium required-label">
+                              Name
+                            </label>
+                            <input
+                              type="text"
+                              value={editHoliday.name}
+                              onChange={(e) =>
+                                onEditHolidayChange("name", e.target.value)
+                              }
+                              className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                            />
+                          </div>
+                          <div className="flex items-end gap-2">
+                            <button
+                              type="submit"
+                              disabled={editSubmitting}
+                              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+                            >
+                              {editSubmitting ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={editSubmitting}
+                              onClick={() => setEditHoliday(null)}
+                              className="inline-flex items-center justify-center rounded-md border border-border px-4 py-2 text-sm hover:bg-muted disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              disabled={editSubmitting || isDeleting}
+                              onClick={() => refId && deleteHoliday(refId)}
+                              className="inline-flex items-center justify-center rounded-md border border-error/40 bg-error/10 px-4 py-2 text-sm text-error hover:bg-error/15 disabled:opacity-60"
+                            >
+                              {isDeleting ? "Deleting..." : "Delete"}
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div className="text-sm">
+                            {new Date(h.date).toLocaleDateString()}
+                            {h.name ? ` - ${h.name}` : ""}
+                          </div>
+                          <div className="flex items-center gap-2 self-start">
+                            <button
+                              type="button"
+                              className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-bg"
+                              onClick={() => startEditingHoliday(h)}
+                              disabled={!refId}
+                              title={
+                                !refId
+                                  ? "Unable to edit this holiday"
+                                  : undefined
+                              }
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-md border border-error/40 bg-error/10 px-3 py-1.5 text-xs text-error hover:bg-error/15 disabled:opacity-60"
+                              onClick={() => refId && deleteHoliday(refId)}
+                              disabled={!refId || isDeleting}
+                              title={
+                                !refId
+                                  ? "Unable to delete this holiday"
+                                  : undefined
+                              }
+                            >
+                              {isDeleting ? "Deleting..." : "Delete"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
           <form
             onSubmit={addHoliday}
             className="grid gap-4 md:grid-cols-3 items-end"
@@ -605,7 +1013,7 @@ export default function LeaveSettings() {
         <div className="border-b border-border px-6 py-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold">Day Overrides</h3>
           <div className="inline-flex items-center gap-2">
-            <label className="text-sm text-muted">Month</label>
+            <label className="text-sm text-muted-foreground">Month</label>
             <input
               type="month"
               value={ovMonth}
@@ -618,42 +1026,56 @@ export default function LeaveSettings() {
           </div>
         </div>
         <div className="px-6 py-5 space-y-5">
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             Declare exceptions: mark a working day as Holiday or Half-Day; or
             lift a weekend/bank holiday as Working.
           </p>
-          <ul className="list-disc pl-6 space-y-1">
-            {overrides.length === 0 && (
-              <li className="list-none text-sm text-muted">
-                No overrides for {ovMonth}.
-              </li>
-            )}
-            {overrides.map((o) => (
-              <li
-                key={o.date}
-                className="flex items-center justify-between gap-3"
-              >
-                <div>
-                  {new Date(o.date).toLocaleDateString()} —{" "}
-                  {o.type.replace("_", " ")}
-                  {o.note ? `: ${o.note}` : ""}
-                </div>
-                <button
-                  className="text-xs rounded-md border border-border px-2 py-1 hover:bg-bg"
-                  onClick={async () => {
-                    try {
-                      await api.delete(`/companies/day-overrides/${o.date}`);
-                      await loadOverrides(ovMonth);
-                    } catch {
-                      toast.error("Failed to delete override");
-                    }
-                  }}
+          {sortedOverrides.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              No overrides for {ovMonth}.
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {sortedOverrides.map((o) => (
+                <li
+                  key={o.date}
+                  className="rounded-md border border-border/60 px-3 py-3"
                 >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div className="text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>{new Date(o.date).toLocaleDateString()}</span>
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${overrideTone(
+                            o.type,
+                          )}`}
+                        >
+                          {formatOverrideType(o.type)}
+                        </span>
+                      </div>
+                      {o.note ? (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {o.note}
+                        </div>
+                      ) : null}
+                    </div>
+                    <button
+                      className="self-start rounded-md border border-border px-3 py-1.5 text-xs hover:bg-bg"
+                      onClick={() =>
+                        setConfirmOverrideDelete({
+                          date: o.date,
+                          id: (o as any).id || (o as any)._id,
+                          label: new Date(o.date).toLocaleDateString(),
+                        })
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
 
           <form
             onSubmit={addOverride}
@@ -703,6 +1125,100 @@ export default function LeaveSettings() {
         </div>
       </section>
 
+      {confirmOverrideDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-surface p-6 shadow-xl">
+            <div>
+              <h4 className="text-lg font-semibold">Delete override</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Are you sure you want to delete the override for{" "}
+                {confirmOverrideDelete.label}?
+              </p>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmOverrideDelete(null)}
+                className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
+                disabled={deletingOverride === confirmOverrideDelete.date}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  deleteOverride(
+                    confirmOverrideDelete.id || confirmOverrideDelete.date,
+                  )
+                }
+                disabled={
+                  deletingOverride === confirmOverrideDelete.date ||
+                  deletingOverride === confirmOverrideDelete.id
+                }
+                className="rounded-md border border-error/40 bg-error/10 px-4 py-2 text-sm text-error hover:bg-error/15 disabled:opacity-60"
+              >
+                {deletingOverride === confirmOverrideDelete.date
+                  ? "Deleting..."
+                  : deletingOverride === confirmOverrideDelete.id
+                    ? "Deleting..."
+                    : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <section className="rounded-lg border border-border bg-surface shadow-sm">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="text-lg font-semibold">Auto Leave Cleanup</h3>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Remove auto-applied leave deductions for a date that was marked as a
+            working day by mistake. Mark the date as a holiday override first,
+            then clear the auto leave entries here.
+          </p>
+          {cleanupErr && (
+            <div className="rounded-md border border-error/20 bg-error/10 px-4 py-2 text-sm text-error">
+              {cleanupErr}
+            </div>
+          )}
+          {cleanupMsg && (
+            <div className="rounded-md border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">
+              {cleanupMsg}
+            </div>
+          )}
+          <form
+            onSubmit={runAutoLeaveCleanup}
+            className="grid items-end gap-4 md:grid-cols-[minmax(0,220px)_1fr]"
+          >
+            <div className="space-y-2">
+              <label className="text-sm font-medium required-label">
+                Date to clear
+              </label>
+              <input
+                type="date"
+                value={cleanupDate}
+                onChange={(e) => setCleanupDate(e.target.value)}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
+              <button
+                type="submit"
+                disabled={cleanupBusy || !cleanupDate}
+                className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-white disabled:opacity-60"
+              >
+                {cleanupBusy ? "Clearing..." : "Clear auto leaves"}
+              </button>
+              <span className="text-xs text-muted-foreground">
+                Example: clear 2024-12-06 after switching it back to a holiday.
+              </span>
+            </div>
+          </form>
+        </div>
+      </section>
+
       {/* Pass bfEmployees and bfEmpLoading as props */}
       <BackfillLeaves
         bfEmployees={bfEmployees}
@@ -723,6 +1239,10 @@ type BackfillRow = {
   _err?: string;
 };
 
+function isBackfillRowEmpty(r: BackfillRow) {
+  return !r.email && !r.startDate && !r.endDate && !r.reason && !r.fallbackType;
+}
+
 function toCsv(rows: BackfillRow[]) {
   const header = "email,type,startDate,endDate,fallbackType,reason";
   const body = rows
@@ -736,7 +1256,7 @@ function toCsv(rows: BackfillRow[]) {
         (r.reason || "").replace(/"/g, '""'),
       ]
         .map((c) => (c?.includes(",") ? `"${c}"` : c))
-        .join(",")
+        .join(","),
     )
     .join("\n");
   return `${header}\n${body}`;
@@ -770,8 +1290,9 @@ function parseCsv(text: string): BackfillRow[] {
 // make validateRow depend on allowedTypes
 function validateRow(
   r: BackfillRow,
-  allowed: BackfillRow["type"][]
+  allowed: BackfillRow["type"][],
 ): string | null {
+  if (isBackfillRowEmpty(r)) return null;
   if (!/.+@.+\..+/.test(r.email)) return "Invalid email";
   if (!allowed.includes(r.type)) return "Invalid type";
   if (!r.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(r.startDate))
@@ -810,7 +1331,7 @@ function BackfillLeaves({
       prev.map((r) => {
         const type = allowedTypes.includes(r.type)
           ? r.type
-          : allowedTypes[0] ?? "UNPAID";
+          : (allowedTypes[0] ?? "UNPAID");
         const fallbackType =
           r.fallbackType && allowedTypes.includes(r.fallbackType as any)
             ? r.fallbackType
@@ -823,13 +1344,24 @@ function BackfillLeaves({
             validateRow({ ...r, type, fallbackType }, allowedTypes) ||
             undefined,
         };
-      })
+      }),
     );
   }, [allowedTypes]);
 
   const validCount = useMemo(
-    () => rows.filter((r) => !validateRow(r, allowedTypes)).length,
-    [rows, allowedTypes] // add allowedTypes here
+    () =>
+      rows.filter(
+        (r) => !isBackfillRowEmpty(r) && !validateRow(r, allowedTypes),
+      ).length,
+    [rows, allowedTypes], // add allowedTypes here
+  );
+  const nonEmptyCount = useMemo(
+    () => rows.filter((r) => !isBackfillRowEmpty(r)).length,
+    [rows],
+  );
+  const invalidCount = useMemo(
+    () => Math.max(0, nonEmptyCount - validCount),
+    [nonEmptyCount, validCount],
   );
 
   function update(i: number, patch: Partial<BackfillRow>) {
@@ -850,8 +1382,8 @@ function BackfillLeaves({
                 _err: validateRow(next, allowedTypes) || undefined,
               };
             })()
-          : r
-      )
+          : r,
+      ),
     );
   }
   function addRow() {
@@ -882,7 +1414,7 @@ function BackfillLeaves({
     const normalized = parsed.map((r) => {
       const type = allowedTypes.includes(r.type)
         ? r.type
-        : allowedTypes[0] ?? "UNPAID";
+        : (allowedTypes[0] ?? "UNPAID");
       const fallbackType =
         r.fallbackType && allowedTypes.includes(r.fallbackType as any)
           ? r.fallbackType
@@ -923,19 +1455,20 @@ function BackfillLeaves({
       _err: validateRow(r, allowedTypes) || undefined,
     }));
     setRows(next);
-    const invalid = next.filter((r) => r._err);
+    const nonEmpty = next.filter((r) => !isBackfillRowEmpty(r));
+    const invalid = nonEmpty.filter((r) => r._err);
     if (invalid.length) {
       setErr(`Fix ${invalid.length} row(s) with errors before submitting.`);
       return;
     }
-    if (!next.length) {
+    if (!nonEmpty.length) {
       setErr("Nothing to submit.");
       return;
     }
     try {
       setBusy(true);
       const res = await api.post("/leaves/backfill", {
-        entries: next.map(({ _err, ...r }) => r),
+        entries: nonEmpty.map(({ _err, ...r }) => r),
         approve,
       });
       const msg = `Created ${res.data.created || 0}, Approved ${
@@ -1127,7 +1660,10 @@ function BackfillLeaves({
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-2 py-6 text-center text-muted">
+                  <td
+                    colSpan={7}
+                    className="px-2 py-6 text-center text-muted-foreground"
+                  >
                     No rows. Click “Add Row” to begin or import a CSV.
                   </td>
                 </tr>
@@ -1137,9 +1673,9 @@ function BackfillLeaves({
         </div>
 
         <div className="flex items-center justify-between gap-3">
-          <div className="text-xs text-muted">
-            {rows.length} row(s) • {validCount} valid •{" "}
-            {rows.length - validCount} need fixes
+          <div className="text-xs text-muted-foreground">
+            {rows.length} row(s) • {validCount} valid • {invalidCount} need
+            fixes
           </div>
           <div className="flex items-center gap-2">
             <button

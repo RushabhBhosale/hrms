@@ -1,19 +1,28 @@
 const router = require("express").Router();
 const mongoose = require("mongoose");
-const path = require("path");
-const fs = require("fs");
 const { auth } = require("../middleware/auth");
 const { requirePrimary, requireAnySub } = require("../middleware/roles");
-const { uploadsDir } = require("../utils/uploads");
+const { loadFileBuffer } = require("../utils/fileStorage");
 const Company = require("../models/Company");
 const Employee = require("../models/Employee");
 const SalaryTemplate = require("../models/SalaryTemplate");
 const SalarySlip = require("../models/SalarySlip");
+const UnpaidLeaveAdjustment = require("../models/UnpaidLeaveAdjustment");
 const PDFDocument = require("pdfkit");
 const Attendance = require("../models/Attendance");
 const Leave = require("../models/Leave");
 const CompanyDayOverride = require("../models/CompanyDayOverride");
 const { sendMail, isEmailEnabled } = require("../utils/mailer");
+const {
+  DEFAULT_SANDWICH_MIN_DAYS,
+  normalizeSandwichMinDays,
+} = require("../utils/sandwich");
+const { computeUnpaidTakenForMonth } = require("../utils/unpaidLeaves");
+
+function sendSuccess(res, message, payload = {}) {
+  if (message) res.set("X-Success-Message", message);
+  return res.json({ message, ...payload });
+}
 
 function monthValid(m) {
   return typeof m === "string" && /^\d{4}-\d{2}$/.test(m);
@@ -30,10 +39,74 @@ function monthKeyFromDate(value) {
 
 function isMonthBeforeStart(month, employee) {
   if (!monthValid(month) || !employee) return false;
-  const startMonth =
-    monthKeyFromDate(employee.joiningDate) || monthKeyFromDate(employee.createdAt);
-  if (!startMonth) return false;
+  const startMonth = monthKeyFromDate(employee.joiningDate);
+  if (!startMonth) return false; // no joining date set, don't block
   return month < startMonth;
+}
+
+function getDayThresholds(workHours) {
+  const wh = workHours || {};
+  const rawFull =
+    Number.isFinite(wh?.minFullDayHours) && wh.minFullDayHours > 0
+      ? wh.minFullDayHours
+      : 6;
+  const rawHalf =
+    Number.isFinite(wh?.minHalfDayHours) && wh.minHalfDayHours >= 0
+      ? wh.minHalfDayHours
+      : 3;
+  const fullHours = rawFull;
+  const halfHours = Math.min(rawHalf, fullHours);
+  return {
+    fullHours,
+    halfHours,
+    fullMs: fullHours * 3600000,
+    halfMs: halfHours * 3600000,
+  };
+}
+
+function getSandwichPolicy(leavePolicy) {
+  const cfg = leavePolicy?.sandwich || {};
+  const enabled = !!cfg.enabled;
+  const minDays = normalizeSandwichMinDays(
+    cfg.minDays,
+    DEFAULT_SANDWICH_MIN_DAYS
+  );
+  return { enabled, minDays };
+}
+
+function shouldApplySandwichRange(rangeStart, rangeEnd, policy) {
+  if (!policy?.enabled) return false;
+  const s = startOfDay(rangeStart);
+  const e = startOfDay(rangeEnd);
+  if (e < s) return false;
+  const totalDays = Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
+  return totalDays > policy.minDays;
+}
+
+function formatRoleLabel(raw) {
+  if (!raw) return "";
+  return String(raw)
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatDisplayDate(value) {
+  if (!value) return "";
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB");
+}
+
+function normalizePan(value) {
+  if (!value && value !== 0) return "";
+  return String(value).replace(/\s+/g, "").toUpperCase();
+}
+
+function normalizeUan(value) {
+  if (!value && value !== 0) return "";
+  const digits = String(value).replace(/\D/g, "");
+  return digits.length ? digits : "";
 }
 
 // Default locked keys and helpers
@@ -41,6 +114,7 @@ const BASIC_KEY = "basic_earned";
 const HRA_KEY = "hra";
 const MEDICAL_KEY = "medical";
 const OTHER_KEY = "other_allowances";
+const LOCKED_EARNING_KEYS = new Set([BASIC_KEY, HRA_KEY, MEDICAL_KEY, OTHER_KEY]);
 
 function defaultLockedFields() {
   return [
@@ -135,7 +209,11 @@ router.get("/templates", auth, async (req, res) => {
   try {
     const companyId = req.employee.company;
     if (!companyId) return res.status(400).json({ error: "Company not found" });
-    let tpl = await SalaryTemplate.findOne({ company: companyId }).lean();
+    let tpl = await SalaryTemplate.findOne({
+      company: companyId,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+    }).lean();
     if (!tpl)
       tpl = { company: companyId, fields: [], settings: withDefaultSettings() };
     res.json({ template: ensureTemplateDefaults(tpl) });
@@ -207,11 +285,15 @@ router.post(
           fields: mergedFields,
           settings: withDefaultSettings(settings),
           updatedBy: req.employee.id,
+          isDeleted: false,
+          isActive: true,
         },
         { upsert: true, new: true }
       );
 
-      res.json({ template: ensureTemplateDefaults(tpl.toObject()) });
+      sendSuccess(res, "Salary template saved", {
+        template: ensureTemplateDefaults(tpl.toObject()),
+      });
     } catch (e) {
       res.status(500).json({ error: "Failed to save template" });
     }
@@ -234,6 +316,169 @@ async function canManageFor(req, employeeId) {
 function round2(n) {
   const x = Number(n);
   return Math.round((Number.isFinite(x) ? x : 0) * 100) / 100;
+}
+
+function applyPercentFieldValues(values, template, employee, options = {}) {
+  const base = numberOrZero(employee?.ctc);
+  const assumeRawPercent = !!options.assumeRawPercent;
+  const fixOverblown = !!options.fixOverblown;
+  const out = { ...(values || {}) };
+  const fields = template?.fields || [];
+  for (const field of fields) {
+    if (!field || field.type !== "number" || field.amountType !== "percent")
+      continue;
+    const key = field.key;
+    if (!key) continue;
+    const raw = numberOrZero(out[key]);
+    // If we know values are raw percents (e.g., defaults/new slip), always convert.
+    // For existing slips, only convert if the stored value still looks like a percent (<=100).
+    const looksPercent = assumeRawPercent || raw <= 100;
+    // Recover from previously over-converted values: if a percent field is stored as an amount
+    // that is wildly higher than the monthly CTC, re-derive it from the template default percent.
+    const looksOverblown =
+      fixOverblown && base > 0 && raw > base * 10; // 10x CTC is clearly wrong for a percent field
+
+    if (!looksPercent && !looksOverblown) continue;
+
+    let percentValue = raw;
+    if (looksOverblown) {
+      const defaultPercent = numberOrZero(field.defaultValue);
+      if (defaultPercent > 0 && defaultPercent <= 1000) {
+        percentValue = defaultPercent;
+      } else if (!looksPercent) {
+        // Cap at 100% of CTC to avoid cascading explosions when no sensible default is available.
+        percentValue = 100;
+      }
+    }
+
+    out[key] = round2((percentValue / 100) * base);
+  }
+  return out;
+}
+
+function roundEarningsWithCarry({ template, values, employee }) {
+  if (!template || !values) return values || {};
+  const earningFields = (template.fields || []).filter(
+    (f) => f && f.category === "earning" && f.type === "number"
+  );
+  const hasOther = earningFields.some((f) => f?.key === OTHER_KEY);
+  if (!earningFields.length || !hasOther) return values || {};
+
+  const totalEarnings = earningFields.reduce(
+    (acc, f) => acc + numberOrZero(values[f.key]),
+    0
+  );
+  const targetTotal = Math.round(
+    numberOrZero(employee?.ctc) || numberOrZero(totalEarnings)
+  );
+  if (targetTotal <= 0) return values || {};
+
+  const out = { ...values };
+  let sumRounded = 0;
+
+  for (const field of earningFields) {
+    if (!field?.key || field.key === OTHER_KEY) continue;
+    const rounded = Math.floor(numberOrZero(values[field.key]));
+    out[field.key] = rounded;
+    sumRounded += rounded;
+  }
+
+  if (sumRounded > targetTotal) return values || {};
+
+  out[OTHER_KEY] = targetTotal - sumRounded;
+  return out;
+}
+
+function rebalanceOtherAllowances({ template, values, employee }) {
+  const baseCtc = numberOrZero(employee?.ctc);
+  if (!template || !values || !baseCtc) return values || {};
+  const fields = template.fields || [];
+  const earningFields = fields.filter(
+    (f) => f && f.category === "earning" && f.type === "number"
+  );
+  const hasOther = earningFields.some((f) => f?.key === OTHER_KEY);
+  if (!hasOther) return values || {};
+  const extraEarnings = earningFields
+    .filter((f) => f.key && !LOCKED_EARNING_KEYS.has(f.key))
+    .reduce((acc, f) => acc + numberOrZero(values[f.key]), 0);
+  const basic = numberOrZero(values[BASIC_KEY]);
+  const hra = numberOrZero(values[HRA_KEY]);
+  const medical = numberOrZero(values[MEDICAL_KEY]);
+  const nextOther = Math.max(
+    0,
+    round2(baseCtc - (basic + hra + medical + extraEarnings))
+  );
+  return roundEarningsWithCarry({
+    template,
+    employee,
+    values: { ...values, [OTHER_KEY]: nextOther },
+  });
+}
+
+async function buildSlipMetadata({
+  employeeId,
+  companyId,
+  month,
+  employee,
+  values,
+}) {
+  const payload = {};
+
+  let manualDeductionDays = null;
+  try {
+    const adjustment = await UnpaidLeaveAdjustment.findOne({
+      company: companyId,
+      employee: employeeId,
+      month,
+    }).lean();
+    if (adjustment) {
+      manualDeductionDays = Number(adjustment?.deducted || 0);
+    }
+  } catch (_) {
+    manualDeductionDays = null;
+  }
+
+  const monthDays = 30; // payroll days include weekends
+  const hasManual =
+    manualDeductionDays !== null && manualDeductionDays !== undefined;
+  const manualValue = hasManual ? numberOrZero(manualDeductionDays) : 0;
+  const cappedLopDays = Math.min(monthDays, Math.max(0, round2(manualValue)));
+  const computedPaidDays = Math.max(0, round2(monthDays - cappedLopDays));
+  const perDay = numberOrZero(employee?.ctc) / monthDays;
+
+  payload.paid_days = computedPaidDays;
+  payload.lop_days = cappedLopDays;
+  payload.lop_deduction = round2(perDay * cappedLopDays);
+  payload.unpaid_taken = 0; // no automatic deductions; only admin adjustments apply
+  payload.unpaid_deducted = cappedLopDays;
+
+  // Employee metadata
+  const existing = values || {};
+  const payDate = existing.pay_date || payDateForMonth(month);
+  if (payDate) payload.pay_date = payDate;
+
+  const joining = existing.date_of_joining || employee?.joiningDate || employee?.createdAt;
+  const joiningFormatted = formatDisplayDate(joining);
+  if (joiningFormatted) payload.date_of_joining = joiningFormatted;
+
+  const designationRaw =
+    existing.designation ||
+    employee?.subRoles?.[0] ||
+    employee?.primaryRole ||
+    "";
+  const designation = formatRoleLabel(designationRaw);
+  if (designation) payload.designation = designation;
+
+  const pan =
+    existing.pan_number ||
+    normalizePan(employee?.panNumber || employee?.pan_number || employee?.pan);
+  if (pan) payload.pan_number = pan;
+
+  const uan =
+    existing.uan || normalizeUan(employee?.uan || employee?.uan_number);
+  if (uan) payload.uan = uan;
+
+  return payload;
 }
 
 function computeLockedValues({ template, employee }) {
@@ -308,16 +553,25 @@ function dateKeyLocal(d) {
 }
 
 // Compute paid days and LOP (loss of pay) days for a month
+// Uses a 30-day payroll month; weekends are paid by default, but pre-joining days are LOP.
 // LOP days count: 1 for full leave/absence, 0.5 for half-day work or company half-day overrides
 async function computePaidAndLopDays({ employeeId, companyId, month }) {
   const start = startOfDay(new Date(`${month}-01`));
   const end = new Date(start);
   end.setMonth(end.getMonth() + 1);
+  const monthDays = 30;
 
-  // Load company holidays + overrides, attendance, and approved leaves
-  const [company, overrides, records, leaves] = await Promise.all([
-    Company.findById(companyId).select("bankHolidays").lean(),
-    CompanyDayOverride.find({ company: companyId, date: { $gte: start, $lt: end } })
+  // Load company holidays + overrides, attendance, employee start date, and approved leaves
+  const [company, overrides, records, leaves, employee] = await Promise.all([
+    Company.findById(companyId)
+      .select("bankHolidays workHours leavePolicy")
+      .lean(),
+    CompanyDayOverride.find({
+      company: companyId,
+      date: { $gte: start, $lt: end },
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+    })
       .select("date type")
       .lean(),
     Attendance.find({ employee: employeeId, date: { $gte: start, $lt: end } }).lean(),
@@ -329,7 +583,17 @@ async function computePaidAndLopDays({ employeeId, companyId, month }) {
     })
       .select("startDate endDate")
       .lean(),
+    Employee.findById(employeeId).select("joiningDate"),
   ]);
+
+  try { employee?.decryptFieldsSync?.(); } catch (_) {}
+  const employmentStartRaw = employee?.joiningDate;
+  const employmentStart = employmentStartRaw ? startOfDay(employmentStartRaw) : null;
+  const rangeStart =
+    employmentStart && employmentStart > start ? employmentStart : start;
+  const preStartDays = employmentStart
+    ? Math.max(0, Math.min(monthDays, Math.floor((employmentStart - start) / 86400000)))
+    : 0;
 
   const ovByKey = new Map((overrides || []).map((o) => [dateKeyLocal(o.date), o]));
   const bankHolidaySet = new Set(
@@ -341,13 +605,33 @@ async function computePaidAndLopDays({ employeeId, companyId, month }) {
 
   // Build approved leave day set (no half-day metadata in Leave model, so mark entire dates)
   const approvedLeaveSet = new Set();
+  const sandwichPolicy = getSandwichPolicy(company?.leavePolicy);
+  const sandwichDaySet = new Set();
   for (const l of leaves || []) {
-    const s = l.startDate < start ? start : startOfDay(new Date(l.startDate));
-    const e = l.endDate > end ? new Date(end.getTime() - 1) : startOfDay(new Date(l.endDate));
+    let s = startOfDay(new Date(l.startDate));
+    let e = startOfDay(new Date(l.endDate));
+    if (employmentStart && e < employmentStart) continue;
+    if (employmentStart && s < employmentStart) s = employmentStart;
+    if (s < start) s = start;
+    if (e > end) e = new Date(end.getTime() - 1);
+    const applySandwich = shouldApplySandwichRange(s, e, sandwichPolicy);
     for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-      approvedLeaveSet.add(dateKeyLocal(d));
+      const key = dateKeyLocal(d);
+      const ov = ovByKey.get(key);
+      let isWeekend = d.getDay() === 0 || d.getDay() === 6;
+      if (ov?.type === "WORKING" || ov?.type === "HALF_DAY") isWeekend = false;
+      let isHoliday = bankHolidaySet.has(key) || ov?.type === "HOLIDAY";
+      if (ov?.type === "WORKING") isHoliday = false;
+      if (applySandwich && (isWeekend || isHoliday)) {
+        sandwichDaySet.add(key);
+      }
+      approvedLeaveSet.add(key);
     }
   }
+
+  const { fullMs: fullDayMs, halfMs: halfDayMs } = getDayThresholds(
+    company?.workHours
+  );
 
   let workingDays = 0;
   let totalLopUnits = 0;
@@ -360,6 +644,13 @@ async function computePaidAndLopDays({ employeeId, companyId, month }) {
     if (ov?.type === "WORKING") isWeekend = false;
     let isHoliday = bankHolidaySet.has(key) || ov?.type === "HOLIDAY";
     if (ov?.type === "WORKING") isHoliday = false;
+    const isSandwichDay = sandwichDaySet.has(key);
+    if (isSandwichDay) {
+      isWeekend = false;
+      isHoliday = false;
+    }
+
+    if (d < rangeStart) continue;
 
     if (!isWeekend && !isHoliday) workingDays += 1;
 
@@ -384,11 +675,18 @@ async function computePaidAndLopDays({ employeeId, companyId, month }) {
     let leaveUnit = 0;
     if (!isWeekend && !isHoliday) {
       const hasWork = !!rec && timeSpentMs > 0;
-      const isHalfDayWork = !!rec && timeSpentMs > 0 && timeSpentMs <= 6 * 3600000;
+      const meetsFullDay = timeSpentMs >= fullDayMs;
+      const meetsHalfDay = !meetsFullDay && timeSpentMs >= halfDayMs;
       const isApprovedLeave = approvedLeaveSet.has(key);
 
       if (hasWork) {
-        if (isHalfDayWork) leaveUnit = 0.5;
+        if (meetsFullDay) {
+          leaveUnit = 0;
+        } else if (meetsHalfDay) {
+          leaveUnit = 0.5;
+        } else {
+          leaveUnit = 1;
+        }
       } else if (isApprovedLeave) {
         leaveUnit = 1;
       } else {
@@ -407,9 +705,16 @@ async function computePaidAndLopDays({ employeeId, companyId, month }) {
     totalLopUnits += leaveUnit;
   }
 
-  const paidDays = Math.max(0, round2(workingDays - totalLopUnits));
-  const lopDays = round2(totalLopUnits);
-  return { paidDays, lopDays, workingDays };
+  const attendanceLopDays = round2(totalLopUnits);
+  const lopDays = round2(preStartDays + attendanceLopDays);
+  const paidDays = Math.max(0, round2(monthDays - lopDays));
+  return {
+    paidDays,
+    lopDays,
+    attendanceLopDays,
+    preStartDays,
+    workingDays,
+  };
 }
 
 // Get salary slip for an employee + month (self or hr/manager/admin)
@@ -424,7 +729,7 @@ router.get("/slips", auth, async (req, res) => {
 
     // ensure employee is in same company
     const employee = await Employee.findById(employeeId).select(
-      "company ctc __enc_ctc __enc_ctc_d joiningDate createdAt email name"
+      "company ctc __enc_ctc __enc_ctc_d joiningDate createdAt email name employeeId subRoles primaryRole panNumber __enc_panNumber uan __enc_uan"
     );
     try { employee?.decryptFieldsSync?.(); } catch (_) {}
     if (!employee) return res.status(404).json({ error: "Employee not found" });
@@ -439,11 +744,17 @@ router.get("/slips", auth, async (req, res) => {
     }
 
     const [tpl, slipDoc] = await Promise.all([
-      SalaryTemplate.findOne({ company: companyId }).lean(),
+      SalaryTemplate.findOne({
+        company: companyId,
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
+      }).lean(),
       SalarySlip.findOne({
         employee: employeeId,
         company: companyId,
         month,
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
       }),
     ]);
 
@@ -462,28 +773,36 @@ router.get("/slips", auth, async (req, res) => {
       )
     );
 
-    // Auto-compute paid/LOP days for the month
     try {
-      const { paidDays, lopDays } = await computePaidAndLopDays({
+      const meta = await buildSlipMetadata({
         employeeId,
         companyId,
         month,
+        employee,
+        values,
       });
-      const perDay = numberOrZero(employee?.ctc) / 30;
-      const lopDeduction = round2(perDay * numberOrZero(lopDays));
-      values = {
-        ...values,
-        paid_days: round2(paidDays),
-        lop_days: round2(lopDays),
-        lop_deduction: lopDeduction,
-      };
+      values = { ...values, ...meta };
     } catch (_) {}
+
+    const valuesForResponse = rebalanceOtherAllowances({
+      template,
+      employee,
+      values: applyPercentFieldValues(values, template, employee, {
+        assumeRawPercent: !slip,
+        fixOverblown: true,
+      }),
+    });
 
     res.json({
       template,
       slip: slip
-        ? { ...slip, values }
-        : { employee: employeeId, company: companyId, month, values },
+        ? { ...slip, values: valuesForResponse }
+        : {
+            employee: employeeId,
+            company: companyId,
+            month,
+            values: valuesForResponse,
+          },
     });
   } catch (e) {
     res.status(500).json({ error: "Failed to load slip" });
@@ -502,16 +821,22 @@ router.get("/slips/mine", auth, async (req, res) => {
     const [employee, tpl, slipDoc] = await Promise.all([
       (async () => {
         const e = await Employee.findById(employeeId).select(
-          "ctc __enc_ctc __enc_ctc_d joiningDate createdAt email name"
+          "ctc __enc_ctc __enc_ctc_d joiningDate createdAt email name employeeId subRoles primaryRole panNumber __enc_panNumber uan __enc_uan"
         );
         try { e?.decryptFieldsSync?.(); } catch (_) {}
         return e;
       })(),
-      SalaryTemplate.findOne({ company: companyId }).lean(),
+      SalaryTemplate.findOne({
+        company: companyId,
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
+      }).lean(),
       SalarySlip.findOne({
         employee: employeeId,
         company: companyId,
         month,
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
       }),
     ]);
     if (isMonthBeforeStart(month, employee)) {
@@ -535,25 +860,33 @@ router.get("/slips/mine", auth, async (req, res) => {
       )
     );
     try {
-      const { paidDays, lopDays } = await computePaidAndLopDays({
+      const meta = await buildSlipMetadata({
         employeeId,
         companyId,
         month,
+        employee,
+        values,
       });
-      const perDay = numberOrZero(employee?.ctc) / 30;
-      const lopDeduction = round2(perDay * numberOrZero(lopDays));
-      values = {
-        ...values,
-        paid_days: round2(paidDays),
-        lop_days: round2(lopDays),
-        lop_deduction: lopDeduction,
-      };
+      values = { ...values, ...meta };
     } catch (_) {}
+    const valuesForResponse = rebalanceOtherAllowances({
+      template,
+      employee,
+      values: applyPercentFieldValues(values, template, employee, {
+        assumeRawPercent: !slip,
+        fixOverblown: true,
+      }),
+    });
     res.json({
       template,
       slip: slip
-        ? { ...slip, values }
-        : { employee: employeeId, company: companyId, month, values },
+        ? { ...slip, values: valuesForResponse }
+        : {
+            employee: employeeId,
+            company: companyId,
+            month,
+            values: valuesForResponse,
+          },
     });
   } catch (e) {
     res.status(500).json({ error: "Failed to load slip" });
@@ -574,7 +907,7 @@ router.post("/slips", auth, async (req, res) => {
     if (!allowed) return res.status(403).json({ error: "Forbidden" });
 
     const employeeDoc = await Employee.findById(employeeId).select(
-      "company name email employeeId joiningDate createdAt ctc __enc_ctc __enc_ctc_d"
+      "company name email employeeId joiningDate createdAt ctc __enc_ctc __enc_ctc_d subRoles primaryRole panNumber __enc_panNumber uan __enc_uan"
     );
     try { employeeDoc?.decryptFieldsSync?.(); } catch (_) {}
     if (!employeeDoc)
@@ -589,7 +922,11 @@ router.post("/slips", auth, async (req, res) => {
         .json({ error: "Salary slip not available for this period" });
     }
 
-    const tpl = await SalaryTemplate.findOne({ company: companyId }).lean();
+    const tpl = await SalaryTemplate.findOne({
+      company: companyId,
+      isDeleted: { $ne: true },
+      isActive: { $ne: false },
+    }).lean();
     const template = ensureTemplateDefaults(tpl || {});
     // Only allow non-locked fields to be set by user
     const nonLockedFields = (template?.fields || []).filter((f) => !f.locked);
@@ -626,10 +963,17 @@ router.post("/slips", auth, async (req, res) => {
         .status(400)
         .json({ error: "Missing required fields", missing });
 
+    const normalizedValues = applyPercentFieldValues(
+      sanitized,
+      template,
+      employeeDoc,
+      { fixOverblown: true }
+    );
+
     const slip = await SalarySlip.findOneAndUpdate(
       { employee: employeeId, company: companyId, month },
       {
-        $set: { values: sanitized, updatedBy: me.id },
+        $set: { values: normalizedValues, updatedBy: me.id },
         $setOnInsert: { createdBy: me.id },
       },
       { upsert: true, new: true }
@@ -654,22 +998,22 @@ router.post("/slips", auth, async (req, res) => {
       )
     );
     try {
-      const { paidDays, lopDays } = await computePaidAndLopDays({
+      const meta = await buildSlipMetadata({
         employeeId,
         companyId,
         month,
+        employee: employeeDoc,
+        values: valuesOut,
       });
-      const perDay = numberOrZero(employeeDoc?.ctc) / 30;
-      const lopDeduction = round2(perDay * numberOrZero(lopDays));
-      valuesOut = {
-        ...valuesOut,
-        paid_days: round2(paidDays),
-        lop_days: round2(lopDays),
-        lop_deduction: lopDeduction,
-      };
+      valuesOut = { ...valuesOut, ...meta };
     } catch (_) {}
+    valuesOut = rebalanceOtherAllowances({
+      template,
+      values: valuesOut,
+      employee: employeeDoc,
+    });
     const responsePayload = { slip: { ...slip.toObject(), values: valuesOut } };
-    res.json(responsePayload);
+    sendSuccess(res, "Salary slip saved", responsePayload);
 
     const employeePayload =
       typeof employeeDoc.toObject === "function"
@@ -775,7 +1119,7 @@ async function sendSalarySlipEmail({
   }
 }
 
-function drawSlipPDF(doc, { company, employee, month, template, slipValues }) {
+function drawSlipPDF(doc, { company, employee, month, template, slipValues, logoBuffer }) {
   const pageWidth = doc.page.width;
   const margin = doc.page.margins.left;
   const contentWidth = pageWidth - margin * 2;
@@ -785,10 +1129,10 @@ function drawSlipPDF(doc, { company, employee, month, template, slipValues }) {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
-  const monthStr = (() => {
+  const monthShortStr = (() => {
     const [y, m] = month.split("-").map((x) => parseInt(x, 10));
     const d = new Date(y, m - 1, 1);
-    return d.toLocaleString("en-US", { month: "long", year: "numeric" });
+    return d.toLocaleString("en-US", { month: "short", year: "numeric" });
   })();
 
   // ---------- fields + canonical ordering ----------
@@ -838,88 +1182,69 @@ function drawSlipPDF(doc, { company, employee, month, template, slipValues }) {
 
   // ---------- header ----------
   const headerY = 24;
-  const headerH = 56;
+  const headerH = 68;
   doc.roundedRect(margin, headerY, contentWidth, headerH, 8).fill("#F9FAFB");
   doc.fillColor("#111827");
   try {
-    const logoFile =
-      company?.logoHorizontal || company?.logo || company?.logoSquare;
-    if (logoFile) {
-      const logoPath = path.join(uploadsDir, String(logoFile));
-      if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, margin + 10, headerY + 10, {
-          fit: [140, 36],
-          align: "left",
-          valign: "center",
-        });
-      }
+    if (logoBuffer) {
+      doc.image(logoBuffer, margin + 10, headerY + 14, {
+        fit: [140, 40],
+        align: "left",
+        valign: "center",
+      });
     }
   } catch (_) {}
-  doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827");
-  text(
-    company?.name || "Company",
-    margin + 160,
-    headerY + 12,
-    contentWidth - 170,
-    { align: "right" }
-  );
-  doc.font("Helvetica").fontSize(10).fillColor("#6B7280");
-  text(
-    "Payslip For the Month",
-    margin + 160,
-    headerY + 30,
-    contentWidth - 170,
-    { align: "right" }
-  );
-  doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827");
-  text(monthStr.toUpperCase(), margin + 160, headerY + 42, contentWidth - 170, {
-    align: "right",
-  });
   doc.fillColor("#000");
 
   // ---------- summary ----------
-  const yStart = headerY + headerH + 12;
+  const labelY = headerY + headerH + 12;
+  doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827");
+  text("Salary Slip", margin, labelY, contentWidth, { align: "center" });
+  doc.fillColor("#000");
+
+  const yStart = labelY + 28;
   const leftW = Math.floor((contentWidth * 2) / 3) - GUTTER / 2;
   const rightW = contentWidth - leftW - GUTTER;
   const xLeft = margin;
   const xRight = margin + leftW + GUTTER;
 
-  doc.roundedRect(xLeft, yStart, leftW, 124, 8).stroke("#E5E7EB");
+  doc.roundedRect(xLeft, yStart, leftW, 140, 8).stroke("#E5E7EB");
   doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827");
   text("EMPLOYEE SUMMARY", xLeft + PAD, yStart + PAD, leftW - PAD * 2);
 
-  let y = yStart + PAD + 14;
+  let y = yStart + PAD + 16;
   const K = 110;
   const V = leftW - PAD * 2 - K;
   const pairs = [
     ["Employee Name", employee?.name || "-"],
     ["Designation", slipValues["designation"] || "-"],
     ["Employee ID", employee?.employeeId || "-"],
+    ["PAN Number", slipValues["pan_number"] || "-"],
     ["Date of Joining", slipValues["date_of_joining"] || "-"],
-    ["Pay Period", monthStr],
-    ["Pay Date", slipValues["pay_date"] || lastDayOfMonthString(month)],
+    ["Pay Period", monthShortStr],
+    ["Pay Date", slipValues["pay_date"] || payDateForMonth(month)],
   ];
   pairs.forEach(([k, v]) => {
     keyVal(k, v, xLeft + PAD, y, K, V);
     y += LINE;
   });
 
-  doc.roundedRect(xRight, yStart, rightW, 124, 8).stroke("#E5E7EB");
+  doc.roundedRect(xRight, yStart, rightW, 140, 8).stroke("#E5E7EB");
   doc
-    .roundedRect(xRight + PAD, yStart + PAD, rightW - PAD * 2, 56, 8)
+    .roundedRect(xRight + PAD, yStart + PAD + 2, rightW - PAD * 2, 60, 8)
     .fill("#D1FAE5");
   doc.fillColor("#065F46").font("Helvetica-Bold").fontSize(16);
-  text(fmtAmount(netPay), xRight + PAD, yStart + PAD + 16, rightW - PAD * 2, {
+  text(fmtAmount(netPay), xRight + PAD, yStart + PAD + 18, rightW - PAD * 2, {
     align: "center",
   });
   doc.font("Helvetica").fontSize(10);
-  text("Employee Net Pay", xRight + PAD, yStart + PAD + 36, rightW - PAD * 2, {
+  text("Employee Net Pay", xRight + PAD, yStart + PAD + 40, rightW - PAD * 2, {
     align: "center",
   });
 
   const paidDays = slipValues["paid_days"] ?? "-";
   const lopDays = slipValues["lop_days"] ?? "-";
-  const smallY = yStart + 76;
+  const smallY = yStart + 92;
   const half = (rightW - PAD * 2) / 2;
 
   doc
@@ -935,7 +1260,7 @@ function drawSlipPDF(doc, { company, employee, month, template, slipValues }) {
   doc.fillColor("#000");
 
   // PF / UAN line
-  const pfY = yStart + 136;
+  const pfY = yStart + 160;
   const pf = slipValues["pf_ac_number"] || "-";
   const uan = slipValues["uan"] || "-";
   doc.font("Helvetica").fontSize(10).fillColor("#6B7280");
@@ -949,7 +1274,7 @@ function drawSlipPDF(doc, { company, employee, month, template, slipValues }) {
   doc.fillColor("#000");
 
   // ---------- tables (no YTD) ----------
-  const tableTop = pfY + 24;
+  const tableTop = pfY + 30;
   const colW = Math.floor((contentWidth - GUTTER) / 2);
   const xTableLeft = margin;
   const xTableRight = margin + colW + GUTTER;
@@ -1047,13 +1372,22 @@ function drawSlipPDF(doc, { company, employee, month, template, slipValues }) {
   });
   doc.fillColor("#000");
 
+  const noteText = String(slipValues["tds_note"] || "").trim();
+  let footerBaseY = yNet + 46;
+  if (noteText) {
+    doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
+    text("TDS Note", margin, footerBaseY, contentWidth);
+    doc.font("Helvetica").fontSize(9).fillColor("#4B5563");
+    text(noteText, margin, footerBaseY + 14, contentWidth);
+    footerBaseY += 36;
+  }
+
   // footer note
-  const yWords = yNet + 46;
   doc.font("Helvetica").fontSize(8).fillColor("#9CA3AF");
   text(
     "— This payslip is system generated and does not require a signature —",
     margin,
-    yWords + 18,
+    footerBaseY + 18,
     contentWidth,
     { align: "center" }
   );
@@ -1068,6 +1402,9 @@ async function renderSlipPDF({
   template,
   slipValues,
 }) {
+  const logoBuffer = await loadFileBuffer(
+    company?.logoHorizontal || company?.logo || company?.logoSquare
+  );
   const doc = new PDFDocument({
     size: "A4",
     margins: { top: 36, bottom: 40, left: 36, right: 36 },
@@ -1076,7 +1413,14 @@ async function renderSlipPDF({
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   doc.pipe(res);
-  drawSlipPDF(doc, { company, employee, month, template, slipValues });
+  drawSlipPDF(doc, {
+    company,
+    employee,
+    month,
+    template,
+    slipValues,
+    logoBuffer,
+  });
   doc.end();
 }
 
@@ -1087,6 +1431,9 @@ async function generateSlipPDFBuffer({
   template,
   slipValues,
 }) {
+  const logoBuffer = await loadFileBuffer(
+    company?.logoHorizontal || company?.logo || company?.logoSquare
+  );
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
@@ -1096,15 +1443,25 @@ async function generateSlipPDFBuffer({
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
-    drawSlipPDF(doc, { company, employee, month, template, slipValues });
+    drawSlipPDF(doc, {
+      company,
+      employee,
+      month,
+      template,
+      slipValues,
+      logoBuffer,
+    });
     doc.end();
   });
 }
 
-function lastDayOfMonthString(month) {
+function payDateForMonth(month) {
+  if (!monthValid(month)) return "";
   const [y, m] = month.split("-").map((x) => parseInt(x, 10));
-  const d = new Date(y, m, 0);
-  return d.toLocaleDateString("en-GB");
+  if (!y || !m) return "";
+  // First day of the next month
+  const d = new Date(y, m, 1);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB");
 }
 
 async function computeYTD(employeeId, companyId, year, uptoMonth) {
@@ -1209,7 +1566,7 @@ router.get("/slips/pdf", auth, async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
 
     const employee = await Employee.findById(employeeId).select(
-      "name email employeeId company ctc __enc_ctc __enc_ctc_d joiningDate createdAt"
+      "name email employeeId company ctc __enc_ctc __enc_ctc_d joiningDate createdAt subRoles primaryRole panNumber __enc_panNumber uan __enc_uan"
     );
     try { employee?.decryptFieldsSync?.(); } catch (_) {}
     if (!employee) return res.status(404).json({ error: "Employee not found" });
@@ -1225,11 +1582,17 @@ router.get("/slips/pdf", auth, async (req, res) => {
 
     const [company, templateRaw, slipDoc] = await Promise.all([
       Company.findById(companyId).lean(),
-      SalaryTemplate.findOne({ company: companyId }).lean(),
+      SalaryTemplate.findOne({
+        company: companyId,
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
+      }).lean(),
       SalarySlip.findOne({
         employee: employeeId,
         company: companyId,
         month,
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
       }),
     ]);
 
@@ -1247,22 +1610,24 @@ router.get("/slips/pdf", auth, async (req, res) => {
       overlayLocked(valuesObj, lockedVals)
     );
 
-    // Auto-compute paid/LOP days + LOP deduction (use CTC/30)
     try {
-      const { paidDays, lopDays } = await computePaidAndLopDays({
+      const meta = await buildSlipMetadata({
         employeeId,
         companyId,
         month,
+        employee,
+        values: finalVals,
       });
-      const perDay = numberOrZero(employee?.ctc) / 30;
-      const lopDeduction = round2(perDay * numberOrZero(lopDays));
-      finalVals = {
-        ...finalVals,
-        paid_days: round2(paidDays),
-        lop_days: round2(lopDays),
-        lop_deduction: lopDeduction,
-      };
+      finalVals = { ...finalVals, ...meta };
     } catch (_) {}
+    const finalWithPercent = rebalanceOtherAllowances({
+      template,
+      employee,
+      values: applyPercentFieldValues(finalVals, template, employee, {
+        assumeRawPercent: !slip,
+        fixOverblown: true,
+      }),
+    });
 
     await renderSlipPDF({
       res,
@@ -1270,7 +1635,7 @@ router.get("/slips/pdf", auth, async (req, res) => {
       employee,
       month,
       template,
-      slipValues: finalVals,
+      slipValues: finalWithPercent,
     });
   } catch (e) {
     console.error("payslip pdf error", e);
@@ -1289,13 +1654,19 @@ router.get("/slips/mine/pdf", auth, async (req, res) => {
     if (!companyId) return res.status(400).json({ error: "Company not found" });
 
     const [employee, company, templateRaw, slipDoc] = await Promise.all([
-      (async () => { const e = await Employee.findById(employeeId).select("name email employeeId company ctc __enc_ctc __enc_ctc_d joiningDate createdAt"); try { e?.decryptFieldsSync?.(); } catch (_) {} return e; })(),
+      (async () => { const e = await Employee.findById(employeeId).select("name email employeeId company ctc __enc_ctc __enc_ctc_d joiningDate createdAt subRoles primaryRole panNumber __enc_panNumber uan __enc_uan"); try { e?.decryptFieldsSync?.(); } catch (_) {} return e; })(),
       Company.findById(companyId).lean(),
-      SalaryTemplate.findOne({ company: companyId }).lean(),
+      SalaryTemplate.findOne({
+        company: companyId,
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
+      }).lean(),
       SalarySlip.findOne({
         employee: employeeId,
         company: companyId,
         month,
+        isDeleted: { $ne: true },
+        isActive: { $ne: false },
       }),
     ]);
     if (isMonthBeforeStart(month, employee)) {
@@ -1321,27 +1692,30 @@ router.get("/slips/mine/pdf", auth, async (req, res) => {
     );
 
     try {
-      const { paidDays, lopDays } = await computePaidAndLopDays({
+      const meta = await buildSlipMetadata({
         employeeId,
         companyId,
         month,
+        employee,
+        values: finalVals,
       });
-      const perDay = numberOrZero(employee?.ctc) / 30;
-      const lopDeduction = round2(perDay * numberOrZero(lopDays));
-      finalVals = {
-        ...finalVals,
-        paid_days: round2(paidDays),
-        lop_days: round2(lopDays),
-        lop_deduction: lopDeduction,
-      };
+      finalVals = { ...finalVals, ...meta };
     } catch (_) {}
+    const finalWithPercent = rebalanceOtherAllowances({
+      template,
+      employee,
+      values: applyPercentFieldValues(finalVals, template, employee, {
+        assumeRawPercent: !slip,
+        fixOverblown: true,
+      }),
+    });
     await renderSlipPDF({
       res,
       company,
       employee,
       month,
       template,
-      slipValues: finalVals,
+      slipValues: finalWithPercent,
     });
   } catch (e) {
     console.error("my payslip pdf error", e);

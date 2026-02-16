@@ -1,4 +1,5 @@
 const Company = require("../models/Company");
+const Employee = require("../models/Employee");
 
 function ym(d) {
   const y = d.getFullYear();
@@ -90,21 +91,22 @@ async function accrueTotalIfNeeded(employee, company, asOfDate = new Date()) {
           let months = monthsDiff(baselineYm, ym(asOfFloor));
           if (months < 0) months = 0;
 
-          const potential = rate * months;
-          const maxBase = Math.max(0, annual - used);
-          base = Math.min(Math.max(0, potential), maxBase);
+          const accrued = Math.min(Math.max(0, rate * months), annual);
+          base = Math.max(0, accrued - used);
         }
       }
     }
   }
 
-  if (employee.leaveAccrual.lastAccruedYearMonth === currentYm) {
-    if (Number.isFinite(existingTotal)) {
-      const computed = base + manualAdjustment;
-      const delta = existingTotal - computed;
-      if (Math.abs(delta) > 1e-6) {
-        manualAdjustment += delta;
-      }
+  if (
+    employee.leaveAccrual.lastAccruedYearMonth === currentYm &&
+    Number.isFinite(existingTotal) &&
+    Math.abs(manualAdjustment) > 1e-6
+  ) {
+    const computed = base + manualAdjustment;
+    const delta = existingTotal - computed;
+    if (Math.abs(delta) > 1e-6) {
+      manualAdjustment += delta;
     }
   }
 
@@ -112,7 +114,16 @@ async function accrueTotalIfNeeded(employee, company, asOfDate = new Date()) {
   employee.totalLeaveAvailable = total;
   employee.leaveAccrual.manualAdjustment = manualAdjustment;
   employee.leaveAccrual.lastAccruedYearMonth = currentYm;
-  await employee.save();
+  await Employee.updateOne(
+    { _id: employee._id },
+    {
+      $set: {
+        leaveUsage: employee.leaveUsage,
+        totalLeaveAvailable: employee.totalLeaveAvailable,
+        leaveAccrual: employee.leaveAccrual,
+      },
+    }
+  );
 }
 
 // Populate legacy employee.leaveBalances for UI using total and type caps
@@ -150,7 +161,10 @@ async function syncLeaveBalances(employee) {
     sick: sickAvail,
     unpaid: Number(used.unpaid) || 0,
   };
-  await employee.save();
+  await Employee.updateOne(
+    { _id: employee._id },
+    { $set: { leaveBalances: employee.leaveBalances } }
+  );
 }
 
 module.exports = { syncLeaveBalances, accrueTotalIfNeeded };
